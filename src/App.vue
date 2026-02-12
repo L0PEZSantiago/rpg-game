@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   CLASS_DEFINITIONS,
   CONSUMABLES_SHOP,
@@ -37,7 +37,6 @@ import {
   nearbyNpc,
   nearbyResource,
   openNearbyChest,
-  playerMoveCombat,
   playerNormalAttack,
   playerUseSkill,
   progressSummary,
@@ -133,6 +132,499 @@ const shouldEmphasizeEndTurn = computed(() => {
   const canUseSkill = unlockedPlayerSkills.value.some((skill) => skillReady(skill))
   return !canAttack && !canUseSkill
 })
+
+const COMBAT_SOUND_BANK = {
+  playerAttack: [
+    '/assets/sounds/07_human_atk_sword_1.wav',
+    '/assets/sounds/07_human_atk_sword_2.wav',
+    '/assets/sounds/07_human_atk_sword_3.wav',
+  ],
+  enemyAttack: [
+    '/assets/sounds/17_orc_atk_sword_1.wav',
+    '/assets/sounds/17_orc_atk_sword_2.wav',
+    '/assets/sounds/17_orc_atk_sword_3.wav',
+  ],
+  playerCast: [
+    '/assets/sounds/10_human_special_atk_1.wav',
+    '/assets/sounds/10_human_special_atk_2.wav',
+  ],
+  enemyCast: [
+    '/assets/sounds/20_orc_special_atk.wav',
+    '/assets/sounds/18_orc_charge.wav',
+  ],
+  playerHit: [
+    '/assets/sounds/11_human_damage_1.wav',
+    '/assets/sounds/11_human_damage_2.wav',
+    '/assets/sounds/11_human_damage_3.wav',
+  ],
+  enemyHit: [
+    '/assets/sounds/26_sword_hit_1.wav',
+    '/assets/sounds/26_sword_hit_2.wav',
+    '/assets/sounds/26_sword_hit_3.wav',
+  ],
+  playerDeath: ['/assets/sounds/14_human_death_spin.wav'],
+  enemyDeath: ['/assets/sounds/24_orc_death_spin.wav'],
+}
+
+const combatFxTimers = []
+const combatPlayerState = ref('idle')
+const combatEnemyState = ref('idle')
+const combatStateTokens = reactive({
+  player: 0,
+  enemy: 0,
+})
+const combatProjectile = reactive({
+  active: false,
+  from: 'player',
+  tick: 0,
+})
+const combatImpact = reactive({
+  active: false,
+  side: 'enemy',
+  tick: 0,
+})
+const combatPopups = reactive({
+  player: [],
+  enemy: [],
+})
+const combatOutro = ref(null)
+const lastCombatTopLog = ref('')
+const lastPlayerDeaths = ref(0)
+let combatPopupSeed = 0
+
+const activeCombatView = computed(() => run.value?.combat ?? combatOutro.value)
+const combatEnemyVisual = computed(() => {
+  if (run.value?.combat) {
+    return combatEnemy.value
+  }
+  if (!combatOutro.value?.enemyTemplateId) {
+    return null
+  }
+  return ENEMY_TEMPLATES[combatOutro.value.enemyTemplateId] ?? null
+})
+const combatSceneStyle = computed(() => {
+  const background = activeMap.value?.background ?? '/assets/Environment/Tilesets/Floors_Tiles.png'
+  return {
+    backgroundImage: [
+      'radial-gradient(circle at 50% 105%, rgba(243, 190, 105, 0.24), transparent 45%)',
+      'linear-gradient(175deg, rgba(4, 10, 15, 0.2), rgba(3, 8, 11, 0.72))',
+      `url('${background}')`,
+    ].join(', '),
+  }
+})
+const combatTurnLabel = computed(() => {
+  if (run.value?.combat) {
+    return run.value.combat.actor === 'player' ? 'Ton tour' : 'Tour ennemi'
+  }
+  if (combatOutro.value?.result === 'victory') {
+    return 'Victoire'
+  }
+  if (combatOutro.value?.result === 'defeat') {
+    return 'Defaite'
+  }
+  return ''
+})
+const combatDistanceLabel = computed(() => {
+  const distance = activeCombatView.value?.distance ?? 0
+  if (distance <= 2) {
+    return 'Engagement proche'
+  }
+  if (distance <= 4) {
+    return 'Engagement moyen'
+  }
+  return 'Engagement lointain'
+})
+const combatPlayerHpPercent = computed(() => ratioPercent(run.value?.player?.hp ?? 0, stats.value?.maxHp ?? 1))
+const combatPlayerManaPercent = computed(() => ratioPercent(run.value?.player?.mana ?? 0, stats.value?.maxMana ?? 1))
+const combatEnemyHpPercent = computed(() =>
+  ratioPercent(activeCombatView.value?.enemyHp ?? 0, activeCombatView.value?.enemyStats?.maxHp ?? 1),
+)
+const combatEnemyManaPercent = computed(() =>
+  ratioPercent(activeCombatView.value?.enemyMana ?? 0, activeCombatView.value?.enemyStats?.maxMana ?? 0),
+)
+const combatEnemyHasMana = computed(() => (activeCombatView.value?.enemyStats?.maxMana ?? 0) > 0)
+
+function ratioPercent(value, max) {
+  if (!max || max <= 0) {
+    return 0
+  }
+  const ratio = (Math.max(0, value) / max) * 100
+  return Math.round(Math.max(0, Math.min(100, ratio)))
+}
+
+function queueCombatFx(callback, delayMs = 0) {
+  const timer = window.setTimeout(() => {
+    const index = combatFxTimers.indexOf(timer)
+    if (index >= 0) {
+      combatFxTimers.splice(index, 1)
+    }
+    callback()
+  }, Math.max(0, delayMs))
+  combatFxTimers.push(timer)
+  return timer
+}
+
+function clearCombatFxTimers() {
+  while (combatFxTimers.length) {
+    window.clearTimeout(combatFxTimers.pop())
+  }
+}
+
+function randomFrom(list) {
+  if (!list?.length) {
+    return ''
+  }
+  return list[Math.floor(Math.random() * list.length)]
+}
+
+function playCombatSound(pool, volume = 0.22) {
+  const source = randomFrom(pool)
+  if (!source) {
+    return
+  }
+  try {
+    const sound = new Audio(source)
+    sound.volume = volume
+    void sound.play().catch(() => {})
+  } catch {
+    // Ignore sound failures (autoplay, format or permissions).
+  }
+}
+
+function actorStateRef(side) {
+  return side === 'player' ? combatPlayerState : combatEnemyState
+}
+
+function resetCombatVisuals(clearTimers = true) {
+  if (clearTimers) {
+    clearCombatFxTimers()
+  }
+  combatPlayerState.value = 'idle'
+  combatEnemyState.value = 'idle'
+  combatStateTokens.player = 0
+  combatStateTokens.enemy = 0
+  combatProjectile.active = false
+  combatImpact.active = false
+  combatPopups.player.splice(0, combatPopups.player.length)
+  combatPopups.enemy.splice(0, combatPopups.enemy.length)
+}
+
+function setActorState(side, state, holdMs = 300) {
+  const stateRef = actorStateRef(side)
+  if (stateRef.value === 'death' && state !== 'death') {
+    return
+  }
+  combatStateTokens[side] += 1
+  const token = combatStateTokens[side]
+  stateRef.value = state
+  if (state !== 'death' && holdMs > 0) {
+    queueCombatFx(() => {
+      if (combatStateTokens[side] === token && stateRef.value === state) {
+        stateRef.value = 'idle'
+      }
+    }, holdMs)
+  }
+}
+
+function pushCombatPopup(side, amount, kind = 'damage') {
+  if (!amount || amount <= 0) {
+    return
+  }
+  const popup = {
+    id: `${side}-${kind}-${combatPopupSeed}`,
+    label: `${kind === 'damage' ? '-' : '+'}${Math.max(1, Math.round(amount))}`,
+    kind,
+  }
+  combatPopupSeed += 1
+  combatPopups[side].push(popup)
+  queueCombatFx(() => {
+    const index = combatPopups[side].findIndex((entry) => entry.id === popup.id)
+    if (index >= 0) {
+      combatPopups[side].splice(index, 1)
+    }
+  }, 920)
+}
+
+function triggerProjectile(from, delayMs = 0) {
+  queueCombatFx(() => {
+    combatProjectile.tick += 1
+    combatProjectile.from = from
+    combatProjectile.active = true
+    queueCombatFx(() => {
+      combatProjectile.active = false
+    }, 360)
+  }, delayMs)
+}
+
+function triggerImpact(side, delayMs = 0) {
+  queueCombatFx(() => {
+    combatImpact.tick += 1
+    combatImpact.side = side
+    combatImpact.active = true
+    queueCombatFx(() => {
+      combatImpact.active = false
+    }, 260)
+  }, delayMs)
+}
+
+function triggerHit(side) {
+  setActorState(side, 'hit', 260)
+  triggerImpact(side, 8)
+  if (side === 'player') {
+    playCombatSound(COMBAT_SOUND_BANK.playerHit, 0.24)
+  } else {
+    playCombatSound(COMBAT_SOUND_BANK.enemyHit, 0.2)
+  }
+}
+
+function findCombatSkillByName(side, skillName) {
+  if (!skillName) {
+    return null
+  }
+  if (side === 'player') {
+    return skillCatalog.value.find((skill) => skill.name === skillName) ?? null
+  }
+  const enemySkills = run.value?.combat
+    ? combatEnemy.value?.skills ?? []
+    : combatOutro.value?.enemySkills ?? combatEnemyVisual.value?.skills ?? []
+  return enemySkills.find((skill) => skill.name === skillName) ?? null
+}
+
+function inferSkillAnimationStyle(skill) {
+  if (!skill) {
+    return 'magic'
+  }
+  if (skill.effect === 'heal' || skill.effect === 'shield' || skill.effect === 'buff' || skill.effect === 'debuff') {
+    return 'magic'
+  }
+  if (skill.effect === 'dot' && (skill.minRange ?? 1) >= 2) {
+    return 'magic'
+  }
+  if ((skill.minRange ?? 1) >= 3 || (skill.maxRange ?? 1) >= 4) {
+    return 'magic'
+  }
+  if ((skill.manaCost ?? 0) >= 14) {
+    return 'magic'
+  }
+  return 'physical'
+}
+
+function animateCombatAction(side, style = 'physical', delayMs = 0) {
+  const targetSide = side === 'player' ? 'enemy' : 'player'
+  queueCombatFx(() => {
+    if (style === 'magic') {
+      setActorState(side, 'cast', 400)
+      triggerProjectile(side, 80)
+      triggerImpact(targetSide, 250)
+      if (side === 'player') {
+        playCombatSound(COMBAT_SOUND_BANK.playerCast, 0.22)
+      } else {
+        playCombatSound(COMBAT_SOUND_BANK.enemyCast, 0.22)
+      }
+      return
+    }
+
+    setActorState(side, 'attack', 320)
+    if (side === 'player') {
+      playCombatSound(COMBAT_SOUND_BANK.playerAttack, 0.21)
+    } else {
+      playCombatSound(COMBAT_SOUND_BANK.enemyAttack, 0.22)
+    }
+  }, delayMs)
+}
+
+function normalizeCombatLog(entry) {
+  return entry.replace(/^\[\d{2}:\d{2}\]\s*/, '')
+}
+
+function processCombatLogEntry(entry, delayMs = 0) {
+  if (!run.value) {
+    return
+  }
+  const text = normalizeCombatLog(entry)
+  const lower = text.toLowerCase()
+  const playerName = run.value.player.name.toLowerCase()
+  const enemyName = (run.value.combat?.enemyName ?? combatOutro.value?.enemyName ?? '').toLowerCase()
+
+  if (lower.includes(' vaincu: ')) {
+    queueCombatFx(() => {
+      setActorState('enemy', 'death', 0)
+      playCombatSound(COMBAT_SOUND_BANK.enemyDeath, 0.26)
+    }, delayMs)
+    return
+  }
+
+  if (lower.startsWith('defaite:') || lower.includes('mort definitive')) {
+    queueCombatFx(() => {
+      setActorState('player', 'death', 0)
+      playCombatSound(COMBAT_SOUND_BANK.playerDeath, 0.26)
+    }, delayMs)
+    return
+  }
+
+  const launchMatch = text.match(/^(.+?) lance (.+?)\./)
+  if (launchMatch) {
+    const actorName = launchMatch[1].trim().toLowerCase()
+    const skillName = launchMatch[2]?.trim()
+    const side = actorName === playerName ? 'player' : 'enemy'
+    const style = inferSkillAnimationStyle(findCombatSkillByName(side, skillName))
+    animateCombatAction(side, style, delayMs)
+    return
+  }
+
+  if (
+    lower.startsWith('attaque normale') ||
+    lower.includes('ton attaque normale') ||
+    lower.includes('frappe:') ||
+    (enemyName && lower.includes(`attaque normale de ${enemyName}`))
+  ) {
+    const side =
+      lower.startsWith('attaque normale') || lower.includes('ton attaque normale') || lower.includes('esquive ton attaque')
+        ? 'player'
+        : 'enemy'
+    animateCombatAction(side, 'physical', delayMs)
+  }
+}
+
+function processNewCombatLogs() {
+  if (!run.value) {
+    lastCombatTopLog.value = ''
+    return
+  }
+  const currentTop = run.value.eventLog[0] ?? ''
+  if (!currentTop) {
+    return
+  }
+  if (!lastCombatTopLog.value) {
+    lastCombatTopLog.value = currentTop
+    return
+  }
+  if (currentTop === lastCombatTopLog.value) {
+    return
+  }
+
+  const pending = []
+  for (const entry of run.value.eventLog) {
+    if (entry === lastCombatTopLog.value) {
+      break
+    }
+    pending.push(entry)
+    if (pending.length >= 14) {
+      break
+    }
+  }
+  lastCombatTopLog.value = currentTop
+
+  if (!run.value.combat && !combatOutro.value) {
+    return
+  }
+
+  pending.reverse().forEach((entry, index) => {
+    processCombatLogEntry(entry, index * 170)
+  })
+}
+
+function snapshotCombatState(battle) {
+  return {
+    enemyRefId: battle.enemyRefId,
+    enemyTemplateId: battle.enemyTemplateId,
+    enemyName: battle.enemyName,
+    enemyIsBoss: battle.enemyIsBoss,
+    enemyStats: { ...battle.enemyStats },
+    enemyHp: battle.enemyHp,
+    enemyMana: battle.enemyMana ?? 0,
+    enemyAp: battle.enemyAp,
+    playerAp: battle.playerAp,
+    distance: battle.distance,
+    actor: battle.actor,
+    turn: battle.turn,
+    enemySkills: [...(combatEnemy.value?.skills ?? ENEMY_TEMPLATES[battle.enemyTemplateId]?.skills ?? [])],
+  }
+}
+
+function startCombatOutro(previousBattle, result) {
+  clearCombatFxTimers()
+  resetCombatVisuals(false)
+  combatOutro.value = {
+    ...snapshotCombatState(previousBattle),
+    result,
+  }
+  if (result === 'victory') {
+    setActorState('enemy', 'death', 0)
+    playCombatSound(COMBAT_SOUND_BANK.enemyDeath, 0.26)
+  }
+  if (result === 'defeat') {
+    setActorState('player', 'death', 0)
+    playCombatSound(COMBAT_SOUND_BANK.playerDeath, 0.26)
+  }
+  queueCombatFx(() => {
+    combatOutro.value = null
+    resetCombatVisuals()
+  }, 900)
+}
+
+watch(
+  () => run.value?.combat,
+  (battle, previousBattle) => {
+    if (!battle) {
+      if (previousBattle) {
+        const currentDeaths = run.value?.player?.deaths ?? lastPlayerDeaths.value
+        const playerDefeat = currentDeaths > lastPlayerDeaths.value
+        const enemyDefeat = previousBattle.enemyHp <= 0
+        if (enemyDefeat || playerDefeat) {
+          startCombatOutro(previousBattle, enemyDefeat ? 'victory' : 'defeat')
+        } else {
+          combatOutro.value = null
+          resetCombatVisuals()
+        }
+      } else {
+        combatOutro.value = null
+        resetCombatVisuals()
+      }
+      lastCombatTopLog.value = run.value?.eventLog?.[0] ?? ''
+      lastPlayerDeaths.value = run.value?.player?.deaths ?? 0
+      return
+    }
+
+    clearCombatFxTimers()
+    combatOutro.value = null
+    resetCombatVisuals(false)
+    lastCombatTopLog.value = run.value?.eventLog?.[0] ?? ''
+    lastPlayerDeaths.value = run.value?.player?.deaths ?? 0
+  },
+)
+
+watch(
+  () => (run.value?.combat ? [run.value.player.hp, run.value.combat.enemyHp] : null),
+  (current, previous) => {
+    if (!current || !previous) {
+      return
+    }
+    const [playerHp, enemyHp] = current
+    const [previousPlayerHp, previousEnemyHp] = previous
+
+    if (enemyHp < previousEnemyHp) {
+      pushCombatPopup('enemy', previousEnemyHp - enemyHp, 'damage')
+      triggerHit('enemy')
+    } else if (enemyHp > previousEnemyHp) {
+      pushCombatPopup('enemy', enemyHp - previousEnemyHp, 'heal')
+    }
+
+    if (playerHp < previousPlayerHp) {
+      pushCombatPopup('player', previousPlayerHp - playerHp, 'damage')
+      triggerHit('player')
+    } else if (playerHp > previousPlayerHp) {
+      pushCombatPopup('player', playerHp - previousPlayerHp, 'heal')
+    }
+  },
+)
+
+watch(
+  () => run.value?.eventLog?.[0] ?? '',
+  () => {
+    processNewCombatLogs()
+  },
+)
 
 const mapGridStyle = computed(() => {
   if (!activeMap.value) {
@@ -627,17 +1119,6 @@ function attemptFleeAction() {
   scheduleEnemyTurn()
 }
 
-function combatMove(direction) {
-  if (!run.value) {
-    return
-  }
-  const result = playerMoveCombat(run.value, direction)
-  if (!result.ok) {
-    setInfo(result.reason)
-  }
-  persistRun()
-}
-
 function endTurnAction() {
   if (!run.value) {
     return
@@ -779,12 +1260,6 @@ function keyHandler(event) {
     return
   }
 
-  if (key === 'q') {
-    combatMove('closer')
-  }
-  if (key === 'r') {
-    combatMove('farther')
-  }
   if (key === 'x') {
     useNormalAttack()
   }
@@ -818,6 +1293,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', keyHandler)
+  clearCombatFxTimers()
   if (enemyTimer.value) {
     window.clearTimeout(enemyTimer.value)
     enemyTimer.value = null
@@ -1084,84 +1560,196 @@ onBeforeUnmount(() => {
           </div>
         </article>
       </div>
-      <div v-if="run.combat" class="overlay-combat">
-        <article class="combat-modal">
+      <div v-if="activeCombatView && run" class="overlay-combat">
+        <article class="combat-modal" :class="{ 'combat-modal-outro': Boolean(combatOutro) }">
           <header class="combat-modal-head">
-            <div class="enemy-head">
-              <img :src="combatEnemy?.asset" alt="ennemi" />
-              <div>
-                <h2>
-                  {{ run.combat.enemyName }}
-                  <span v-if="run.combat.enemyIsBoss">(BOSS)</span>
-                </h2>
-                <p>PV {{ run.combat.enemyHp }} / {{ run.combat.enemyStats.maxHp }} | PA {{ run.combat.enemyAp }} / {{ run.combat.enemyStats.ap }}</p>
-                <p>Distance {{ run.combat.distance }}</p>
-                <p>Style {{ enemyCombatStyle(combatEnemy) }}</p>
-              </div>
+            <div class="combat-head-main">
+              <h2>
+                {{ activeCombatView.enemyName }}
+                <span v-if="activeCombatView.enemyIsBoss">(BOSS)</span>
+              </h2>
+              <p class="combat-subline">
+                <span class="turn-pill" :class="{ enemy: run.combat?.actor === 'enemy' }">{{ combatTurnLabel }}</span>
+                <span>{{ combatDistanceLabel }}</span>
+                <span>Style {{ enemyCombatStyle(combatEnemyVisual) }}</span>
+              </p>
             </div>
-            <div class="player-head">
+            <div class="player-head-compact">
               <img :src="playerPortrait" alt="aventurier" />
               <div>
-                <p>Ton tour: {{ run.combat.actor === 'player' ? 'oui' : 'non' }}</p>
+                <p>{{ run.player.name }}</p>
                 <p class="ap-line">
-                  <span class="ap-pill">PA {{ run.combat.playerAp }}</span>
-                  <span class="ap-pill enemy">PA ennemi {{ run.combat.enemyAp }}</span>
+                  <span class="ap-pill">PA {{ activeCombatView.playerAp }}</span>
+                  <span class="ap-pill enemy">PA ennemi {{ activeCombatView.enemyAp }}</span>
                 </p>
-                <p>PV {{ run.player.hp }} / {{ stats.maxHp }}</p>
-                <p>Mana {{ run.player.mana }} / {{ stats.maxMana }}</p>
               </div>
             </div>
           </header>
 
           <div class="combat-modal-body">
             <section class="combat-actions-panel">
-              <h3>Actions</h3>
-              <div class="combat-actions-row">
-                <button :disabled="!normalAttackReady()" @click="useNormalAttack">
-                  Attaque normale (2 PA) [{{ stats.weaponRangeMin }}-{{ stats.weaponRangeMax }}]
-                </button>
-                <button :disabled="run.combat.actor !== 'player'" @click="combatMove('closer')">Approcher (2 PA) (Q)</button>
-                <button :disabled="run.combat.actor !== 'player'" @click="combatMove('farther')">Reculer (2 PA) (R)</button>
-                <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%) (V)</button>
-                <button
-                  :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
-                  :disabled="run.combat.actor !== 'player'"
-                  @click="endTurnAction"
-                >
-                  Terminer le tour (Espace)
-                </button>
-              </div>
+              <template v-if="run.combat">
+                <h3 class="panel-title">
+                  <img src="/assets/Icons/sword.png" alt="" />
+                  Actions
+                </h3>
+                <div class="combat-actions-row">
+                  <button :disabled="!normalAttackReady()" @click="useNormalAttack">
+                    Attaque normale (2 PA) [{{ stats.weaponRangeMin }}-{{ stats.weaponRangeMax }}]
+                  </button>
+                  <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%) (V)</button>
+                  <button
+                    :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
+                    :disabled="run.combat.actor !== 'player'"
+                    @click="endTurnAction"
+                  >
+                    Terminer le tour (Espace)
+                  </button>
+                </div>
 
-              <h3>Competences</h3>
-              <div class="skills-grid">
-                <button
-                  v-for="(skill, index) in unlockedPlayerSkills"
-                  :key="skill.id"
-                  :disabled="!skillReady(skill)"
-                  @click="useSkillAction(skill.id)"
-                >
-                  {{ index + 1 }}. {{ skill.name }}
-                  <small>
-                    {{ skill.description }}
-                    | PA {{ skill.apCost }} mana {{ skill.manaCost }}
-                    | portee
-                    {{ skill.minRange === 0 && skill.maxRange === 0 ? 'self' : `${skill.minRange}-${skill.maxRange + (stats.rangeFlat ?? 0)}` }}
-                    | CD {{ run.combat.playerCooldowns[skill.id] ?? 0 }}
-                  </small>
-                </button>
-              </div>
+                <h3 class="panel-title">
+                  <img src="/assets/Icons/skills.png" alt="" />
+                  Competences
+                </h3>
+                <div class="skills-grid">
+                  <button
+                    v-for="(skill, index) in unlockedPlayerSkills"
+                    :key="skill.id"
+                    :disabled="!skillReady(skill)"
+                    @click="useSkillAction(skill.id)"
+                  >
+                    {{ index + 1 }}. {{ skill.name }}
+                    <small>
+                      {{ skill.description }}
+                      | PA {{ skill.apCost }} mana {{ skill.manaCost }}
+                      | portee
+                      {{ skill.minRange === 0 && skill.maxRange === 0 ? 'self' : `${skill.minRange}-${skill.maxRange + (stats.rangeFlat ?? 0)}` }}
+                      | CD {{ run.combat.playerCooldowns[skill.id] ?? 0 }}
+                    </small>
+                  </button>
+                </div>
 
-              <h3>Potions</h3>
-              <div class="potions-grid">
-                <button
-                  v-for="item in potionItems"
-                  :key="item.id"
-                  :disabled="run.combat.actor !== 'player'"
-                  @click="consumeItem(item.id)"
-                >
-                  {{ item.name }} x{{ item.quantity }}
-                </button>
-                <p v-if="!potionItems.length">Aucune potion en inventaire.</p>
+                <h3 class="panel-title">
+                  <img src="/assets/Icons/potion.png" alt="" />
+                  Potions
+                </h3>
+                <div class="potions-grid">
+                  <button
+                    v-for="item in potionItems"
+                    :key="item.id"
+                    :disabled="run.combat.actor !== 'player'"
+                    @click="consumeItem(item.id)"
+                  >
+                    {{ item.name }} x{{ item.quantity }}
+                  </button>
+                  <p v-if="!potionItems.length">Aucune potion en inventaire.</p>
+                </div>
+              </template>
+              <template v-else>
+                <h3>Resolution</h3>
+                <p v-if="combatOutro?.result === 'victory'">Victoire: recompenses en cours de distribution.</p>
+                <p v-else>Defaite: repli en cours.</p>
+              </template>
+            </section>
+
+            <section class="combat-scene-panel">
+              <div class="battle-stage" :style="combatSceneStyle">
+                <div class="battle-scene-topline">
+                  <span>{{ combatTurnLabel }}</span>
+                  <span>{{ combatDistanceLabel }}</span>
+                </div>
+
+                <div v-if="combatOutro" class="battle-outro-tag" :class="combatOutro.result">
+                  {{ combatOutro.result === 'victory' ? 'Victoire' : 'Defaite' }}
+                </div>
+
+                <div
+                  v-if="combatProjectile.active"
+                  :key="`projectile-${combatProjectile.tick}`"
+                  class="battle-projectile"
+                  :class="`from-${combatProjectile.from}`"
+                ></div>
+                <div
+                  v-if="combatImpact.active"
+                  :key="`impact-${combatImpact.tick}`"
+                  class="battle-impact"
+                  :class="`on-${combatImpact.side}`"
+                ></div>
+
+                <div class="battle-unit player" :class="{ active: run.combat?.actor === 'player' }">
+                  <div class="battle-unit-hud">
+                    <strong>{{ run.player.name }}</strong>
+                    <p class="battle-hud-meta">
+                      <img src="/assets/Icons/sword.png" alt="" />
+                      PA {{ activeCombatView.playerAp }}
+                      <img src="/assets/Icons/staff.png" alt="" />
+                      Mana {{ run.player.mana }} / {{ stats.maxMana }}
+                    </p>
+                    <div class="battle-bars">
+                      <div class="battle-bar hp">
+                        <span :style="{ width: `${combatPlayerHpPercent}%` }"></span>
+                      </div>
+                      <div class="battle-bar mana">
+                        <span :style="{ width: `${combatPlayerManaPercent}%` }"></span>
+                      </div>
+                    </div>
+                    <p class="battle-hp-label">PV {{ run.player.hp }} / {{ stats.maxHp }}</p>
+                  </div>
+
+                  <div class="battle-actor player" :data-state="combatPlayerState">
+                    <img class="battle-sprite" :src="playerPortrait" alt="sprite joueur" />
+                    <div class="battle-popups">
+                      <span
+                        v-for="popup in combatPopups.player"
+                        :key="popup.id"
+                        class="battle-popup"
+                        :class="popup.kind"
+                      >
+                        {{ popup.label }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="battle-unit enemy" :class="{ active: run.combat?.actor === 'enemy' }">
+                  <div class="battle-unit-hud">
+                    <strong>
+                      {{ activeCombatView.enemyName }}
+                      <span v-if="activeCombatView.enemyIsBoss">(BOSS)</span>
+                    </strong>
+                    <p class="battle-hud-meta">
+                      <img src="/assets/Icons/sword.png" alt="" />
+                      PA {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap }}
+                      <template v-if="combatEnemyHasMana">
+                        <img src="/assets/Icons/staff.png" alt="" />
+                        Mana {{ activeCombatView.enemyMana }} / {{ activeCombatView.enemyStats.maxMana }}
+                      </template>
+                    </p>
+                    <div class="battle-bars">
+                      <div class="battle-bar hp">
+                        <span :style="{ width: `${combatEnemyHpPercent}%` }"></span>
+                      </div>
+                      <div v-if="combatEnemyHasMana" class="battle-bar mana">
+                        <span :style="{ width: `${combatEnemyManaPercent}%` }"></span>
+                      </div>
+                    </div>
+                    <p class="battle-hp-label">PV {{ activeCombatView.enemyHp }} / {{ activeCombatView.enemyStats.maxHp }}</p>
+                  </div>
+
+                  <div class="battle-actor enemy" :data-state="combatEnemyState">
+                    <img class="battle-sprite" :src="combatEnemyVisual?.asset ?? ''" alt="sprite ennemi" />
+                    <div class="battle-popups">
+                      <span
+                        v-for="popup in combatPopups.enemy"
+                        :key="popup.id"
+                        class="battle-popup"
+                        :class="popup.kind"
+                      >
+                        {{ popup.label }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </section>
 
@@ -1712,56 +2300,91 @@ button.danger {
 }
 
 .combat-modal {
-  width: min(96vw, 1240px);
+  width: min(96vw, 1520px);
   max-height: 92vh;
   overflow: auto;
   border-radius: 14px;
   border: 1px solid rgba(252, 208, 135, 0.4);
-  background: linear-gradient(150deg, rgba(6, 20, 28, 0.96), rgba(50, 16, 11, 0.96));
+  background: linear-gradient(152deg, rgba(5, 18, 24, 0.98), rgba(48, 16, 10, 0.95));
   padding: 14px;
   box-shadow: 0 20px 44px rgba(0, 0, 0, 0.55);
+}
+
+.combat-modal-outro {
+  border-color: rgba(255, 224, 150, 0.5);
 }
 
 .combat-modal-head {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 12px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(240, 196, 122, 0.25);
+  background: rgba(8, 18, 24, 0.65);
 }
 
-.enemy-head {
+.combat-head-main {
+  display: grid;
+  gap: 5px;
+}
+
+.combat-head-main h2 {
+  margin: 0;
+  letter-spacing: 0.03em;
+}
+
+.combat-subline {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.84rem;
+  color: #dccfaf;
+}
+
+.turn-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 10px;
+  border: 1px solid rgba(143, 219, 255, 0.7);
+  background: rgba(22, 102, 133, 0.8);
+  color: #e5f7ff;
+  font-weight: 700;
+}
+
+.turn-pill.enemy {
+  border-color: rgba(255, 193, 137, 0.72);
+  background: rgba(151, 63, 40, 0.82);
+  color: #ffe5cd;
+}
+
+.player-head-compact {
   display: flex;
   gap: 10px;
+  align-items: center;
 }
 
-.enemy-head img {
-  width: 88px;
-  height: 88px;
-  border-radius: 10px;
-  object-fit: cover;
-  image-rendering: pixelated;
-  border: 1px solid rgba(255, 198, 133, 0.4);
-}
-
-.player-head {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.player-head img {
-  width: 88px;
-  height: 88px;
+.player-head-compact img {
+  width: 64px;
+  height: 64px;
   border-radius: 10px;
   object-fit: cover;
   image-rendering: pixelated;
   border: 1px solid rgba(159, 218, 255, 0.45);
 }
 
+.player-head-compact p {
+  margin: 0;
+}
+
 .combat-modal-body {
   margin-top: 10px;
   display: grid;
-  grid-template-columns: 1.25fr 1fr;
+  grid-template-columns: minmax(280px, 1fr) minmax(460px, 1.35fr) minmax(280px, 1fr);
   gap: 10px;
+  align-items: start;
 }
 
 .ap-line {
@@ -1785,11 +2408,29 @@ button.danger {
 }
 
 .combat-actions-panel,
+.combat-scene-panel,
 .combat-log-panel {
   border: 1px solid rgba(240, 198, 123, 0.24);
   border-radius: 10px;
   padding: 10px;
   background: rgba(8, 18, 24, 0.65);
+}
+
+.combat-scene-panel {
+  min-height: 400px;
+}
+
+.panel-title {
+  margin: 0 0 7px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel-title img {
+  width: 18px;
+  height: 18px;
+  image-rendering: pixelated;
 }
 
 .combat-actions-row,
@@ -1801,6 +2442,268 @@ button.danger {
 
 .skills-grid button {
   text-align: left;
+}
+
+.battle-stage {
+  position: relative;
+  min-height: 380px;
+  border-radius: 12px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  background-size: cover;
+  background-position: center;
+  isolation: isolate;
+}
+
+.battle-stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 115%, rgba(255, 213, 139, 0.2), transparent 52%),
+    linear-gradient(180deg, rgba(8, 15, 20, 0.24), rgba(6, 12, 16, 0.74));
+  z-index: 0;
+}
+
+.battle-stage > * {
+  position: relative;
+  z-index: 1;
+}
+
+.battle-scene-topline {
+  grid-column: 1 / -1;
+  align-self: start;
+  justify-self: center;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(248, 211, 140, 0.34);
+  background: rgba(5, 13, 18, 0.66);
+  font-size: 0.8rem;
+  color: #f1deba;
+}
+
+.battle-outro-tag {
+  position: absolute;
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255, 232, 164, 0.45);
+  border-radius: 999px;
+  padding: 4px 12px;
+  background: rgba(15, 36, 18, 0.66);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.battle-outro-tag.defeat {
+  background: rgba(53, 15, 15, 0.72);
+}
+
+.battle-unit {
+  display: grid;
+  gap: 8px;
+  align-content: end;
+  min-height: 300px;
+}
+
+.battle-unit.enemy {
+  justify-items: end;
+  text-align: right;
+}
+
+.battle-unit-hud {
+  width: min(100%, 270px);
+  border: 1px solid rgba(241, 199, 123, 0.32);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(6, 14, 19, 0.76);
+}
+
+.battle-unit.active .battle-unit-hud {
+  border-color: rgba(255, 226, 160, 0.8);
+  box-shadow: 0 0 0 1px rgba(255, 226, 160, 0.32);
+}
+
+.battle-hud-meta {
+  margin: 4px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: #d7d7d7;
+}
+
+.battle-hud-meta img {
+  width: 14px;
+  height: 14px;
+  image-rendering: pixelated;
+}
+
+.battle-bars {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.battle-bar {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(223, 194, 144, 0.34);
+  background: rgba(8, 12, 17, 0.85);
+}
+
+.battle-bar span {
+  display: block;
+  height: 100%;
+  transition: width 240ms ease;
+}
+
+.battle-bar.hp span {
+  background: linear-gradient(90deg, #a53732, #dc7f58);
+}
+
+.battle-bar.mana span {
+  background: linear-gradient(90deg, #1f6f86, #4eb7e0);
+}
+
+.battle-hp-label {
+  margin: 6px 0 0;
+  font-size: 0.77rem;
+  color: #d7cdb2;
+}
+
+.battle-actor {
+  position: relative;
+  width: clamp(120px, 18vw, 240px);
+  min-height: 185px;
+  display: grid;
+  place-items: end center;
+  transform-origin: 50% 82%;
+}
+
+.battle-actor::after {
+  content: '';
+  position: absolute;
+  inset: 28% 18% 12%;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.battle-sprite {
+  width: 100%;
+  max-height: 182px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 12px 12px rgba(0, 0, 0, 0.52));
+}
+
+.battle-actor.enemy .battle-sprite {
+  transform: scaleX(-1);
+}
+
+.battle-actor[data-state='idle'] {
+  animation: battler-idle 2.4s ease-in-out infinite;
+}
+
+.battle-actor.player[data-state='attack'] {
+  animation: battler-dash-player 340ms cubic-bezier(0.16, 0.68, 0.4, 1) 1;
+}
+
+.battle-actor.enemy[data-state='attack'] {
+  animation: battler-dash-enemy 340ms cubic-bezier(0.16, 0.68, 0.4, 1) 1;
+}
+
+.battle-actor[data-state='cast'] {
+  animation: battler-cast 430ms ease-out 1;
+}
+
+.battle-actor[data-state='cast']::after {
+  animation: cast-aura 430ms ease-out 1;
+}
+
+.battle-actor[data-state='hit'] {
+  animation: battler-hit 280ms ease-in-out 1;
+}
+
+.battle-actor[data-state='death'] {
+  animation: battler-death 880ms ease forwards;
+}
+
+.battle-projectile {
+  position: absolute;
+  top: 58%;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #fff6d7, #73d7ff 42%, #13799b 70%);
+  box-shadow: 0 0 16px rgba(135, 225, 255, 0.65);
+  z-index: 2;
+}
+
+.battle-projectile.from-player {
+  left: 26%;
+  animation: battle-projectile-right 360ms linear forwards;
+}
+
+.battle-projectile.from-enemy {
+  left: 74%;
+  animation: battle-projectile-left 360ms linear forwards;
+}
+
+.battle-impact {
+  position: absolute;
+  top: 58%;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background: radial-gradient(circle, rgba(255, 247, 195, 0.88), rgba(255, 150, 102, 0.24), transparent 70%);
+  animation: battle-impact-burst 260ms ease-out forwards;
+  z-index: 2;
+}
+
+.battle-impact.on-player {
+  left: 22%;
+}
+
+.battle-impact.on-enemy {
+  left: 78%;
+}
+
+.battle-popups {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+}
+
+.battle-popup {
+  margin-top: 4px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+  animation: popup-float 900ms ease-out forwards;
+}
+
+.battle-popup.damage {
+  color: #ffd0c4;
+}
+
+.battle-popup.heal {
+  color: #abf3be;
 }
 
 .end-turn-btn {
@@ -1821,6 +2724,165 @@ button.danger {
   }
 }
 
+@keyframes battler-idle {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes battler-dash-player {
+  0% {
+    transform: translateX(0);
+  }
+  40% {
+    transform: translateX(38px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes battler-dash-enemy {
+  0% {
+    transform: translateX(0);
+  }
+  40% {
+    transform: translateX(-38px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes battler-cast {
+  0% {
+    transform: scale(1);
+    filter: saturate(1);
+  }
+  50% {
+    transform: scale(1.05);
+    filter: saturate(1.2) brightness(1.2);
+  }
+  100% {
+    transform: scale(1);
+    filter: saturate(1);
+  }
+}
+
+@keyframes cast-aura {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+    box-shadow: 0 0 0 rgba(141, 215, 255, 0.2);
+  }
+  40% {
+    opacity: 0.8;
+    transform: scale(1);
+    box-shadow: 0 0 28px rgba(141, 215, 255, 0.55);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.2);
+    box-shadow: 0 0 0 rgba(141, 215, 255, 0);
+  }
+}
+
+@keyframes battler-hit {
+  0% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-8px);
+  }
+  50% {
+    transform: translateX(7px);
+  }
+  75% {
+    transform: translateX(-5px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes battler-death {
+  0% {
+    opacity: 1;
+    transform: translateY(0) rotate(0deg);
+    filter: saturate(1);
+  }
+  65% {
+    opacity: 0.45;
+    transform: translateY(18px) rotate(4deg);
+    filter: saturate(0.55);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(38px) rotate(8deg);
+    filter: saturate(0.35);
+  }
+}
+
+@keyframes battle-projectile-right {
+  0% {
+    transform: translate(-50%, -50%) scale(0.75);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(210%, -95%) scale(1.08);
+    opacity: 0;
+  }
+}
+
+@keyframes battle-projectile-left {
+  0% {
+    transform: translate(-50%, -50%) scale(0.75);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-210%, -95%) scale(1.08);
+    opacity: 0;
+  }
+}
+
+@keyframes battle-impact-burst {
+  0% {
+    transform: translate(-50%, -50%) scale(0.4);
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.15);
+    opacity: 0;
+  }
+}
+
+@keyframes popup-float {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-34px);
+    opacity: 0;
+  }
+}
+
 .skills-grid small {
   display: block;
   margin-top: 3px;
@@ -1829,7 +2891,7 @@ button.danger {
 }
 
 .combat-log-panel {
-  max-height: 65vh;
+  max-height: 68vh;
   overflow: auto;
 }
 
@@ -1938,8 +3000,72 @@ button.danger {
     grid-template-columns: 1fr;
   }
 
+  .combat-modal-head {
+    grid-template-columns: 1fr;
+  }
+
   .combat-modal-body {
     grid-template-columns: 1fr;
+  }
+
+  .combat-scene-panel {
+    order: 1;
+  }
+
+  .combat-actions-panel {
+    order: 2;
+  }
+
+  .combat-log-panel {
+    order: 3;
+    max-height: 40vh;
+  }
+}
+
+@media (max-width: 760px) {
+  .combat-modal {
+    width: min(98vw, 760px);
+    padding: 10px;
+  }
+
+  .combat-subline {
+    gap: 6px;
+    font-size: 0.76rem;
+  }
+
+  .player-head-compact {
+    align-items: flex-start;
+  }
+
+  .battle-stage {
+    min-height: 300px;
+    padding: 9px;
+    gap: 6px;
+  }
+
+  .battle-scene-topline {
+    font-size: 0.75rem;
+  }
+
+  .battle-unit {
+    min-height: 228px;
+  }
+
+  .battle-unit-hud {
+    width: 100%;
+  }
+
+  .battle-hud-meta {
+    font-size: 0.72rem;
+  }
+
+  .battle-actor {
+    width: clamp(98px, 34vw, 158px);
+    min-height: 150px;
+  }
+
+  .battle-sprite {
+    max-height: 142px;
   }
 }
 </style>

@@ -581,7 +581,7 @@ export const ENEMY_TEMPLATES = Object.fromEntries(
         ...combatDefaults,
         skills: (template.skills ?? []).map((skill) => ({
           ...skill,
-          ...(ENEMY_SKILL_STATUS_AUGMENTS[skill.id] ?? {}),
+          ...ENEMY_SKILL_STATUS_AUGMENTS[skill.id],
         })),
       },
     ]
