@@ -8,6 +8,7 @@ import {
   MAIN_LORE,
   MAPS,
   MATERIAL_LABELS,
+  RARITY_ORDER,
   RARITIES,
   RECIPES,
 } from './game/data'
@@ -73,6 +74,7 @@ const enemyTimer = ref(null)
 const infoTimer = ref(null)
 const skillsModalOpen = ref(false)
 const passivesModalOpen = ref(false)
+const inventoryModalOpen = ref(false)
 const riddleModal = ref(null)
 
 const creation = reactive({
@@ -133,6 +135,101 @@ const shouldEmphasizeEndTurn = computed(() => {
   return !canAttack && !canUseSkill
 })
 
+const INVENTORY_GROUP_DEFS = [
+  { id: 'weapon', label: 'Armes', icon: '/assets/Icons/sword.png' },
+  { id: 'armor', label: 'Armures', icon: '/assets/Icons/armor.png' },
+  { id: 'trinket', label: 'Babioles', icon: '/assets/Icons/dagger.png' },
+  { id: 'consumable', label: 'Consommables', icon: '/assets/Icons/potion.png' },
+  { id: 'other', label: 'Divers', icon: '/assets/Icons/backpack.png' },
+]
+
+const inventoryGroups = computed(() => {
+  if (!run.value) {
+    return []
+  }
+
+  const groups = INVENTORY_GROUP_DEFS.map((entry) => ({ ...entry, items: [] }))
+  const byId = Object.fromEntries(groups.map((entry) => [entry.id, entry]))
+
+  for (const item of run.value.player.inventory) {
+    if (item.kind === 'consumable') {
+      byId.consumable.items.push(item)
+      continue
+    }
+    if (item.kind === 'equipment') {
+      if (item.slot === 'weapon') {
+        byId.weapon.items.push(item)
+        continue
+      }
+      if (item.slot === 'armor') {
+        byId.armor.items.push(item)
+        continue
+      }
+      if (item.slot === 'trinket') {
+        byId.trinket.items.push(item)
+        continue
+      }
+    }
+    byId.other.items.push(item)
+  }
+
+  for (const group of groups) {
+    group.items.sort(sortInventoryItems)
+  }
+
+  return groups.filter((entry) => entry.items.length > 0)
+})
+
+function rarityRank(rarity) {
+  const index = RARITY_ORDER.indexOf(rarity)
+  return index < 0 ? -1 : index
+}
+
+function sortInventoryItems(left, right) {
+  const rankDelta = rarityRank(right.rarity) - rarityRank(left.rarity)
+  if (rankDelta !== 0) {
+    return rankDelta
+  }
+  const valueDelta = (right.value ?? 0) - (left.value ?? 0)
+  if (valueDelta !== 0) {
+    return valueDelta
+  }
+  return (left.name ?? '').localeCompare(right.name ?? '')
+}
+
+function inventoryTypeLabel(item) {
+  if (item.kind === 'equipment') {
+    if (item.slot === 'weapon') {
+      return 'Type: Arme'
+    }
+    if (item.slot === 'armor') {
+      return 'Type: Armure'
+    }
+    if (item.slot === 'trinket') {
+      return 'Type: Babiole'
+    }
+    return 'Type: Equipement'
+  }
+  if (item.kind === 'consumable') {
+    return 'Type: Consommable'
+  }
+  return `Type: ${item.kind ?? 'Divers'}`
+}
+
+function inventoryDetail(item) {
+  if (item.kind === 'equipment') {
+    const rangeText =
+      item.slot === 'weapon'
+        ? ` | portee ${item.rangeMin ?? 1}-${item.rangeMax ?? 1}`
+        : ''
+    return `ATK ${item.attack ?? 0} DEF ${item.defense ?? 0}${rangeText}`
+  }
+  if (item.kind === 'consumable') {
+    return `Quantite: ${item.quantity ?? 0}`
+  }
+  return ''
+}
+
 const COMBAT_SOUND_BANK = {
   playerAttack: [
     '/assets/sounds/07_human_atk_sword_1.wav',
@@ -166,7 +263,38 @@ const COMBAT_SOUND_BANK = {
   enemyDeath: ['/assets/sounds/24_orc_death_spin.wav'],
 }
 
+const BACKGROUND_MUSIC = {
+  world: '/assets/musics/Goblins_Den_(Regular).wav',
+  battle: '/assets/musics/Goblins_Dance_(Battle).wav',
+}
+
 const combatFxTimers = []
+const combatSpriteTimers = {
+  player: null,
+  enemy: null,
+}
+const spriteMetaCache = new Map()
+const combatSpriteMeta = reactive({
+  player: {
+    src: '',
+    frames: 1,
+    frameWidth: 1,
+    frameHeight: 1,
+  },
+  enemy: {
+    src: '',
+    frames: 1,
+    frameWidth: 1,
+    frameHeight: 1,
+  },
+})
+const combatSpriteFrame = reactive({
+  player: 0,
+  enemy: 0,
+})
+
+const worldMusic = ref(null)
+const battleMusic = ref(null)
 const combatPlayerState = ref('idle')
 const combatEnemyState = ref('idle')
 const combatStateTokens = reactive({
@@ -203,13 +331,10 @@ const combatEnemyVisual = computed(() => {
   return ENEMY_TEMPLATES[combatOutro.value.enemyTemplateId] ?? null
 })
 const combatSceneStyle = computed(() => {
-  const background = activeMap.value?.background ?? '/assets/Environment/Tilesets/Floors_Tiles.png'
+  const usesWaterTone = activeMap.value?.background?.toLowerCase?.().includes('water') ?? false
+  const glowColor = usesWaterTone ? 'rgba(109, 191, 224, 0.24)' : 'rgba(243, 190, 105, 0.22)'
   return {
-    backgroundImage: [
-      'radial-gradient(circle at 50% 105%, rgba(243, 190, 105, 0.24), transparent 45%)',
-      'linear-gradient(175deg, rgba(4, 10, 15, 0.2), rgba(3, 8, 11, 0.72))',
-      `url('${background}')`,
-    ].join(', '),
+    backgroundImage: `radial-gradient(circle at 52% 110%, ${glowColor}, transparent 46%), linear-gradient(178deg, rgba(7, 16, 22, 0.82), rgba(3, 9, 13, 0.96))`,
   }
 })
 const combatTurnLabel = computed(() => {
@@ -277,6 +402,156 @@ function randomFrom(list) {
   return list[Math.floor(Math.random() * list.length)]
 }
 
+function stopSpriteTicker(side) {
+  if (!combatSpriteTimers[side]) {
+    return
+  }
+  window.clearInterval(combatSpriteTimers[side])
+  combatSpriteTimers[side] = null
+}
+
+function stopAllSpriteTickers() {
+  stopSpriteTicker('player')
+  stopSpriteTicker('enemy')
+}
+
+function guessSpriteFrames(width, height) {
+  if (!width || !height) {
+    return { frames: 1, frameWidth: 1, frameHeight: 1 }
+  }
+  const raw = Math.round(width / height)
+  const frames = Math.max(1, Math.min(12, Number.isFinite(raw) ? raw : 1))
+  return {
+    frames,
+    frameWidth: Math.max(1, Math.round(width / frames)),
+    frameHeight: Math.max(1, Math.round(height)),
+  }
+}
+
+function loadSpriteMeta(source) {
+  if (!source) {
+    return Promise.resolve({ frames: 1, frameWidth: 1, frameHeight: 1 })
+  }
+  if (spriteMetaCache.has(source)) {
+    return Promise.resolve(spriteMetaCache.get(source))
+  }
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => {
+      const meta = guessSpriteFrames(image.naturalWidth, image.naturalHeight)
+      spriteMetaCache.set(source, meta)
+      resolve(meta)
+    }
+    image.onerror = () => {
+      const fallback = { frames: 1, frameWidth: 1, frameHeight: 1 }
+      spriteMetaCache.set(source, fallback)
+      resolve(fallback)
+    }
+    image.src = source
+  })
+}
+
+function spriteTickRate(side) {
+  return side === 'player' ? 145 : 170
+}
+
+function restartSpriteTicker(side) {
+  stopSpriteTicker(side)
+  if (!activeCombatView.value) {
+    return
+  }
+  if (actorStateRef(side).value === 'death') {
+    return
+  }
+  const frames = combatSpriteMeta[side].frames
+  if (!frames || frames <= 1) {
+    combatSpriteFrame[side] = 0
+    return
+  }
+  combatSpriteTimers[side] = window.setInterval(() => {
+    const count = Math.max(1, combatSpriteMeta[side].frames)
+    combatSpriteFrame[side] = (combatSpriteFrame[side] + 1) % count
+  }, spriteTickRate(side))
+}
+
+function setCombatSpriteSource(side, source) {
+  combatSpriteMeta[side].src = source ?? ''
+  combatSpriteFrame[side] = 0
+
+  if (!source) {
+    combatSpriteMeta[side].frames = 1
+    combatSpriteMeta[side].frameWidth = 1
+    combatSpriteMeta[side].frameHeight = 1
+    restartSpriteTicker(side)
+    return
+  }
+
+  loadSpriteMeta(source).then((meta) => {
+    if (combatSpriteMeta[side].src !== source) {
+      return
+    }
+    combatSpriteMeta[side].frames = meta.frames
+    combatSpriteMeta[side].frameWidth = meta.frameWidth
+    combatSpriteMeta[side].frameHeight = meta.frameHeight
+    restartSpriteTicker(side)
+  })
+}
+
+function battleSpriteViewportStyle(side) {
+  const meta = combatSpriteMeta[side]
+  return {
+    aspectRatio: `${Math.max(1, meta.frameWidth)} / ${Math.max(1, meta.frameHeight)}`,
+  }
+}
+
+function battleSpriteStripStyle(side) {
+  const frameCount = Math.max(1, combatSpriteMeta[side].frames)
+  const stepPercent = 100 / frameCount
+  return {
+    width: `${frameCount * 100}%`,
+    transform: `translateX(-${combatSpriteFrame[side] * stepPercent}%)`,
+  }
+}
+
+function stopMusicTrack(trackRef, resetPosition = false) {
+  const track = trackRef.value
+  if (!track) {
+    return
+  }
+  track.pause()
+  if (resetPosition) {
+    track.currentTime = 0
+  }
+}
+
+function startMusicTrack(trackRef, source, volume) {
+  if (!trackRef.value || trackRef.value.src !== new URL(source, window.location.origin).href) {
+    const audio = new Audio(source)
+    audio.loop = true
+    audio.volume = volume
+    trackRef.value = audio
+  }
+  trackRef.value.volume = volume
+  void trackRef.value.play().catch(() => {})
+}
+
+function syncBackgroundMusic() {
+  if (!run.value || run.value.gameOver) {
+    stopMusicTrack(worldMusic, true)
+    stopMusicTrack(battleMusic, true)
+    return
+  }
+
+  if (run.value.combat) {
+    stopMusicTrack(worldMusic)
+    startMusicTrack(battleMusic, BACKGROUND_MUSIC.battle, 0.22)
+    return
+  }
+
+  stopMusicTrack(battleMusic)
+  startMusicTrack(worldMusic, BACKGROUND_MUSIC.world, 0.16)
+}
+
 function playCombatSound(pool, volume = 0.22) {
   const source = randomFrom(pool)
   if (!source) {
@@ -303,10 +578,18 @@ function resetCombatVisuals(clearTimers = true) {
   combatEnemyState.value = 'idle'
   combatStateTokens.player = 0
   combatStateTokens.enemy = 0
+  combatSpriteFrame.player = 0
+  combatSpriteFrame.enemy = 0
   combatProjectile.active = false
   combatImpact.active = false
   combatPopups.player.splice(0, combatPopups.player.length)
   combatPopups.enemy.splice(0, combatPopups.enemy.length)
+  if (activeCombatView.value) {
+    restartSpriteTicker('player')
+    restartSpriteTicker('enemy')
+  } else {
+    stopAllSpriteTickers()
+  }
 }
 
 function setActorState(side, state, holdMs = 300) {
@@ -317,6 +600,11 @@ function setActorState(side, state, holdMs = 300) {
   combatStateTokens[side] += 1
   const token = combatStateTokens[side]
   stateRef.value = state
+  if (state === 'death') {
+    stopSpriteTicker(side)
+  } else if (!combatSpriteTimers[side]) {
+    restartSpriteTicker(side)
+  }
   if (state !== 'death' && holdMs > 0) {
     queueCombatFx(() => {
       if (combatStateTokens[side] === token && stateRef.value === state) {
@@ -626,6 +914,43 @@ watch(
   },
 )
 
+watch(
+  () => playerPortrait.value,
+  (source) => {
+    setCombatSpriteSource('player', source)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => combatEnemyVisual.value?.asset ?? '',
+  (source) => {
+    setCombatSpriteSource('enemy', source)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [Boolean(activeCombatView.value), combatPlayerState.value, combatEnemyState.value],
+  () => {
+    if (!activeCombatView.value) {
+      stopAllSpriteTickers()
+      return
+    }
+    restartSpriteTicker('player')
+    restartSpriteTicker('enemy')
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [Boolean(run.value), Boolean(run.value?.combat), Boolean(run.value?.gameOver)],
+  () => {
+    syncBackgroundMusic()
+  },
+  { immediate: true },
+)
+
 const mapGridStyle = computed(() => {
   if (!activeMap.value) {
     return {}
@@ -822,6 +1147,7 @@ function updateSaveState() {
 }
 
 function closeMetaModals() {
+  inventoryModalOpen.value = false
   skillsModalOpen.value = false
   passivesModalOpen.value = false
   riddleModal.value = null
@@ -1294,6 +1620,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', keyHandler)
   clearCombatFxTimers()
+  stopAllSpriteTickers()
+  stopMusicTrack(worldMusic, true)
+  stopMusicTrack(battleMusic, true)
   if (enemyTimer.value) {
     window.clearTimeout(enemyTimer.value)
     enemyTimer.value = null
@@ -1390,6 +1719,10 @@ onBeforeUnmount(() => {
           <span>Points passifs {{ run.player.passivePoints }}</span>
         </div>
         <div class="hud-actions">
+          <button class="hud-icon-btn" @click="inventoryModalOpen = true">
+            <img src="/assets/Icons/backpack.png" alt="" />
+            <span>Inventaire</span>
+          </button>
           <button @click="skillsModalOpen = true">Competences</button>
           <button @click="passivesModalOpen = true">Passifs</button>
         </div>
@@ -1697,7 +2030,14 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="battle-actor player" :data-state="combatPlayerState">
-                    <img class="battle-sprite" :src="playerPortrait" alt="sprite joueur" />
+                    <div class="battle-sprite-frame" :style="battleSpriteViewportStyle('player')">
+                      <img
+                        class="battle-sprite-strip"
+                        :src="combatSpriteMeta.player.src || playerPortrait"
+                        alt="sprite joueur"
+                        :style="battleSpriteStripStyle('player')"
+                      />
+                    </div>
                     <div class="battle-popups">
                       <span
                         v-for="popup in combatPopups.player"
@@ -1737,7 +2077,14 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="battle-actor enemy" :data-state="combatEnemyState">
-                    <img class="battle-sprite" :src="combatEnemyVisual?.asset ?? ''" alt="sprite ennemi" />
+                    <div class="battle-sprite-frame mirrored" :style="battleSpriteViewportStyle('enemy')">
+                      <img
+                        class="battle-sprite-strip"
+                        :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')"
+                        alt="sprite ennemi"
+                        :style="battleSpriteStripStyle('enemy')"
+                      />
+                    </div>
                     <div class="battle-popups">
                       <span
                         v-for="popup in combatPopups.enemy"
@@ -1762,6 +2109,51 @@ onBeforeUnmount(() => {
               </ul>
             </section>
           </div>
+        </article>
+      </div>
+
+      <div v-if="inventoryModalOpen && run" class="overlay-meta" @click="inventoryModalOpen = false">
+        <article class="meta-modal inventory-modal" @click.stop>
+          <header class="inventory-modal-head">
+            <h2>
+              <img src="/assets/Icons/backpack.png" alt="" />
+              Inventaire
+            </h2>
+            <p>{{ run.player.inventory.length }} objet(s)</p>
+          </header>
+          <div v-if="inventoryGroups.length" class="inventory-groups">
+            <section v-for="group in inventoryGroups" :key="`group-${group.id}`" class="inventory-group">
+              <h3>
+                <img :src="group.icon" alt="" />
+                {{ group.label }}
+                <small>({{ group.items.length }})</small>
+              </h3>
+              <ul>
+                <li v-for="item in group.items" :key="`modal-${group.id}-${item.id}`">
+                  <img class="item-icon" :src="itemIcon(item)" alt="item" />
+                  <div class="item-main">
+                    <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
+                    <p :class="item.rarity">{{ item.rarity == "common" ? "Commun" 
+                    : item.rarity == "uncommon" ? "Peu commun" 
+                    : item.rarity === "rare" ? "Rare"
+                    : item.rarity == "epic" ? "Épique" 
+                    : item.rarity == "legendary" ? "Légendaire" : "Mythique" }}</p>
+
+                    <p class="inventory-type">{{ inventoryTypeLabel(item) }}</p>
+                    <p v-if="inventoryDetail(item)">{{ inventoryDetail(item) }}</p>
+                    <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
+                    <div class="row-actions">
+                      <button v-if="item.kind === 'equipment'" @click="equipAction(item.id)">Equiper</button>
+                      <button v-if="item.kind === 'consumable'" @click="consumeItem(item.id)">Utiliser</button>
+                      <button @click="sellAction(item.id)">Vendre</button>
+                    </div>
+                  </div>
+                </li>
+              </ul>
+            </section>
+          </div>
+          <p v-else>Inventaire vide.</p>
+          <button class="secondary" @click="inventoryModalOpen = false">Fermer</button>
         </article>
       </div>
 
@@ -2062,6 +2454,18 @@ button.danger {
   align-content: center;
 }
 
+.hud-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-icon-btn img {
+  width: 16px;
+  height: 16px;
+  image-rendering: pixelated;
+}
+
 .columns {
   margin-top: 12px;
   display: grid;
@@ -2155,6 +2559,22 @@ button.danger {
 
 .tile-btn.back {
   background: rgba(96, 95, 165, 0.92);
+}
+
+.uncommon {
+  color: rgb(78, 186, 116);
+}
+
+.rare {
+  color: rgb(78, 165, 255);
+}
+
+.epic {
+  color: rgb(164, 104, 255);
+}
+
+.legendary {
+  color: rgb(255, 179, 71);
 }
 
 .tile-btn.fog {
@@ -2599,16 +3019,22 @@ button.danger {
   opacity: 0;
 }
 
-.battle-sprite {
+.battle-sprite-frame {
   width: 100%;
-  max-height: 182px;
-  object-fit: contain;
+  max-height: 190px;
+  overflow: hidden;
   image-rendering: pixelated;
   filter: drop-shadow(0 12px 12px rgba(0, 0, 0, 0.52));
 }
 
-.battle-actor.enemy .battle-sprite {
+.battle-sprite-frame.mirrored {
   transform: scaleX(-1);
+}
+
+.battle-sprite-strip {
+  display: block;
+  height: 100%;
+  image-rendering: pixelated;
 }
 
 .battle-actor[data-state='idle'] {
@@ -2948,6 +3374,59 @@ button.danger {
   width: min(90vw, 620px);
 }
 
+.inventory-modal {
+  width: min(92vw, 980px);
+}
+
+.inventory-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.inventory-modal-head h2 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.inventory-modal-head img {
+  width: 22px;
+  height: 22px;
+  image-rendering: pixelated;
+}
+
+.inventory-groups {
+  margin: 10px 0;
+  display: grid;
+  gap: 10px;
+}
+
+.inventory-group h3 {
+  margin: 0 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.inventory-group h3 img {
+  width: 18px;
+  height: 18px;
+  image-rendering: pixelated;
+}
+
+.inventory-group small {
+  font-size: 0.78rem;
+  color: #d5c7a6;
+}
+
+.inventory-type {
+  font-size: 0.75rem;
+  color: #ffffff;
+}
+
 .meta-modal li {
   border: 1px solid rgba(244, 203, 138, 0.22);
   border-radius: 8px;
@@ -3064,7 +3543,7 @@ button.danger {
     min-height: 150px;
   }
 
-  .battle-sprite {
+  .battle-sprite-frame {
     max-height: 142px;
   }
 }
