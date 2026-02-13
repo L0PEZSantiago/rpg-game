@@ -22,7 +22,6 @@ import { chance, clamp, deepClone, randomChoice, randomInt, toKey, uid, weighted
 const MAX_LOG_ENTRIES = 120
 const MAX_EVENT_LENGTH = 170
 const CHEST_ICON = '/assets/Environment/Props/Static/Resources.png'
-const COMBAT_MOVE_AP_COST = 2
 const COMBAT_NORMAL_ATTACK_COST = 2
 const MAP_LAYOUT_VARIANTS = ['none', 'flip_x', 'flip_y', 'flip_xy']
 
@@ -474,6 +473,7 @@ export function createRun({ name, classId, difficulty }) {
       maps,
     },
     combat: null,
+    pendingLootModal: null,
     levelUpModal: null,
     eventLog: [],
     gameOver: false,
@@ -533,6 +533,7 @@ export function hydrateRun(rawSnapshot) {
   run.world.playerPosition ??= { ...MAPS[run.world.currentMapId].start }
   run.world.returnMapId ??= null
   run.combat ??= null
+  run.pendingLootModal ??= null
   run.gameOver ??= false
   run.hardcoreDeath ??= false
   run.victory ??= false
@@ -973,8 +974,7 @@ function enemyMaterialDrops(enemy) {
 function lootBaseScore(base) {
   const attack = base.attack ?? 0
   const defense = base.defense ?? 0
-  const rangedTax = base.weaponType && base.weaponType !== 'melee' ? 0.85 : 1
-  return attack * rangedTax + defense * 0.8
+  return attack + defense * 0.8
 }
 
 function pickLootBase(slot, rarity) {
@@ -1213,7 +1213,8 @@ function resolveEnemyDeath(run, enemyRef) {
   run.player.gold += gold
   grantXp(run, xp)
 
-  for (const drop of enemyMaterialDrops(enemy)) {
+  const materialDrops = enemyMaterialDrops(enemy)
+  for (const drop of materialDrops) {
     addMaterial(run, drop.material, drop.quantity)
   }
 
@@ -1222,6 +1223,25 @@ function resolveEnemyDeath(run, enemyRef) {
     buildLootItem({ run, isBoss: enemy.isBoss, sourceName: template?.name ?? 'Boss' }),
   )
   loots.forEach((item) => addInventoryItem(run, item))
+
+  run.pendingLootModal = {
+    enemyName: template?.name ?? 'Ennemi',
+    xp,
+    gold,
+    materials: materialDrops.map((entry) => ({
+      material: entry.material,
+      quantity: entry.quantity,
+    })),
+    items: loots.map((item) => ({
+      id: item.id,
+      name: item.name,
+      rarity: item.rarity,
+      kind: item.kind,
+      slot: item.slot ?? null,
+      quantity: item.quantity ?? 1,
+      icon: item.icon ?? '',
+    })),
+  }
 
   appendLog(
     run,
@@ -1411,10 +1431,6 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
   }
 
   return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: false }
-}
-
-function inRange(distance, minRange, maxRange) {
-  return distance >= minRange && distance <= maxRange
 }
 
 function computeDamage(attacker, defender, power, extraPercent = 0, armorPen = 0) {
@@ -1696,8 +1712,7 @@ function applySkill(run, side, skill) {
   const bonusPercent =
     side === 'player'
       ? playerStats.damagePercent +
-        (battle.enemyIsBoss ? playerStats.bossDamagePercent : 0) +
-        (battle.distance >= 4 ? playerStats.longRangeDamagePercent : 0)
+        (battle.enemyIsBoss ? playerStats.bossDamagePercent : 0)
       : 0
 
   const actorName = side === 'player' ? run.player.name : battle.enemyName
@@ -1724,10 +1739,6 @@ function applySkill(run, side, skill) {
       battle.enemyHp = result.hp
     } else {
       run.player.hp = result.hp
-    }
-
-    if (skill.effect === 'control') {
-      battle.distance = Math.max(1, battle.distance - (skill.pullDistance ?? 1))
     }
 
     const counter = effectAmount(targetEffects, 'buff', 'counterDamagePercent')
@@ -2115,7 +2126,7 @@ export function startCombat(run, enemy) {
     playerCooldowns: {},
     playerAp: 0,
     enemyAp: 0,
-    distance: randomInt(2, 4),
+    distance: 1,
     actor: playerStats.speed + randomInt(0, 6) >= scaled.speed + randomInt(0, 6) ? 'player' : 'enemy',
     turn: 1,
   }
@@ -2127,7 +2138,7 @@ export function startCombat(run, enemy) {
   startTurn(run)
 }
 
-function skillCanBeUsed(skill, ap, mana, cooldowns, distance, rangeBonus = 0) {
+function skillCanBeUsed(skill, ap, mana, cooldowns) {
   if (!skill) {
     return false
   }
@@ -2137,10 +2148,7 @@ function skillCanBeUsed(skill, ap, mana, cooldowns, distance, rangeBonus = 0) {
   if ((cooldowns[skill.id] ?? 0) > 0) {
     return false
   }
-  if ((skill.minRange ?? 0) === 0 && (skill.maxRange ?? 0) === 0) {
-    return true
-  }
-  return inRange(distance, Math.max(0, skill.minRange), Math.max(skill.minRange, skill.maxRange + rangeBonus))
+  return true
 }
 
 export function playerUseSkill(run, skillId) {
@@ -2154,9 +2162,8 @@ export function playerUseSkill(run, skillId) {
     return { ok: false, reason: 'Competence indisponible.' }
   }
 
-  const stats = derivedStats(run)
-  if (!skillCanBeUsed(skill, battle.playerAp, run.player.mana, battle.playerCooldowns, battle.distance, stats.rangeFlat)) {
-    return { ok: false, reason: 'PA, mana, cooldown ou portee insuffisants.' }
+  if (!skillCanBeUsed(skill, battle.playerAp, run.player.mana, battle.playerCooldowns)) {
+    return { ok: false, reason: 'PA, mana ou cooldown insuffisants.' }
   }
 
   return applySkill(run, 'player', skill)
@@ -2172,35 +2179,17 @@ export function playerNormalAttack(run) {
   if (battle.playerAp < stats.normalAttackCost) {
     return { ok: false, reason: 'PA insuffisants pour attaque normale.' }
   }
-  if (!inRange(battle.distance, stats.weaponRangeMin, stats.weaponRangeMax)) {
-    return {
-      ok: false,
-      reason: `Portee insuffisante (arme: ${stats.weaponRangeMin}-${stats.weaponRangeMax}).`,
-    }
-  }
 
   return normalAttackResult(run, 'player')
 }
 
 export function playerMoveCombat(run, direction) {
+  void direction
   const battle = run.combat
   if (!battle || battle.actor !== 'player') {
     return { ok: false, reason: 'Ce n est pas ton tour.' }
   }
-  if (battle.playerAp < COMBAT_MOVE_AP_COST) {
-    return { ok: false, reason: `Il faut ${COMBAT_MOVE_AP_COST} PA pour se deplacer.` }
-  }
-
-  if (direction === 'closer') {
-    battle.distance = Math.max(1, battle.distance - 1)
-    appendLog(run, 'Tu te rapproches.')
-  } else {
-    battle.distance = Math.min(9, battle.distance + 1)
-    appendLog(run, 'Tu recules.')
-  }
-
-  battle.playerAp -= COMBAT_MOVE_AP_COST
-  return { ok: true }
+  return { ok: false, reason: 'Cette action n est plus disponible.' }
 }
 
 function bestEnemySkill(run) {
@@ -2209,9 +2198,7 @@ function bestEnemySkill(run) {
   if (!template) {
     return null
   }
-  const usable = template.skills.filter((skill) =>
-    skillCanBeUsed(skill, battle.enemyAp, battle.enemyMana, battle.enemyCooldowns, battle.distance),
-  )
+  const usable = template.skills.filter((skill) => skillCanBeUsed(skill, battle.enemyAp, battle.enemyMana, battle.enemyCooldowns))
   if (!usable.length) {
     return null
   }
@@ -2220,39 +2207,11 @@ function bestEnemySkill(run) {
 
 function enemyCanNormalAttack(run) {
   const battle = run.combat
-  return battle.enemyAp >= COMBAT_NORMAL_ATTACK_COST && inRange(battle.distance, battle.enemyRangeMin, battle.enemyRangeMax)
+  return battle.enemyAp >= COMBAT_NORMAL_ATTACK_COST
 }
 
 function enemyMove(run) {
-  const battle = run.combat
-  if (battle.enemyAp < COMBAT_MOVE_AP_COST) {
-    return false
-  }
-
-  const template = currentEnemyTemplate(run)
-  const preferred = template.skills.reduce(
-    (acc, skill) => {
-      acc.min = Math.min(acc.min, skill.minRange)
-      acc.max = Math.max(acc.max, skill.maxRange)
-      return acc
-    },
-    { min: battle.enemyRangeMin, max: battle.enemyRangeMax },
-  )
-
-  if (battle.distance > preferred.max) {
-    battle.distance = Math.max(1, battle.distance - 1)
-    battle.enemyAp -= COMBAT_MOVE_AP_COST
-    appendLog(run, `${battle.enemyName} avance.`)
-    return true
-  }
-
-  if (battle.distance < preferred.min) {
-    battle.distance = Math.min(9, battle.distance + 1)
-    battle.enemyAp -= COMBAT_MOVE_AP_COST
-    appendLog(run, `${battle.enemyName} prend de la distance.`)
-    return true
-  }
-
+  void run
   return false
 }
 
@@ -2314,8 +2273,7 @@ export function getFleeChance(run) {
   const stats = derivedStats(run)
   const speedDelta = stats.speed - battle.enemyStats.speed
   const bossPenalty = battle.enemyIsBoss ? 0.22 : 0
-  const distanceBonus = Math.max(0, battle.distance - 2) * 0.05
-  const raw = 0.42 + speedDelta * 0.028 + distanceBonus - (battle.enemyFleeResist ?? 0.2) - bossPenalty
+  const raw = 0.42 + speedDelta * 0.028 - (battle.enemyFleeResist ?? 0.2) - bossPenalty
   return clamp(raw, 0.05, 0.9)
 }
 
@@ -2363,6 +2321,25 @@ function applyBuffConsumable(run, effect, textInCombat, textPrepared) {
     pushPreparedBuff(run, effect)
     appendLog(run, textPrepared)
   }
+}
+
+function consumableUsageBlockReason(run, effect) {
+  const stats = derivedStats(run)
+  if (run.combat && run.combat.actor === 'player' && run.combat.playerAp < 2) {
+    return 'Il faut 2 PA pour utiliser un consommable.'
+  }
+
+  if (effect === 'heal_80' && run.player.hp >= stats.maxHp) {
+    return 'PV deja au maximum.'
+  }
+  if (effect === 'mana_60' && run.player.mana >= stats.maxMana) {
+    return 'Mana deja au maximum.'
+  }
+  if (effect === 'heal_45_mana_35' && run.player.hp >= stats.maxHp && run.player.mana >= stats.maxMana) {
+    return 'PV et mana deja au maximum.'
+  }
+
+  return ''
 }
 
 function applyConsumable(run, effect) {
@@ -2435,6 +2412,11 @@ export function useConsumable(run, itemId) {
 
   if (run.combat && run.combat.actor !== 'player') {
     return { ok: false, reason: 'Attends ton tour.' }
+  }
+
+  const blockReason = consumableUsageBlockReason(run, item.effect)
+  if (blockReason) {
+    return { ok: false, reason: blockReason }
   }
 
   if (!applyConsumable(run, item.effect)) {

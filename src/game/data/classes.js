@@ -1,4 +1,4 @@
-import { KNIGHT_ASSET, PLAYER_ASSET, ROGUE_ASSET, SKELETON_MAGE_ASSET, WIZZARD_ASSET } from './constants'
+import { PLAYER_ASSET, ROGUE_ASSET, SKELETON_MAGE_ASSET, WIZZARD_ASSET } from './constants'
 
 const sharedPassives = {
   survival_instinct: {
@@ -401,7 +401,7 @@ const RAW_CLASS_DEFINITIONS = [
     name: 'Guerrier',
     fantasy: 'Briseur de bastions',
     intro: 'Un mur d\'acier contre les tempêtes du Voile.',
-    portrait: KNIGHT_ASSET,
+    portrait: PLAYER_ASSET,
     weapon: '/assets/Weapons/Hands/Hands.png',
     baseStats: {
       maxHp: 138,
@@ -520,7 +520,7 @@ const RAW_CLASS_DEFINITIONS = [
     name: 'Archer',
     fantasy: 'Tireur des lignes perdues',
     intro: 'Chaque flèche corrige une erreur de l\'histoire.',
-    portrait: PLAYER_ASSET,
+    portrait: ROGUE_ASSET,
     weapon: '/assets/Weapons/Wood/Wood.png',
     baseStats: {
       maxHp: 102,
@@ -998,4 +998,3 @@ export function getClassSkillById(classId, skillId) {
   const selectedClass = pickClass(classId)
   return selectedClass.skills.find((skill) => skill.id === skillId) ?? null
 }
-

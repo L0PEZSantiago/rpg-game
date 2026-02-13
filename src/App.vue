@@ -76,6 +76,12 @@ const skillsModalOpen = ref(false)
 const passivesModalOpen = ref(false)
 const inventoryModalOpen = ref(false)
 const riddleModal = ref(null)
+const lootModal = ref(null)
+const inventoryTab = ref('weapon')
+const combatConsumableTab = ref('regen')
+const inventoryTrackingPrimed = ref(false)
+const inventorySnapshot = ref(new Map())
+const newInventoryItems = reactive({})
 
 const creation = reactive({
   name: 'Aelys',
@@ -113,7 +119,7 @@ const combatEnemy = computed(() => {
   }
   return ENEMY_TEMPLATES[run.value.combat.enemyTemplateId] ?? null
 })
-const potionItems = computed(() => {
+const consumableItems = computed(() => {
   if (!run.value) {
     return []
   }
@@ -142,6 +148,21 @@ const INVENTORY_GROUP_DEFS = [
   { id: 'consumable', label: 'Consommables', icon: '/assets/Icons/potion.png' },
   { id: 'other', label: 'Divers', icon: '/assets/Icons/backpack.png' },
 ]
+const COMBAT_CONSUMABLE_GROUP_DEFS = [
+  { id: 'regen', label: 'Regeneration', icon: '/assets/Icons/potion.png' },
+  { id: 'buff', label: 'Buff', icon: '/assets/Icons/skills.png' },
+  { id: 'utility', label: 'Utilitaire', icon: '/assets/Icons/armor.png' },
+]
+
+function consumableGroupIdFromEffect(effect) {
+  if (effect === 'heal_80' || effect === 'mana_60' || effect === 'heal_45_mana_35') {
+    return 'regen'
+  }
+  if (effect === 'buff_resistance' || effect === 'buff_damage' || effect === 'buff_crit') {
+    return 'buff'
+  }
+  return 'utility'
+}
 
 const inventoryGroups = computed(() => {
   if (!run.value) {
@@ -179,6 +200,27 @@ const inventoryGroups = computed(() => {
 
   return groups.filter((entry) => entry.items.length > 0)
 })
+const inventoryActiveGroup = computed(() => inventoryGroups.value.find((entry) => entry.id === inventoryTab.value) ?? null)
+const newInventoryCount = computed(() => Object.keys(newInventoryItems).length)
+
+const combatConsumableGroups = computed(() => {
+  const groups = COMBAT_CONSUMABLE_GROUP_DEFS.map((entry) => ({ ...entry, items: [] }))
+  const byId = Object.fromEntries(groups.map((entry) => [entry.id, entry]))
+
+  for (const item of consumableItems.value) {
+    const groupId = consumableGroupIdFromEffect(item.effect)
+    byId[groupId]?.items.push(item)
+  }
+
+  for (const group of groups) {
+    group.items.sort(sortInventoryItems)
+  }
+
+  return groups
+})
+const combatActiveConsumableGroup = computed(
+  () => combatConsumableGroups.value.find((entry) => entry.id === combatConsumableTab.value) ?? combatConsumableGroups.value[0] ?? null,
+)
 
 function rarityRank(rarity) {
   const index = RARITY_ORDER.indexOf(rarity)
@@ -218,16 +260,91 @@ function inventoryTypeLabel(item) {
 
 function inventoryDetail(item) {
   if (item.kind === 'equipment') {
-    const rangeText =
-      item.slot === 'weapon'
-        ? ` | portee ${item.rangeMin ?? 1}-${item.rangeMax ?? 1}`
-        : ''
-    return `ATK ${item.attack ?? 0} DEF ${item.defense ?? 0}${rangeText}`
+    return `ATK ${item.attack ?? 0} DEF ${item.defense ?? 0}`
   }
   if (item.kind === 'consumable') {
-    return `Quantite: ${item.quantity ?? 0}`
+    return `${consumableGroupLabel(item.effect)} | Quantite: ${item.quantity ?? 0}`
   }
   return ''
+}
+
+function rarityLabel(rarity) {
+  return RARITIES[rarity]?.label ?? rarity ?? ''
+}
+
+function consumableGroupLabel(effect) {
+  if (consumableGroupIdFromEffect(effect) === 'regen') {
+    return 'Categorie: Regeneration'
+  }
+  if (consumableGroupIdFromEffect(effect) === 'buff') {
+    return 'Categorie: Buff'
+  }
+  return 'Categorie: Utilitaire'
+}
+
+function consumableDisableReason(item) {
+  if (!run.value || !item || item.kind !== 'consumable') {
+    return ''
+  }
+
+  const maxHp = stats.value?.maxHp ?? run.value.player.hp
+  const maxMana = stats.value?.maxMana ?? run.value.player.mana
+  if (run.value.combat) {
+    if (run.value.combat.actor !== 'player') {
+      return 'Attends ton tour.'
+    }
+    if (run.value.combat.playerAp < 2) {
+      return 'Il faut 2 PA pour utiliser un consommable.'
+    }
+  }
+
+  if (item.effect === 'heal_80' && run.value.player.hp >= maxHp) {
+    return 'PV deja au maximum.'
+  }
+  if (item.effect === 'mana_60' && run.value.player.mana >= maxMana) {
+    return 'Mana deja au maximum.'
+  }
+  if (item.effect === 'heal_45_mana_35' && run.value.player.hp >= maxHp && run.value.player.mana >= maxMana) {
+    return 'PV et mana deja au maximum.'
+  }
+  return ''
+}
+
+function canUseConsumable(item) {
+  return !consumableDisableReason(item)
+}
+
+function clearNewInventoryBadges() {
+  for (const key of Object.keys(newInventoryItems)) {
+    delete newInventoryItems[key]
+  }
+}
+
+function markInventoryItemSeen(itemId) {
+  if (!itemId || !newInventoryItems[itemId]) {
+    return
+  }
+  delete newInventoryItems[itemId]
+}
+
+function itemIsNew(itemId) {
+  return Boolean(newInventoryItems[itemId])
+}
+
+function inventoryGroupHasNew(groupId) {
+  const group = inventoryGroups.value.find((entry) => entry.id === groupId)
+  if (!group) {
+    return false
+  }
+  return group.items.some((item) => itemIsNew(item.id))
+}
+
+function selectInventoryTab(groupId) {
+  inventoryTab.value = groupId
+}
+
+function selectCombatConsumableTab(groupId) {
+  combatConsumableTab.value = groupId
 }
 
 const COMBAT_SOUND_BANK = {
@@ -280,12 +397,32 @@ const combatSpriteMeta = reactive({
     frames: 1,
     frameWidth: 1,
     frameHeight: 1,
+    occupiedWidth: 1,
+    occupiedHeight: 1,
   },
   enemy: {
     src: '',
     frames: 1,
     frameWidth: 1,
     frameHeight: 1,
+    occupiedWidth: 1,
+    occupiedHeight: 1,
+  },
+})
+const combatSpriteSet = reactive({
+  player: {
+    idle: '',
+    attack: '',
+    cast: '',
+    hit: '',
+    death: '',
+  },
+  enemy: {
+    idle: '',
+    attack: '',
+    cast: '',
+    hit: '',
+    death: '',
   },
 })
 const combatSpriteFrame = reactive({
@@ -319,6 +456,7 @@ const combatOutro = ref(null)
 const lastCombatTopLog = ref('')
 const lastPlayerDeaths = ref(0)
 let combatPopupSeed = 0
+let lootModalTimer = null
 
 const activeCombatView = computed(() => run.value?.combat ?? combatOutro.value)
 const combatEnemyVisual = computed(() => {
@@ -349,16 +487,6 @@ const combatTurnLabel = computed(() => {
   }
   return ''
 })
-const combatDistanceLabel = computed(() => {
-  const distance = activeCombatView.value?.distance ?? 0
-  if (distance <= 2) {
-    return 'Engagement proche'
-  }
-  if (distance <= 4) {
-    return 'Engagement moyen'
-  }
-  return 'Engagement lointain'
-})
 const combatPlayerHpPercent = computed(() => ratioPercent(run.value?.player?.hp ?? 0, stats.value?.maxHp ?? 1))
 const combatPlayerManaPercent = computed(() => ratioPercent(run.value?.player?.mana ?? 0, stats.value?.maxMana ?? 1))
 const combatEnemyHpPercent = computed(() =>
@@ -368,6 +496,18 @@ const combatEnemyManaPercent = computed(() =>
   ratioPercent(activeCombatView.value?.enemyMana ?? 0, activeCombatView.value?.enemyStats?.maxMana ?? 0),
 )
 const combatEnemyHasMana = computed(() => (activeCombatView.value?.enemyStats?.maxMana ?? 0) > 0)
+const combatSpriteScale = computed(() => {
+  const playerIdle = combatSpriteSet.player.idle ?? ''
+  const playerScale = playerIdle.includes('/Body_A/Animations/') ? 1.34 : 1
+  const playerOccupied = Math.max(1, combatSpriteMeta.player.occupiedHeight)
+  const enemyOccupied = Math.max(1, combatSpriteMeta.enemy.occupiedHeight)
+  const enemyAutoScale = (playerOccupied / enemyOccupied) * playerScale * 0.98
+  const enemyScale = Math.max(0.58, Math.min(1, enemyAutoScale))
+  return {
+    player: playerScale,
+    enemy: enemyScale,
+  }
+})
 
 function ratioPercent(value, max) {
   if (!max || max <= 0) {
@@ -395,6 +535,32 @@ function clearCombatFxTimers() {
   }
 }
 
+function clearLootModalTimer() {
+  if (!lootModalTimer) {
+    return
+  }
+  window.clearTimeout(lootModalTimer)
+  lootModalTimer = null
+}
+
+function openPendingLootModal() {
+  if (!run.value?.pendingLootModal) {
+    return
+  }
+  const pending = run.value.pendingLootModal
+  lootModal.value = {
+    ...pending,
+    materials: [...(pending.materials ?? [])],
+    items: [...(pending.items ?? [])],
+  }
+  run.value.pendingLootModal = null
+  persistRun()
+}
+
+function closeLootModal() {
+  lootModal.value = null
+}
+
 function randomFrom(list) {
   if (!list?.length) {
     return ''
@@ -417,20 +583,24 @@ function stopAllSpriteTickers() {
 
 function guessSpriteFrames(width, height) {
   if (!width || !height) {
-    return { frames: 1, frameWidth: 1, frameHeight: 1 }
+    return { frames: 1, frameWidth: 1, frameHeight: 1, occupiedWidth: 1, occupiedHeight: 1 }
   }
   const raw = Math.round(width / height)
   const frames = Math.max(1, Math.min(12, Number.isFinite(raw) ? raw : 1))
+  const frameWidth = Math.max(1, Math.round(width / frames))
+  const frameHeight = Math.max(1, Math.round(height))
   return {
     frames,
-    frameWidth: Math.max(1, Math.round(width / frames)),
-    frameHeight: Math.max(1, Math.round(height)),
+    frameWidth,
+    frameHeight,
+    occupiedWidth: frameWidth,
+    occupiedHeight: frameHeight,
   }
 }
 
 function loadSpriteMeta(source) {
   if (!source) {
-    return Promise.resolve({ frames: 1, frameWidth: 1, frameHeight: 1 })
+    return Promise.resolve({ frames: 1, frameWidth: 1, frameHeight: 1, occupiedWidth: 1, occupiedHeight: 1 })
   }
   if (spriteMetaCache.has(source)) {
     return Promise.resolve(spriteMetaCache.get(source))
@@ -438,12 +608,69 @@ function loadSpriteMeta(source) {
   return new Promise((resolve) => {
     const image = new Image()
     image.onload = () => {
-      const meta = guessSpriteFrames(image.naturalWidth, image.naturalHeight)
+      const base = guessSpriteFrames(image.naturalWidth, image.naturalHeight)
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      if (!context) {
+        spriteMetaCache.set(source, base)
+        resolve(base)
+        return
+      }
+      context.drawImage(image, 0, 0)
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height)
+
+      let maxOccupiedWidth = 1
+      let maxOccupiedHeight = 1
+      for (let frameIndex = 0; frameIndex < base.frames; frameIndex += 1) {
+        const frameStartX = frameIndex * base.frameWidth
+        let minX = base.frameWidth
+        let minY = base.frameHeight
+        let maxX = -1
+        let maxY = -1
+
+        for (let y = 0; y < base.frameHeight; y += 1) {
+          for (let x = 0; x < base.frameWidth; x += 1) {
+            const pixelX = frameStartX + x
+            const offset = (y * canvas.width + pixelX) * 4
+            const alpha = data[offset + 3]
+            if (alpha <= 10) {
+              continue
+            }
+            if (x < minX) {
+              minX = x
+            }
+            if (x > maxX) {
+              maxX = x
+            }
+            if (y < minY) {
+              minY = y
+            }
+            if (y > maxY) {
+              maxY = y
+            }
+          }
+        }
+
+        if (maxX >= minX && maxY >= minY) {
+          const occupiedWidth = maxX - minX + 1
+          const occupiedHeight = maxY - minY + 1
+          maxOccupiedWidth = Math.max(maxOccupiedWidth, occupiedWidth)
+          maxOccupiedHeight = Math.max(maxOccupiedHeight, occupiedHeight)
+        }
+      }
+
+      const meta = {
+        ...base,
+        occupiedWidth: maxOccupiedWidth,
+        occupiedHeight: maxOccupiedHeight,
+      }
       spriteMetaCache.set(source, meta)
       resolve(meta)
     }
     image.onerror = () => {
-      const fallback = { frames: 1, frameWidth: 1, frameHeight: 1 }
+      const fallback = { frames: 1, frameWidth: 1, frameHeight: 1, occupiedWidth: 1, occupiedHeight: 1 }
       spriteMetaCache.set(source, fallback)
       resolve(fallback)
     }
@@ -451,7 +678,90 @@ function loadSpriteMeta(source) {
   })
 }
 
+function bodyASpriteSet() {
+  const root = '/assets/Entities/Characters/Body_A/Animations'
+  return {
+    idle: `${root}/Idle_Base/Idle_Side-Sheet.png`,
+    attack: `${root}/Slice_Base/Slice_Side-Sheet.png`,
+    cast: `${root}/Pierce_Base/Pierce_Side-Sheet.png`,
+    hit: `${root}/Hit_Base/Hit_Side-Sheet.png`,
+    death: `${root}/Death_Base/Death_Side-Sheet.png`,
+  }
+}
+
+function standardSpriteSetFromIdle(source) {
+  if (!source) {
+    return { idle: '', attack: '', cast: '', hit: '', death: '' }
+  }
+  if (source.includes('/Idle/Idle-Sheet.png')) {
+    return {
+      idle: source,
+      attack: source.replace('/Idle/Idle-Sheet.png', '/Run/Run-Sheet.png'),
+      cast: source.replace('/Idle/Idle-Sheet.png', '/Run/Run-Sheet.png'),
+      hit: source.replace('/Idle/Idle-Sheet.png', '/Run/Run-Sheet.png'),
+      death: source.replace('/Idle/Idle-Sheet.png', '/Death/Death-Sheet.png'),
+    }
+  }
+  return {
+    idle: source,
+    attack: source,
+    cast: source,
+    hit: source,
+    death: source,
+  }
+}
+
+function spriteSetForSource(source) {
+  if (!source) {
+    return { idle: '', attack: '', cast: '', hit: '', death: '' }
+  }
+  if (source.includes('/Body_A/Animations/')) {
+    return bodyASpriteSet()
+  }
+  return standardSpriteSetFromIdle(source)
+}
+
+function spriteStateKey(side) {
+  const state = actorStateRef(side).value
+  if (state === 'attack') {
+    return 'attack'
+  }
+  if (state === 'cast') {
+    return 'cast'
+  }
+  if (state === 'hit') {
+    return 'hit'
+  }
+  if (state === 'death') {
+    return 'death'
+  }
+  return 'idle'
+}
+
+function spriteSourceForSide(side) {
+  const set = combatSpriteSet[side]
+  const stateKey = spriteStateKey(side)
+  return set[stateKey] || set.idle || ''
+}
+
+function setCombatSpriteSet(side, source) {
+  const set = spriteSetForSource(source)
+  combatSpriteSet[side].idle = set.idle
+  combatSpriteSet[side].attack = set.attack
+  combatSpriteSet[side].cast = set.cast
+  combatSpriteSet[side].hit = set.hit
+  combatSpriteSet[side].death = set.death
+  setCombatSpriteSource(side, spriteSourceForSide(side))
+}
+
 function spriteTickRate(side) {
+  const state = actorStateRef(side).value
+  if (state === 'attack' || state === 'cast' || state === 'hit') {
+    return side === 'player' ? 88 : 96
+  }
+  if (state === 'death') {
+    return 110
+  }
   return side === 'player' ? 145 : 170
 }
 
@@ -460,14 +770,24 @@ function restartSpriteTicker(side) {
   if (!activeCombatView.value) {
     return
   }
-  if (actorStateRef(side).value === 'death') {
-    return
-  }
   const frames = combatSpriteMeta[side].frames
   if (!frames || frames <= 1) {
     combatSpriteFrame[side] = 0
     return
   }
+
+  if (actorStateRef(side).value === 'death') {
+    combatSpriteTimers[side] = window.setInterval(() => {
+      const lastFrame = Math.max(0, combatSpriteMeta[side].frames - 1)
+      if (combatSpriteFrame[side] >= lastFrame) {
+        stopSpriteTicker(side)
+        return
+      }
+      combatSpriteFrame[side] += 1
+    }, spriteTickRate(side))
+    return
+  }
+
   combatSpriteTimers[side] = window.setInterval(() => {
     const count = Math.max(1, combatSpriteMeta[side].frames)
     combatSpriteFrame[side] = (combatSpriteFrame[side] + 1) % count
@@ -482,6 +802,8 @@ function setCombatSpriteSource(side, source) {
     combatSpriteMeta[side].frames = 1
     combatSpriteMeta[side].frameWidth = 1
     combatSpriteMeta[side].frameHeight = 1
+    combatSpriteMeta[side].occupiedWidth = 1
+    combatSpriteMeta[side].occupiedHeight = 1
     restartSpriteTicker(side)
     return
   }
@@ -493,6 +815,8 @@ function setCombatSpriteSource(side, source) {
     combatSpriteMeta[side].frames = meta.frames
     combatSpriteMeta[side].frameWidth = meta.frameWidth
     combatSpriteMeta[side].frameHeight = meta.frameHeight
+    combatSpriteMeta[side].occupiedWidth = meta.occupiedWidth
+    combatSpriteMeta[side].occupiedHeight = meta.occupiedHeight
     restartSpriteTicker(side)
   })
 }
@@ -501,6 +825,14 @@ function battleSpriteViewportStyle(side) {
   const meta = combatSpriteMeta[side]
   return {
     aspectRatio: `${Math.max(1, meta.frameWidth)} / ${Math.max(1, meta.frameHeight)}`,
+  }
+}
+
+function battleSpriteTransformStyle(side) {
+  const scale = combatSpriteScale.value[side] ?? 1
+  const xScale = side === 'enemy' ? -scale : scale
+  return {
+    transform: `scale(${xScale}, ${scale})`,
   }
 }
 
@@ -600,11 +932,7 @@ function setActorState(side, state, holdMs = 300) {
   combatStateTokens[side] += 1
   const token = combatStateTokens[side]
   stateRef.value = state
-  if (state === 'death') {
-    stopSpriteTicker(side)
-  } else if (!combatSpriteTimers[side]) {
-    restartSpriteTicker(side)
-  }
+  restartSpriteTicker(side)
   if (state !== 'death' && holdMs > 0) {
     queueCombatFx(() => {
       if (combatStateTokens[side] === token && stateRef.value === state) {
@@ -700,8 +1028,9 @@ function inferSkillAnimationStyle(skill) {
 function animateCombatAction(side, style = 'physical', delayMs = 0) {
   const targetSide = side === 'player' ? 'enemy' : 'player'
   queueCombatFx(() => {
+    setActorState(side, 'attack', style === 'magic' ? 360 : 320)
+
     if (style === 'magic') {
-      setActorState(side, 'cast', 400)
       triggerProjectile(side, 80)
       triggerImpact(targetSide, 250)
       if (side === 'player') {
@@ -712,7 +1041,6 @@ function animateCombatAction(side, style = 'physical', delayMs = 0) {
       return
     }
 
-    setActorState(side, 'attack', 320)
     if (side === 'player') {
       playCombatSound(COMBAT_SOUND_BANK.playerAttack, 0.21)
     } else {
@@ -917,7 +1245,7 @@ watch(
 watch(
   () => playerPortrait.value,
   (source) => {
-    setCombatSpriteSource('player', source)
+    setCombatSpriteSet('player', source)
   },
   { immediate: true },
 )
@@ -925,13 +1253,21 @@ watch(
 watch(
   () => combatEnemyVisual.value?.asset ?? '',
   (source) => {
-    setCombatSpriteSource('enemy', source)
+    setCombatSpriteSet('enemy', source)
   },
   { immediate: true },
 )
 
 watch(
-  () => [Boolean(activeCombatView.value), combatPlayerState.value, combatEnemyState.value],
+  () => [combatPlayerState.value, combatEnemyState.value],
+  () => {
+    setCombatSpriteSource('player', spriteSourceForSide('player'))
+    setCombatSpriteSource('enemy', spriteSourceForSide('enemy'))
+  },
+)
+
+watch(
+  () => Boolean(activeCombatView.value),
   () => {
     if (!activeCombatView.value) {
       stopAllSpriteTickers()
@@ -947,6 +1283,107 @@ watch(
   () => [Boolean(run.value), Boolean(run.value?.combat), Boolean(run.value?.gameOver)],
   () => {
     syncBackgroundMusic()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => inventoryGroups.value.map((entry) => entry.id).join('|'),
+  () => {
+    if (!inventoryGroups.value.length) {
+      inventoryTab.value = 'weapon'
+      return
+    }
+    if (!inventoryGroups.value.some((entry) => entry.id === inventoryTab.value)) {
+      inventoryTab.value = inventoryGroups.value[0].id
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => combatConsumableGroups.value.map((entry) => `${entry.id}:${entry.items.length}`).join('|'),
+  () => {
+    if (!combatConsumableGroups.value.some((entry) => entry.id === combatConsumableTab.value)) {
+      combatConsumableTab.value = combatConsumableGroups.value[0]?.id ?? 'regen'
+    }
+  },
+  { immediate: true },
+)
+
+watch(
+  () => run.value,
+  (current) => {
+    clearLootModalTimer()
+    lootModal.value = null
+    clearNewInventoryBadges()
+    inventorySnapshot.value = new Map()
+    inventoryTrackingPrimed.value = false
+
+    if (!current) {
+      return
+    }
+
+    const seeded = new Map()
+    for (const item of current.player.inventory) {
+      seeded.set(item.id, item.quantity ?? 1)
+    }
+    inventorySnapshot.value = seeded
+    inventoryTrackingPrimed.value = true
+  },
+  { immediate: true },
+)
+
+watch(
+  () => (run.value ? run.value.player.inventory.map((item) => `${item.id}:${item.quantity ?? 1}`).sort().join('|') : ''),
+  () => {
+    if (!run.value) {
+      return
+    }
+
+    const currentSnapshot = new Map()
+    for (const item of run.value.player.inventory) {
+      currentSnapshot.set(item.id, item.quantity ?? 1)
+    }
+
+    if (!inventoryTrackingPrimed.value) {
+      inventorySnapshot.value = currentSnapshot
+      inventoryTrackingPrimed.value = true
+      return
+    }
+
+    for (const item of run.value.player.inventory) {
+      const currentQty = item.quantity ?? 1
+      const previousQty = inventorySnapshot.value.get(item.id)
+      if (previousQty == null || currentQty > previousQty) {
+        newInventoryItems[item.id] = true
+      }
+    }
+
+    for (const trackedId of Object.keys(newInventoryItems)) {
+      if (!currentSnapshot.has(trackedId)) {
+        delete newInventoryItems[trackedId]
+      }
+    }
+
+    inventorySnapshot.value = currentSnapshot
+  },
+)
+
+watch(
+  () => [Boolean(run.value?.combat), Boolean(combatOutro.value), Boolean(run.value?.pendingLootModal), Boolean(lootModal.value)],
+  ([inCombat, inOutro, hasPending, hasLootModal]) => {
+    clearLootModalTimer()
+    if (!run.value || inCombat || inOutro || !hasPending || hasLootModal) {
+      return
+    }
+    lootModalTimer = window.setTimeout(() => {
+      lootModalTimer = null
+      if (!run.value || run.value.combat || combatOutro.value || lootModal.value || !run.value.pendingLootModal) {
+        return
+      }
+      openPendingLootModal()
+    }, 140)
   },
   { immediate: true },
 )
@@ -1071,21 +1508,6 @@ function cellLabel(cell) {
   return ''
 }
 
-function enemyCombatStyle(template) {
-  if (!template) {
-    return ''
-  }
-  const min = template.weaponRangeMin ?? 1
-  const max = template.weaponRangeMax ?? 1
-  if (max <= 1) {
-    return 'corps a corps'
-  }
-  if (min >= 2) {
-    return 'distant'
-  }
-  return 'mixte'
-}
-
 function combatLogClasses(entry) {
   const text = entry.toLowerCase()
   const playerName = run.value?.player?.name?.toLowerCase?.() ?? ''
@@ -1151,6 +1573,8 @@ function closeMetaModals() {
   skillsModalOpen.value = false
   passivesModalOpen.value = false
   riddleModal.value = null
+  lootModal.value = null
+  clearLootModalTimer()
 }
 
 function persistRun() {
@@ -1387,24 +1811,15 @@ function skillReady(skill) {
     return false
   }
   const battle = run.value.combat
-  const selfTarget = (skill.minRange ?? 0) === 0 && (skill.maxRange ?? 0) === 0
-  const inRange =
-    selfTarget ||
-    (battle.distance >= skill.minRange && battle.distance <= skill.maxRange + (stats.value?.rangeFlat ?? 0))
   const cooldown = battle.playerCooldowns[skill.id] ?? 0
-  return inRange && cooldown <= 0 && battle.playerAp >= skill.apCost && run.value.player.mana >= skill.manaCost
+  return cooldown <= 0 && battle.playerAp >= skill.apCost && run.value.player.mana >= skill.manaCost
 }
 
 function normalAttackReady() {
   if (!run.value?.combat || run.value.combat.actor !== 'player') {
     return false
   }
-  const battle = run.value.combat
-  return (
-    battle.playerAp >= 2 &&
-    battle.distance >= (stats.value?.weaponRangeMin ?? 1) &&
-    battle.distance <= (stats.value?.weaponRangeMax ?? 1)
-  )
+  return run.value.combat.playerAp >= (stats.value?.normalAttackCost ?? 2)
 }
 
 function useSkillAction(skillId) {
@@ -1631,6 +2046,7 @@ onBeforeUnmount(() => {
     window.clearTimeout(infoTimer.value)
     infoTimer.value = null
   }
+  clearLootModalTimer()
 })
 </script>
 
@@ -1722,6 +2138,7 @@ onBeforeUnmount(() => {
           <button class="hud-icon-btn" @click="inventoryModalOpen = true">
             <img src="/assets/Icons/backpack.png" alt="" />
             <span>Inventaire</span>
+            <span v-if="newInventoryCount" class="new-badge">{{ newInventoryCount }}</span>
           </button>
           <button @click="skillsModalOpen = true">Competences</button>
           <button @click="passivesModalOpen = true">Passifs</button>
@@ -1782,7 +2199,7 @@ onBeforeUnmount(() => {
         </article>
 
         <article class="card side-card">
-          <h2>Equipement et sac</h2>
+          <h2>Équipement</h2>
 
           <div class="equipment-grid">
             <div class="equip-slot">
@@ -1794,9 +2211,6 @@ onBeforeUnmount(() => {
                     {{ run.player.equipment.weapon.name }}
                   </strong>
                   <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0 }}</p>
-                  <p>
-                    Portee {{ run.player.equipment.weapon.rangeMin ?? 1 }}-{{ run.player.equipment.weapon.rangeMax ?? 1 }}
-                  </p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{ bonus }}</p>
                   <button @click="unequipAction('weapon')">Retirer</button>
                 </div>
@@ -1837,25 +2251,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="inventory">
-            <h3>Inventaire</h3>
-            <ul>
-              <li v-for="item in run.player.inventory" :key="item.id">
-                <img class="item-icon" :src="itemIcon(item)" alt="item" />
-                <div class="item-main">
-                  <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
-                  <p v-if="item.kind === 'equipment'">ATK {{ item.attack }} DEF {{ item.defense }}</p>
-                  <p v-if="item.kind === 'consumable'">Quantite: {{ item.quantity }}</p>
-                  <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
-                  <div class="row-actions">
-                    <button v-if="item.kind === 'equipment'" @click="equipAction(item.id)">Equiper</button>
-                    <button v-if="item.kind === 'consumable'" @click="consumeItem(item.id)">Utiliser</button>
-                    <button @click="sellAction(item.id)">Vendre</button>
-                  </div>
-                </div>
-              </li>
-            </ul>
-          </div>
 
           <div class="materials">
             <h3>Materiaux</h3>
@@ -1866,6 +2261,12 @@ onBeforeUnmount(() => {
         </article>
 
         <article class="card progress-card">
+          <div class="short-log">
+            <h3>Journal recent</h3>
+            <ul>
+              <li v-for="(entry, index) in run.eventLog.slice(0, 10)" :key="`recent-${index}-${entry}`">{{ entry }}</li>
+            </ul>
+          </div>
           <h2>Progression</h2>
           <ul>
             <li v-for="entry in progress.maps" :key="entry.mapId">
@@ -1880,12 +2281,6 @@ onBeforeUnmount(() => {
           <p>Mythiques obtenus: {{ progress.mythicCount }}</p>
           <p>Morts: {{ progress.totalDeaths }}</p>
 
-          <div class="short-log">
-            <h3>Journal recent</h3>
-            <ul>
-              <li v-for="(entry, index) in run.eventLog.slice(0, 10)" :key="`recent-${index}-${entry}`">{{ entry }}</li>
-            </ul>
-          </div>
 
           <div class="exit-buttons">
             <button class="secondary" @click="run = null; npcOpen = false; closeMetaModals()">Retour menu</button>
@@ -1903,19 +2298,7 @@ onBeforeUnmount(() => {
               </h2>
               <p class="combat-subline">
                 <span class="turn-pill" :class="{ enemy: run.combat?.actor === 'enemy' }">{{ combatTurnLabel }}</span>
-                <span>{{ combatDistanceLabel }}</span>
-                <span>Style {{ enemyCombatStyle(combatEnemyVisual) }}</span>
               </p>
-            </div>
-            <div class="player-head-compact">
-              <img :src="playerPortrait" alt="aventurier" />
-              <div>
-                <p>{{ run.player.name }}</p>
-                <p class="ap-line">
-                  <span class="ap-pill">PA {{ activeCombatView.playerAp }}</span>
-                  <span class="ap-pill enemy">PA ennemi {{ activeCombatView.enemyAp }}</span>
-                </p>
-              </div>
             </div>
           </header>
 
@@ -1928,7 +2311,7 @@ onBeforeUnmount(() => {
                 </h3>
                 <div class="combat-actions-row">
                   <button :disabled="!normalAttackReady()" @click="useNormalAttack">
-                    Attaque normale (2 PA) [{{ stats.weaponRangeMin }}-{{ stats.weaponRangeMax }}]
+                    Attaque normale (2 PA)
                   </button>
                   <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%) (V)</button>
                   <button
@@ -1955,8 +2338,6 @@ onBeforeUnmount(() => {
                     <small>
                       {{ skill.description }}
                       | PA {{ skill.apCost }} mana {{ skill.manaCost }}
-                      | portee
-                      {{ skill.minRange === 0 && skill.maxRange === 0 ? 'self' : `${skill.minRange}-${skill.maxRange + (stats.rangeFlat ?? 0)}` }}
                       | CD {{ run.combat.playerCooldowns[skill.id] ?? 0 }}
                     </small>
                   </button>
@@ -1964,18 +2345,34 @@ onBeforeUnmount(() => {
 
                 <h3 class="panel-title">
                   <img src="/assets/Icons/potion.png" alt="" />
-                  Potions
+                  Inventaire combat
                 </h3>
+                <div class="consumable-tabs">
+                  <button
+                    v-for="group in combatConsumableGroups"
+                    :key="`combat-consumable-tab-${group.id}`"
+                    class="consumable-tab"
+                    :class="{ active: combatActiveConsumableGroup?.id === group.id }"
+                    @click="selectCombatConsumableTab(group.id)"
+                  >
+                    <img :src="group.icon" alt="" />
+                    <span>{{ group.label }}</span>
+                    <small>{{ group.items.length }}</small>
+                  </button>
+                </div>
                 <div class="potions-grid">
                   <button
-                    v-for="item in potionItems"
+                    v-for="item in combatActiveConsumableGroup?.items ?? []"
                     :key="item.id"
-                    :disabled="run.combat.actor !== 'player'"
+                    :disabled="!canUseConsumable(item)"
+                    :title="consumableDisableReason(item)"
                     @click="consumeItem(item.id)"
+                    @mouseenter="markInventoryItemSeen(item.id)"
                   >
-                    {{ item.name }} x{{ item.quantity }}
+                    <span>{{ item.name }} x{{ item.quantity }}</span>
+                    <small>{{ consumableGroupLabel(item.effect) }}</small>
                   </button>
-                  <p v-if="!potionItems.length">Aucune potion en inventaire.</p>
+                  <p v-if="!(combatActiveConsumableGroup?.items.length ?? 0)">Aucun objet dans cet onglet.</p>
                 </div>
               </template>
               <template v-else>
@@ -1989,7 +2386,6 @@ onBeforeUnmount(() => {
               <div class="battle-stage" :style="combatSceneStyle">
                 <div class="battle-scene-topline">
                   <span>{{ combatTurnLabel }}</span>
-                  <span>{{ combatDistanceLabel }}</span>
                 </div>
 
                 <div v-if="combatOutro" class="battle-outro-tag" :class="combatOutro.result">
@@ -2013,9 +2409,8 @@ onBeforeUnmount(() => {
                   <div class="battle-unit-hud">
                     <strong>{{ run.player.name }}</strong>
                     <p class="battle-hud-meta">
-                      <img src="/assets/Icons/sword.png" alt="" />
-                      PA {{ activeCombatView.playerAp }}
-                      <img src="/assets/Icons/staff.png" alt="" />
+                      <span>PV {{ run.player.hp }} / {{ stats.maxHp }}</span>
+                      <span>|</span>
                       Mana {{ run.player.mana }} / {{ stats.maxMana }}
                     </p>
                     <div class="battle-bars">
@@ -2026,11 +2421,11 @@ onBeforeUnmount(() => {
                         <span :style="{ width: `${combatPlayerManaPercent}%` }"></span>
                       </div>
                     </div>
-                    <p class="battle-hp-label">PV {{ run.player.hp }} / {{ stats.maxHp }}</p>
+                    <p class="battle-ap-label">PA {{ activeCombatView.playerAp }}</p>
                   </div>
 
                   <div class="battle-actor player" :data-state="combatPlayerState">
-                    <div class="battle-sprite-frame" :style="battleSpriteViewportStyle('player')">
+                    <div class="battle-sprite-frame" :style="[battleSpriteViewportStyle('player'), battleSpriteTransformStyle('player')]">
                       <img
                         class="battle-sprite-strip"
                         :src="combatSpriteMeta.player.src || playerPortrait"
@@ -2058,10 +2453,9 @@ onBeforeUnmount(() => {
                       <span v-if="activeCombatView.enemyIsBoss">(BOSS)</span>
                     </strong>
                     <p class="battle-hud-meta">
-                      <img src="/assets/Icons/sword.png" alt="" />
-                      PA {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap }}
+                      <span>PV {{ activeCombatView.enemyHp }} / {{ activeCombatView.enemyStats.maxHp }}</span>
                       <template v-if="combatEnemyHasMana">
-                        <img src="/assets/Icons/staff.png" alt="" />
+                        <span>|</span>
                         Mana {{ activeCombatView.enemyMana }} / {{ activeCombatView.enemyStats.maxMana }}
                       </template>
                     </p>
@@ -2073,11 +2467,11 @@ onBeforeUnmount(() => {
                         <span :style="{ width: `${combatEnemyManaPercent}%` }"></span>
                       </div>
                     </div>
-                    <p class="battle-hp-label">PV {{ activeCombatView.enemyHp }} / {{ activeCombatView.enemyStats.maxHp }}</p>
+                    <p class="battle-ap-label">PA {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap }}</p>
                   </div>
 
                   <div class="battle-actor enemy" :data-state="combatEnemyState">
-                    <div class="battle-sprite-frame mirrored" :style="battleSpriteViewportStyle('enemy')">
+                    <div class="battle-sprite-frame" :style="[battleSpriteViewportStyle('enemy'), battleSpriteTransformStyle('enemy')]">
                       <img
                         class="battle-sprite-strip"
                         :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')"
@@ -2122,29 +2516,54 @@ onBeforeUnmount(() => {
             <p>{{ run.player.inventory.length }} objet(s)</p>
           </header>
           <div v-if="inventoryGroups.length" class="inventory-groups">
-            <section v-for="group in inventoryGroups" :key="`group-${group.id}`" class="inventory-group">
-              <h3>
+            <div class="inventory-tabs">
+              <button
+                v-for="group in inventoryGroups"
+                :key="`group-tab-${group.id}`"
+                class="inventory-tab"
+                :class="{ active: inventoryActiveGroup?.id === group.id }"
+                @click="selectInventoryTab(group.id)"
+              >
                 <img :src="group.icon" alt="" />
-                {{ group.label }}
-                <small>({{ group.items.length }})</small>
+                <span>{{ group.label }}</span>
+                <small>{{ group.items.length }}</small>
+                <span v-if="inventoryGroupHasNew(group.id)" class="new-dot"></span>
+              </button>
+            </div>
+            <section v-if="inventoryActiveGroup" :key="`group-${inventoryActiveGroup.id}`" class="inventory-group">
+              <h3>
+                <img :src="inventoryActiveGroup.icon" alt="" />
+                {{ inventoryActiveGroup.label }}
+                <small>({{ inventoryActiveGroup.items.length }})</small>
               </h3>
               <ul>
-                <li v-for="item in group.items" :key="`modal-${group.id}-${item.id}`">
+                <li
+                  v-for="item in inventoryActiveGroup.items"
+                  :key="`modal-${inventoryActiveGroup.id}-${item.id}`"
+                  @mouseenter="markInventoryItemSeen(item.id)"
+                  @focusin="markInventoryItemSeen(item.id)"
+                >
                   <img class="item-icon" :src="itemIcon(item)" alt="item" />
                   <div class="item-main">
-                    <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
-                    <p :class="item.rarity">{{ item.rarity == "common" ? "Commun" 
-                    : item.rarity == "uncommon" ? "Peu commun" 
-                    : item.rarity === "rare" ? "Rare"
-                    : item.rarity == "epic" ? "Épique" 
-                    : item.rarity == "legendary" ? "Légendaire" : "Mythique" }}</p>
+                    <div class="item-name-row">
+                      <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
+                      <span v-if="itemIsNew(item.id)" class="new-badge">Nouveau</span>
+                    </div>
+                    <p :class="item.rarity">{{ rarityLabel(item.rarity) }}</p>
 
                     <p class="inventory-type">{{ inventoryTypeLabel(item) }}</p>
                     <p v-if="inventoryDetail(item)">{{ inventoryDetail(item) }}</p>
                     <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
                     <div class="row-actions">
                       <button v-if="item.kind === 'equipment'" @click="equipAction(item.id)">Equiper</button>
-                      <button v-if="item.kind === 'consumable'" @click="consumeItem(item.id)">Utiliser</button>
+                      <button
+                        v-if="item.kind === 'consumable'"
+                        :disabled="!canUseConsumable(item)"
+                        :title="consumableDisableReason(item)"
+                        @click="consumeItem(item.id)"
+                      >
+                        Utiliser
+                      </button>
                       <button @click="sellAction(item.id)">Vendre</button>
                     </div>
                   </div>
@@ -2154,6 +2573,43 @@ onBeforeUnmount(() => {
           </div>
           <p v-else>Inventaire vide.</p>
           <button class="secondary" @click="inventoryModalOpen = false">Fermer</button>
+        </article>
+      </div>
+
+      <div v-if="lootModal" class="overlay-meta" @click="closeLootModal">
+        <article class="meta-modal loot-modal" @click.stop>
+          <header class="inventory-modal-head">
+            <h2>
+              <img src="/assets/Icons/backpack.png" alt="" />
+              Butin recupere
+            </h2>
+            <p>{{ lootModal.enemyName }}</p>
+          </header>
+          <div class="loot-summary">
+            <p>+{{ lootModal.xp }} XP</p>
+            <p>+{{ lootModal.gold }} or</p>
+          </div>
+          <section v-if="lootModal.materials?.length">
+            <h3>Materiaux</h3>
+            <ul>
+              <li v-for="entry in lootModal.materials" :key="`loot-material-${entry.material}`">
+                {{ MATERIAL_LABELS[entry.material] ?? entry.material }} x{{ entry.quantity }}
+              </li>
+            </ul>
+          </section>
+          <section v-if="lootModal.items?.length">
+            <h3>Objets</h3>
+            <ul class="loot-items">
+              <li v-for="item in lootModal.items" :key="`loot-item-${item.id}`">
+                <img class="item-icon" :src="item.icon || itemIcon(item)" alt="loot" />
+                <div class="item-main">
+                  <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
+                  <p>{{ inventoryTypeLabel(item) }}</p>
+                </div>
+              </li>
+            </ul>
+          </section>
+          <button class="primary" @click="closeLootModal">Continuer</button>
         </article>
       </div>
 
@@ -2189,8 +2645,8 @@ onBeforeUnmount(() => {
         </article>
       </div>
 
-      <div v-if="skillsModalOpen" class="overlay-meta">
-        <article class="meta-modal">
+      <div v-if="skillsModalOpen" class="overlay-meta" @click="skillsModalOpen = false">
+        <article class="meta-modal" @click.stop>
           <header>
             <h2>Competences - {{ currentClass?.name }}</h2>
           </header>
@@ -2199,15 +2655,15 @@ onBeforeUnmount(() => {
               <strong>{{ skill.name }}</strong>
               <p>{{ skill.description }}</p>
               <p>Niveau {{ skill.unlockLevel }} | PA {{ skill.apCost }} | Mana {{ skill.manaCost }}</p>
-              <p>Portee {{ skill.minRange === 0 && skill.maxRange === 0 ? 'self' : `${skill.minRange}-${skill.maxRange}` }} | CD {{ skill.cooldown }}</p>
+              <p>CD {{ skill.cooldown }}</p>
             </li>
           </ul>
           <button class="secondary" @click="skillsModalOpen = false">Fermer</button>
         </article>
       </div>
 
-      <div v-if="passivesModalOpen" class="overlay-meta">
-        <article class="meta-modal">
+      <div v-if="passivesModalOpen" class="overlay-meta" @click="passivesModalOpen = false">
+        <article class="meta-modal" @click.stop>
           <header>
             <h2>Arbre passif - {{ currentClass?.name }}</h2>
             <p>Points disponibles: {{ run.player.passivePoints }}</p>
@@ -2458,12 +2914,29 @@ button.danger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  position: relative;
 }
 
 .hud-icon-btn img {
   width: 16px;
   height: 16px;
   image-rendering: pixelated;
+}
+
+.new-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 212, 143, 0.65);
+  background: linear-gradient(140deg, rgba(181, 58, 47, 0.96), rgba(138, 36, 30, 0.96));
+  color: #fff5dd;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .columns {
@@ -2678,6 +3151,19 @@ button.danger {
   margin: 2px 0;
 }
 
+.item-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.item-name-row .new-badge {
+  min-width: 0;
+  height: 16px;
+  padding: 0 6px;
+  font-size: 0.62rem;
+}
+
 .item-affix {
   font-size: 0.76rem;
   color: #bde7ff;
@@ -2736,7 +3222,7 @@ button.danger {
 
 .combat-modal-head {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr;
   gap: 12px;
   padding: 10px;
   border-radius: 12px;
@@ -2780,51 +3266,12 @@ button.danger {
   color: #ffe5cd;
 }
 
-.player-head-compact {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.player-head-compact img {
-  width: 64px;
-  height: 64px;
-  border-radius: 10px;
-  object-fit: cover;
-  image-rendering: pixelated;
-  border: 1px solid rgba(159, 218, 255, 0.45);
-}
-
-.player-head-compact p {
-  margin: 0;
-}
-
 .combat-modal-body {
   margin-top: 10px;
   display: grid;
   grid-template-columns: minmax(280px, 1fr) minmax(460px, 1.35fr) minmax(280px, 1fr);
   gap: 10px;
   align-items: start;
-}
-
-.ap-line {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.ap-pill {
-  display: inline-block;
-  border: 1px solid rgba(255, 214, 137, 0.7);
-  border-radius: 999px;
-  padding: 2px 10px;
-  background: rgba(25, 97, 121, 0.8);
-  color: #fff2ca;
-  font-weight: 700;
-}
-
-.ap-pill.enemy {
-  background: rgba(146, 58, 33, 0.82);
 }
 
 .combat-actions-panel,
@@ -2864,6 +3311,47 @@ button.danger {
   text-align: left;
 }
 
+.consumable-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.consumable-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 7px;
+}
+
+.consumable-tab img {
+  width: 14px;
+  height: 14px;
+  image-rendering: pixelated;
+}
+
+.consumable-tab small {
+  font-size: 0.72rem;
+  opacity: 0.8;
+}
+
+.consumable-tab.active {
+  border-color: rgba(250, 216, 138, 0.82);
+  background: linear-gradient(136deg, rgba(26, 106, 128, 0.92), rgba(26, 65, 94, 0.92));
+}
+
+.potions-grid button {
+  display: grid;
+  gap: 2px;
+}
+
+.potions-grid button small {
+  font-size: 0.7rem;
+  opacity: 0.82;
+}
+
 .battle-stage {
   position: relative;
   min-height: 380px;
@@ -2872,7 +3360,7 @@ button.danger {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: end;
-  gap: 10px;
+  gap: 26px;
   padding: 12px;
   background-size: cover;
   background-position: center;
@@ -2933,13 +3421,18 @@ button.danger {
   min-height: 300px;
 }
 
+.battle-unit.player {
+  padding-right: 8px;
+}
+
 .battle-unit.enemy {
   justify-items: end;
   text-align: right;
+  padding-left: 8px;
 }
 
 .battle-unit-hud {
-  width: min(100%, 270px);
+  width: min(100%, 246px);
   border: 1px solid rgba(241, 199, 123, 0.32);
   border-radius: 10px;
   padding: 8px;
@@ -2955,16 +3448,10 @@ button.danger {
   margin: 4px 0 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-wrap: wrap;
   font-size: 0.78rem;
   color: #d7d7d7;
-}
-
-.battle-hud-meta img {
-  width: 14px;
-  height: 14px;
-  image-rendering: pixelated;
 }
 
 .battle-bars {
@@ -2995,7 +3482,7 @@ button.danger {
   background: linear-gradient(90deg, #1f6f86, #4eb7e0);
 }
 
-.battle-hp-label {
+.battle-ap-label {
   margin: 6px 0 0;
   font-size: 0.77rem;
   color: #d7cdb2;
@@ -3003,11 +3490,15 @@ button.danger {
 
 .battle-actor {
   position: relative;
-  width: clamp(120px, 18vw, 240px);
+  width: clamp(112px, 16.4vw, 220px);
   min-height: 185px;
   display: grid;
   place-items: end center;
   transform-origin: 50% 82%;
+}
+
+.battle-actor.enemy {
+  width: clamp(96px, 14.2vw, 176px);
 }
 
 .battle-actor::after {
@@ -3025,10 +3516,7 @@ button.danger {
   overflow: hidden;
   image-rendering: pixelated;
   filter: drop-shadow(0 12px 12px rgba(0, 0, 0, 0.52));
-}
-
-.battle-sprite-frame.mirrored {
-  transform: scaleX(-1);
+  transform-origin: 50% 100%;
 }
 
 .battle-sprite-strip {
@@ -3404,6 +3892,38 @@ button.danger {
   gap: 10px;
 }
 
+.inventory-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.inventory-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.inventory-tab img {
+  width: 16px;
+  height: 16px;
+  image-rendering: pixelated;
+}
+
+.inventory-tab.active {
+  border-color: rgba(252, 220, 150, 0.85);
+  background: linear-gradient(136deg, rgba(29, 96, 113, 0.92), rgba(31, 54, 74, 0.9));
+}
+
+.new-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ff8f7a;
+  box-shadow: 0 0 8px rgba(255, 143, 122, 0.7);
+}
+
 .inventory-group h3 {
   margin: 0 0 7px;
   display: inline-flex;
@@ -3425,6 +3945,29 @@ button.danger {
 .inventory-type {
   font-size: 0.75rem;
   color: #ffffff;
+}
+
+.loot-modal {
+  width: min(88vw, 560px);
+}
+
+.loot-summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.loot-summary p {
+  margin: 0;
+  border: 1px solid rgba(245, 206, 144, 0.3);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(16, 35, 44, 0.55);
+}
+
+.loot-items {
+  margin-top: 8px;
 }
 
 .meta-modal li {
@@ -3512,14 +4055,19 @@ button.danger {
     font-size: 0.76rem;
   }
 
-  .player-head-compact {
-    align-items: flex-start;
-  }
-
   .battle-stage {
     min-height: 300px;
     padding: 9px;
-    gap: 6px;
+    gap: 12px;
+  }
+
+  .consumable-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .inventory-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .battle-scene-topline {
@@ -3543,8 +4091,13 @@ button.danger {
     min-height: 150px;
   }
 
+  .battle-actor.enemy {
+    width: clamp(86px, 30vw, 140px);
+  }
+
   .battle-sprite-frame {
     max-height: 142px;
   }
 }
 </style>
+

@@ -1,0 +1,488 @@
+{
+    "passiveTrees": [
+      {
+        "class": "Assassin",
+        "branches": [
+          {
+            "id": "assassin_shadow",
+            "name": "Ombre",
+            "description": "Critique et burst.",
+            "passives": [
+              { "id": "ass_shadow_01", "name": "Frappe précise", "effect": { "critChancePct": 1 } },
+              { "id": "ass_shadow_02", "name": "Entaille critique", "effect": { "critDamagePct": 2 } },
+              { "id": "ass_shadow_03", "name": "Visée chirurgicale", "effect": { "accuracyPct": 1 } },
+              { "id": "ass_shadow_04", "name": "Assaut initial", "effect": { "firstTurnDamagePct": 3 } },
+              { "id": "ass_shadow_05", "name": "Cible saine", "effect": { "damageVsHighHpPct": 2, "threshold": 70 } },
+              { "id": "ass_shadow_06", "name": "Mouvement rapide", "effect": { "speedPct": 1 } },
+              { "id": "ass_shadow_07", "name": "Spécialiste mono-cible", "effect": { "singleTargetSkillDamagePct": 2 } },
+              { "id": "ass_shadow_08", "name": "Frappe opportuniste", "effect": { "bonusCritChanceConditionalPct": 2, "condition": "advantage_state" } },
+              {
+                "id": "ass_shadow_09",
+                "name": "Maître des Ombres",
+                "tier": "major",
+                "effect": { "critChancePct": 5, "critDamagePct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "assassin_agility",
+            "name": "Agilité",
+            "description": "Esquive et survie.",
+            "passives": [
+              { "id": "ass_agility_01", "name": "Pas léger", "effect": { "dodgeChancePct": 1 } },
+              { "id": "ass_agility_02", "name": "Esquive physique", "effect": { "dodgeChanceVsPhysicalPct": 2 } },
+              { "id": "ass_agility_03", "name": "Réflexes", "effect": { "speedPct": 1 } },
+              { "id": "ass_agility_04", "name": "Anti-critique", "effect": { "enemyCritChanceReductionPct": 2 } },
+              { "id": "ass_agility_05", "name": "Contre-mouvement", "effect": { "damageReductionAfterDodgePct": 2, "durationTurns": 1 } },
+              { "id": "ass_agility_06", "name": "Adrénaline", "effect": { "dodgeChanceScalingPct": 1, "scalesPerMissingHpPct": 50, "maxPct": 3 } },
+              { "id": "ass_agility_07", "name": "Immunité au ralentissement", "effect": { "slowResistPct": 2 } },
+              { "id": "ass_agility_08", "name": "Concentration", "effect": { "dodgeChanceConditionalPct": 3, "condition": "mana_above_pct", "value": 50 } },
+              {
+                "id": "ass_agility_09",
+                "name": "Danse-Lames",
+                "tier": "major",
+                "effect": { "dodgeChancePct": 5, "speedPct": 3 }
+              }
+            ]
+          },
+          {
+            "id": "assassin_deadly_blades",
+            "name": "Lames Mortelles",
+            "description": "Dégâts constants et exécution.",
+            "passives": [
+              { "id": "ass_blades_01", "name": "Affûtage", "effect": { "atkPct": 2 } },
+              { "id": "ass_blades_02", "name": "Coup net", "effect": { "basicAttackDamagePct": 2 } },
+              { "id": "ass_blades_03", "name": "Pénétration", "effect": { "armorPenPct": 1 } },
+              { "id": "ass_blades_04", "name": "Cible affaiblie", "effect": { "damageVsDebuffedPct": 2 } },
+              { "id": "ass_blades_05", "name": "Après compétence", "effect": { "damageAfterSkillPct": 2, "durationTurns": 1 } },
+              { "id": "ass_blades_06", "name": "Duel", "effect": { "damageIn1v1Pct": 3 } },
+              { "id": "ass_blades_07", "name": "Coup critique mineur", "effect": { "critChancePct": 1 } },
+              { "id": "ass_blades_08", "name": "Punition critique", "effect": { "damageAfterCritPct": 2, "durationTurns": 1 } },
+              {
+                "id": "ass_blades_09",
+                "name": "Exécution Parfaite",
+                "tier": "major",
+                "effect": { "atkPct": 5, "damageVsLowHpPct": 5, "threshold": 50 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "class": "Archer",
+        "branches": [
+          {
+            "id": "archer_precision",
+            "name": "Précision",
+            "description": "Fiabilité et critiques.",
+            "passives": [
+              { "id": "arc_prec_01", "name": "Alignement", "effect": { "accuracyPct": 2 } },
+              { "id": "arc_prec_02", "name": "Critique à distance", "effect": { "critChancePct": 2 } },
+              { "id": "arc_prec_03", "name": "Ouverture", "effect": { "firstTurnDamagePct": 3 } },
+              { "id": "arc_prec_04", "name": "Point faible", "effect": { "critChancePct": 1 } },
+              { "id": "arc_prec_05", "name": "Coup de compétence", "effect": { "skillDamagePct": 2 } },
+              { "id": "arc_prec_06", "name": "Stabilité", "effect": { "damageVarianceReductionPct": 2 } },
+              { "id": "arc_prec_07", "name": "Cible intacte", "effect": { "damageVsFullHpPct": 2 } },
+              { "id": "arc_prec_08", "name": "Tension de l'arc", "effect": { "atkPct": 1 } },
+              {
+                "id": "arc_prec_09",
+                "name": "Œil du Faucon",
+                "tier": "major",
+                "effect": { "accuracyPct": 5, "critChancePct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "archer_rapid_fire",
+            "name": "Tir Rapide",
+            "description": "Tempo et efficacité.",
+            "passives": [
+              { "id": "arc_rapid_01", "name": "Vivacité", "effect": { "speedPct": 2 } },
+              { "id": "arc_rapid_02", "name": "Tir précis", "effect": { "basicAttackDamagePct": 2 } },
+              { "id": "arc_rapid_03", "name": "Force de bras", "effect": { "atkPct": 1 } },
+              { "id": "arc_rapid_04", "name": "Flux de mana", "effect": { "manaRegenPct": 2 } },
+              { "id": "arc_rapid_05", "name": "Initiative", "effect": { "damageWhenActFirstPct": 3 } },
+              { "id": "arc_rapid_06", "name": "Punition critique", "effect": { "damageAfterCritPct": 2, "durationTurns": 1 } },
+              { "id": "arc_rapid_07", "name": "Économie", "effect": { "manaCostReductionPct": 2 } },
+              { "id": "arc_rapid_08", "name": "Critique mineur", "effect": { "critChancePct": 1 } },
+              {
+                "id": "arc_rapid_09",
+                "name": "Pluie de Flèches",
+                "tier": "major",
+                "effect": { "damagePct": 5, "speedPct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "archer_hunter_survival",
+            "name": "Survie du Chasseur",
+            "description": "Défense et résilience.",
+            "passives": [
+              { "id": "arc_surv_01", "name": "Esquive", "effect": { "dodgeChancePct": 2 } },
+              { "id": "arc_surv_02", "name": "Peau dure", "effect": { "magicResistPct": 3 } },
+              { "id": "arc_surv_03", "name": "Endurance", "effect": { "maxHpPct": 2 } },
+              { "id": "arc_surv_04", "name": "Anti-critique", "effect": { "critDamageTakenReductionPct": 2 } },
+              { "id": "arc_surv_05", "name": "Récupération", "effect": { "healingReceivedPct": 2 } },
+              { "id": "arc_surv_06", "name": "Protection", "effect": { "defPct": 2 } },
+              { "id": "arc_surv_07", "name": "Dernier souffle", "effect": { "damageWhenLowHpPct": 3, "threshold": 50 } },
+              { "id": "arc_surv_08", "name": "Pas furtif", "effect": { "dodgeChancePct": 1 } },
+              {
+                "id": "arc_surv_09",
+                "name": "Instinct de Survie",
+                "tier": "major",
+                "effect": { "dodgeChancePct": 5, "maxHpPct": 5 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "class": "Guerrier",
+        "branches": [
+          {
+            "id": "warrior_defender",
+            "name": "Défenseur",
+            "description": "Tank et réduction de dégâts.",
+            "passives": [
+              { "id": "war_def_01", "name": "Armure renforcée", "effect": { "defPct": 2 } },
+              { "id": "war_def_02", "name": "Constitution", "effect": { "maxHpPct": 3 } },
+              { "id": "war_def_03", "name": "Résistance physique", "effect": { "physicalDamageTakenReductionPct": 2 } },
+              { "id": "war_def_04", "name": "Volonté", "effect": { "enemyCritChanceReductionPct": 2 } },
+              { "id": "war_def_05", "name": "Blocage mineur", "effect": { "blockChancePct": 1 } },
+              { "id": "war_def_06", "name": "Plaque lourde", "effect": { "armorPct": 2 } },
+              { "id": "war_def_07", "name": "Garde haute", "effect": { "damageTakenReductionWhenHighHpPct": 2, "threshold": 50 } },
+              { "id": "war_def_08", "name": "Soins amplifiés", "effect": { "healingReceivedPct": 2 } },
+              {
+                "id": "war_def_09",
+                "name": "Mur de Fer",
+                "tier": "major",
+                "effect": { "defPct": 5, "damageTakenReductionPct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "warrior_berserker",
+            "name": "Berserker",
+            "description": "Dégâts quand la pression monte.",
+            "passives": [
+              { "id": "war_ber_01", "name": "Force brute", "effect": { "atkPct": 2 } },
+              { "id": "war_ber_02", "name": "Rage montante", "effect": { "damageWhenBelowHpPct": 3, "threshold": 70 } },
+              { "id": "war_ber_03", "name": "Critique", "effect": { "critChancePct": 2 } },
+              { "id": "war_ber_04", "name": "Frappe lourde", "effect": { "basicAttackDamagePct": 2 } },
+              { "id": "war_ber_05", "name": "Vol de vie léger", "effect": { "lifestealPct": 1 } },
+              { "id": "war_ber_06", "name": "Riposte", "effect": { "damageAfterBeingHitPct": 2, "durationTurns": 1 } },
+              { "id": "war_ber_07", "name": "Furie", "effect": { "speedPct": 2 } },
+              { "id": "war_ber_08", "name": "Combat prolongé", "effect": { "damageScalingPerTurnPct": 1, "maxTurns": 3 } },
+              {
+                "id": "war_ber_09",
+                "name": "Rage du Guerrier",
+                "tier": "major",
+                "effect": { "atkPct": 5, "damageWhenBelowHpPct": 5, "threshold": 50 }
+              }
+            ]
+          },
+          {
+            "id": "warrior_weapon_mastery",
+            "name": "Maîtrise des Armes",
+            "description": "Fiabilité et pénétration.",
+            "passives": [
+              { "id": "war_weap_01", "name": "Technique", "effect": { "weaponDamagePct": 2 } },
+              { "id": "war_weap_02", "name": "Précision", "effect": { "accuracyPct": 1 } },
+              { "id": "war_weap_03", "name": "Critique", "effect": { "critChancePct": 2 } },
+              { "id": "war_weap_04", "name": "Briseur d'armure", "effect": { "armorPenPct": 2 } },
+              { "id": "war_weap_05", "name": "Duel", "effect": { "singleTargetDamagePct": 3 } },
+              { "id": "war_weap_06", "name": "Rigueur", "effect": { "damagePct": 2 } },
+              { "id": "war_weap_07", "name": "Tueur de boss", "effect": { "damageVsBossPct": 2 } },
+              { "id": "war_weap_08", "name": "Force mineure", "effect": { "atkPct": 1 } },
+              {
+                "id": "war_weap_09",
+                "name": "Maître d’Arme",
+                "tier": "major",
+                "effect": { "atkPct": 5, "critChancePct": 5 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "class": "Necroman",
+        "branches": [
+          {
+            "id": "necro_dark_magic",
+            "name": "Magie Noire",
+            "description": "Dégâts occultes.",
+            "passives": [
+              { "id": "nec_dark_01", "name": "Occulte", "effect": { "magicDamagePct": 3 } },
+              { "id": "nec_dark_02", "name": "Amplification", "effect": { "spellPowerPct": 2 } },
+              { "id": "nec_dark_03", "name": "Critique magique", "effect": { "magicCritChancePct": 2 } },
+              { "id": "nec_dark_04", "name": "Affaiblissement", "effect": { "damageVsDebuffedPct": 2 } },
+              { "id": "nec_dark_05", "name": "Pénétration magique", "effect": { "magicPenPct": 2 } },
+              { "id": "nec_dark_06", "name": "Rituel", "effect": { "manaRegenPct": 1 } },
+              { "id": "nec_dark_07", "name": "Expertise", "effect": { "skillDamagePct": 2 } },
+              { "id": "nec_dark_08", "name": "Malédiction", "effect": { "damageVsCursedPct": 3 } },
+              {
+                "id": "nec_dark_09",
+                "name": "Souverain des Morts",
+                "tier": "major",
+                "effect": { "magicDamagePct": 5, "maxManaPct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "necro_drain",
+            "name": "Drain Vital",
+            "description": "Sustain sombre.",
+            "passives": [
+              { "id": "nec_drain_01", "name": "Siphon", "effect": { "magicLifestealPct": 2 } },
+              { "id": "nec_drain_02", "name": "Récupération", "effect": { "healingReceivedPct": 2 } },
+              { "id": "nec_drain_03", "name": "Endurance", "effect": { "maxHpPct": 2 } },
+              { "id": "nec_drain_04", "name": "Régénération", "effect": { "hpRegenPct": 1 } },
+              { "id": "nec_drain_05", "name": "Voile sombre", "effect": { "damageReductionAfterSpellPct": 2, "durationTurns": 1 } },
+              { "id": "nec_drain_06", "name": "Résistance", "effect": { "magicResistPct": 2 } },
+              { "id": "nec_drain_07", "name": "Guérison par dégâts", "effect": { "healFromDamagePct": 3 } },
+              { "id": "nec_drain_08", "name": "Stabilité", "effect": { "damageTakenReductionPct": 2 } },
+              {
+                "id": "nec_drain_09",
+                "name": "Lien Nécrotique",
+                "tier": "major",
+                "effect": { "magicLifestealPct": 5, "maxHpPct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "necro_ritual_mana",
+            "name": "Rituel & Mana",
+            "description": "Gestion de mana et durée des effets.",
+            "passives": [
+              { "id": "nec_mana_01", "name": "Réserve", "effect": { "maxManaPct": 5 } },
+              { "id": "nec_mana_02", "name": "Conduit", "effect": { "manaRegenPct": 2 } },
+              { "id": "nec_mana_03", "name": "Économie", "effect": { "manaCostReductionPct": 2 } },
+              { "id": "nec_mana_04", "name": "Canalisation", "effect": { "spellPowerPct": 1 } },
+              { "id": "nec_mana_05", "name": "Efficacité", "effect": { "effectivenessPct": 2 } },
+              { "id": "nec_mana_06", "name": "Excès", "effect": { "damageWhenManaAbovePct": 2, "threshold": 50 } },
+              { "id": "nec_mana_07", "name": "Bouclier mystique", "effect": { "magicResistPct": 2 } },
+              { "id": "nec_mana_08", "name": "Durée", "effect": { "buffDebuffDurationPct": 3 } },
+              {
+                "id": "nec_mana_09",
+                "name": "Archimage Noir",
+                "tier": "major",
+                "effect": { "maxManaPct": 5, "manaCostReductionPct": 5 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "class": "Druide",
+        "branches": [
+          {
+            "id": "druid_nature_guard",
+            "name": "Gardien de la Nature",
+            "description": "Soins et robustesse.",
+            "passives": [
+              { "id": "dru_guard_01", "name": "Main verte", "effect": { "healingDonePct": 3 } },
+              { "id": "dru_guard_02", "name": "Vitalité", "effect": { "maxHpPct": 2 } },
+              { "id": "dru_guard_03", "name": "Résistance mystique", "effect": { "magicResistPct": 2 } },
+              { "id": "dru_guard_04", "name": "Régénération", "effect": { "hpRegenPct": 1 } },
+              { "id": "dru_guard_05", "name": "Bouclier naturel", "effect": { "shieldStrengthPct": 2 } },
+              { "id": "dru_guard_06", "name": "Soin amélioré", "effect": { "healingSkillBonusPct": 2 } },
+              { "id": "dru_guard_07", "name": "Résilience", "effect": { "damageTakenReductionPct": 2 } },
+              { "id": "dru_guard_08", "name": "Empathie", "effect": { "healingDonePct": 2 } },
+              {
+                "id": "dru_guard_09",
+                "name": "Esprit Sylvestre",
+                "tier": "major",
+                "effect": { "healingDonePct": 5, "maxHpPct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "druid_harmony",
+            "name": "Harmonie",
+            "description": "Mana et buffs.",
+            "passives": [
+              { "id": "dru_harm_01", "name": "Réserve de mana", "effect": { "maxManaPct": 2 } },
+              { "id": "dru_harm_02", "name": "Flux", "effect": { "manaRegenPct": 2 } },
+              { "id": "dru_harm_03", "name": "Buff renforcé", "effect": { "buffEffectivenessPct": 2 } },
+              { "id": "dru_harm_04", "name": "Tempo", "effect": { "speedPct": 1 } },
+              { "id": "dru_harm_05", "name": "Économie", "effect": { "manaCostReductionPct": 2 } },
+              { "id": "dru_harm_06", "name": "Longue durée", "effect": { "buffDurationPct": 2 } },
+              { "id": "dru_harm_07", "name": "Pureté", "effect": { "debuffResistPct": 2 } },
+              { "id": "dru_harm_08", "name": "Équilibre", "effect": { "effectivenessPct": 3 } },
+              {
+                "id": "dru_harm_09",
+                "name": "Équilibre Naturel",
+                "tier": "major",
+                "effect": { "maxManaPct": 5, "effectivenessPct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "druid_wild_form",
+            "name": "Forme Sauvage",
+            "description": "Dégâts et vitesse.",
+            "passives": [
+              { "id": "dru_wild_01", "name": "Griffes", "effect": { "atkPct": 2 } },
+              { "id": "dru_wild_02", "name": "Frappe naturelle", "effect": { "skillDamagePct": 2 } },
+              { "id": "dru_wild_03", "name": "Agilité", "effect": { "dodgeChancePct": 2 } },
+              { "id": "dru_wild_04", "name": "Critique mineur", "effect": { "critChancePct": 1 } },
+              { "id": "dru_wild_05", "name": "Vif", "effect": { "speedPct": 2 } },
+              { "id": "dru_wild_06", "name": "Rage de la nature", "effect": { "damagePct": 2 } },
+              { "id": "dru_wild_07", "name": "Dominance", "effect": { "damageWhenHighHpPct": 3, "threshold": 80 } },
+              { "id": "dru_wild_08", "name": "Peau épaisse", "effect": { "physicalResistPct": 2 } },
+              {
+                "id": "dru_wild_09",
+                "name": "Avatar Sauvage",
+                "tier": "major",
+                "effect": { "atkPct": 5, "speedPct": 5 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "class": "Barde",
+        "branches": [
+          {
+            "id": "bard_support_melodies",
+            "name": "Mélodies de Soutien",
+            "description": "Amplification de support.",
+            "passives": [
+              { "id": "bar_supp_01", "name": "Accord parfait", "effect": { "buffEffectivenessPct": 3 } },
+              { "id": "bar_supp_02", "name": "Récupération", "effect": { "healingReceivedPct": 2 } },
+              { "id": "bar_supp_03", "name": "Rythme", "effect": { "manaRegenPct": 2 } },
+              { "id": "bar_supp_04", "name": "Soutien durable", "effect": { "buffDurationPct": 2 } },
+              { "id": "bar_supp_05", "name": "Tempo", "effect": { "speedPct": 1 } },
+              { "id": "bar_supp_06", "name": "Protection mystique", "effect": { "magicResistPct": 2 } },
+              { "id": "bar_supp_07", "name": "Économie", "effect": { "manaCostReductionPct": 2 } },
+              { "id": "bar_supp_08", "name": "Support expert", "effect": { "supportSkillEffectivenessPct": 3 } },
+              {
+                "id": "bar_supp_09",
+                "name": "Symphonie Éternelle",
+                "tier": "major",
+                "effect": { "buffEffectivenessPct": 5, "manaRegenPct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "bard_inspiration",
+            "name": "Inspiration",
+            "description": "Offensif sous buffs.",
+            "passives": [
+              { "id": "bar_insp_01", "name": "Élan", "effect": { "critChancePct": 2 } },
+              { "id": "bar_insp_02", "name": "Puissance", "effect": { "skillDamagePct": 2 } },
+              { "id": "bar_insp_03", "name": "ATK mineure", "effect": { "atkPct": 1 } },
+              { "id": "bar_insp_04", "name": "Précision", "effect": { "accuracyPct": 2 } },
+              { "id": "bar_insp_05", "name": "Vitesse", "effect": { "speedPct": 2 } },
+              { "id": "bar_insp_06", "name": "Sous buff", "effect": { "damageWhileBuffedPct": 3 } },
+              { "id": "bar_insp_07", "name": "Effets positifs", "effect": { "positiveEffectivenessPct": 2 } },
+              { "id": "bar_insp_08", "name": "Mana mineure", "effect": { "maxManaPct": 1 } },
+              {
+                "id": "bar_insp_09",
+                "name": "Hymne de Guerre",
+                "tier": "major",
+                "effect": { "critChancePct": 5, "damagePct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "bard_virtuoso",
+            "name": "Virtuose",
+            "description": "Contrôle et confort.",
+            "passives": [
+              { "id": "bar_virt_01", "name": "Réserve", "effect": { "maxManaPct": 2 } },
+              { "id": "bar_virt_02", "name": "Récital", "effect": { "manaRegenPct": 2 } },
+              { "id": "bar_virt_03", "name": "Résistance", "effect": { "debuffResistPct": 2 } },
+              { "id": "bar_virt_04", "name": "Tempo mineur", "effect": { "speedPct": 1 } },
+              { "id": "bar_virt_05", "name": "Maîtrise du temps", "effect": { "cooldownReductionPct": 2 } },
+              { "id": "bar_virt_06", "name": "Efficacité", "effect": { "effectivenessPct": 2 } },
+              { "id": "bar_virt_07", "name": "Stabilité", "effect": { "spellStabilityPct": 3 } },
+              { "id": "bar_virt_08", "name": "Défense", "effect": { "defPct": 2 } },
+              {
+                "id": "bar_virt_09",
+                "name": "Maestro",
+                "tier": "major",
+                "effect": { "maxManaPct": 5, "effectivenessPct": 5 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "class": "Mage",
+        "branches": [
+          {
+            "id": "mage_pure_arcana",
+            "name": "Arcanes Pures",
+            "description": "Burst magique.",
+            "passives": [
+              { "id": "mag_arc_01", "name": "Puissance", "effect": { "magicDamagePct": 3 } },
+              { "id": "mag_arc_02", "name": "Critique magique", "effect": { "magicCritChancePct": 2 } },
+              { "id": "mag_arc_03", "name": "Amplification", "effect": { "spellPowerPct": 2 } },
+              { "id": "mag_arc_04", "name": "Pénétration", "effect": { "magicPenPct": 1 } },
+              { "id": "mag_arc_05", "name": "Expertise", "effect": { "skillDamagePct": 2 } },
+              { "id": "mag_arc_06", "name": "Cible intacte", "effect": { "damageVsFullHpPct": 2 } },
+              { "id": "mag_arc_07", "name": "Stabilité", "effect": { "spellStabilityPct": 2 } },
+              { "id": "mag_arc_08", "name": "Mana mineure", "effect": { "maxManaPct": 1 } },
+              {
+                "id": "mag_arc_09",
+                "name": "Maître des Arcanes",
+                "tier": "major",
+                "effect": { "magicDamagePct": 5, "magicCritChancePct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "mage_mana_pool",
+            "name": "Réservoir de Mana",
+            "description": "Gestion de mana.",
+            "passives": [
+              { "id": "mag_mana_01", "name": "Réserve", "effect": { "maxManaPct": 5 } },
+              { "id": "mag_mana_02", "name": "Flux", "effect": { "manaRegenPct": 3 } },
+              { "id": "mag_mana_03", "name": "Économie", "effect": { "manaCostReductionPct": 2 } },
+              { "id": "mag_mana_04", "name": "Voile mystique", "effect": { "magicResistPct": 2 } },
+              { "id": "mag_mana_05", "name": "Canalisation", "effect": { "spellPowerPct": 1 } },
+              { "id": "mag_mana_06", "name": "Efficacité", "effect": { "effectivenessPct": 2 } },
+              { "id": "mag_mana_07", "name": "Durée", "effect": { "buffDebuffDurationPct": 2 } },
+              { "id": "mag_mana_08", "name": "Surplus", "effect": { "damageWhenManaAbovePct": 2, "threshold": 60 } },
+              {
+                "id": "mag_mana_09",
+                "name": "Source Infinie",
+                "tier": "major",
+                "effect": { "maxManaPct": 10, "manaRegenPct": 5 }
+              }
+            ]
+          },
+          {
+            "id": "mage_control",
+            "name": "Contrôle Magique",
+            "description": "Confort et constance.",
+            "passives": [
+              { "id": "mag_ctrl_01", "name": "Précision mystique", "effect": { "spellAccuracyPct": 2 } },
+              { "id": "mag_ctrl_02", "name": "Effets renforcés", "effect": { "effectivenessPct": 2 } },
+              { "id": "mag_ctrl_03", "name": "Concentration", "effect": { "interruptResistPct": 2 } },
+              { "id": "mag_ctrl_04", "name": "Tempo", "effect": { "speedPct": 1 } },
+              { "id": "mag_ctrl_05", "name": "Dégâts constants", "effect": { "damagePct": 2 } },
+              { "id": "mag_ctrl_06", "name": "Critique magique", "effect": { "magicCritChancePct": 2 } },
+              { "id": "mag_ctrl_07", "name": "Combat prolongé", "effect": { "damageScalingPerTurnPct": 1, "maxTurns": 3 } },
+              { "id": "mag_ctrl_08", "name": "Stabilité", "effect": { "spellStabilityPct": 2 } },
+              {
+                "id": "mag_ctrl_09",
+                "name": "Archimage",
+                "tier": "major",
+                "effect": { "spellPowerPct": 5, "effectivenessPct": 5 }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "meta": {
+      "notes": [
+        "Les effets sont exprimés en pourcentages (Pct).",
+        "Les passifs mineurs respectent globalement <= 5% par stat.",
+        "Les passifs 'major' combinent plusieurs bonus ou montent à 10% uniquement sur mana max pour le Mage (Source Infinie)."
+      ]
+    }
+  }
+  
