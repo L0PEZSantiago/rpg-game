@@ -77,7 +77,7 @@
             "description": "Fiabilité et critiques.",
             "passives": [
               { "id": "arc_prec_01", "name": "Alignement", "effect": { "accuracyPct": 2 } },
-              { "id": "arc_prec_02", "name": "Critique à distance", "effect": { "critChancePct": 2 } },
+              { "id": "arc_prec_02", "name": "Critique précis", "effect": { "critChancePct": 2 } },
               { "id": "arc_prec_03", "name": "Ouverture", "effect": { "firstTurnDamagePct": 3 } },
               { "id": "arc_prec_04", "name": "Point faible", "effect": { "critChancePct": 1 } },
               { "id": "arc_prec_05", "name": "Coup de compétence", "effect": { "skillDamagePct": 2 } },

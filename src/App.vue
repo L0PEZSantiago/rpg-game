@@ -11,8 +11,10 @@ import {
   RARITY_ORDER,
   RARITIES,
   RECIPES,
+  RESOURCE_TABLE,
 } from './game/data'
 import {
+  PASSIVE_RESET_RULES,
   answerNpcRiddle,
   appendLog,
   attemptMove,
@@ -41,8 +43,12 @@ import {
   playerNormalAttack,
   playerUseSkill,
   progressSummary,
+  recipeMaterialRequirements,
+  resetPassiveTree,
   runEnemyTurn,
   sellItem,
+  sellValueForItem,
+  usePortalAtPosition,
   unequipItem,
   unlockPassive,
   unlockedSkills,
@@ -76,12 +82,33 @@ const skillsModalOpen = ref(false)
 const passivesModalOpen = ref(false)
 const inventoryModalOpen = ref(false)
 const riddleModal = ref(null)
+const riddleFeedbackModal = ref(null)
 const lootModal = ref(null)
+const portalConfirmModal = ref(null)
 const inventoryTab = ref('weapon')
 const combatConsumableTab = ref('regen')
 const inventoryTrackingPrimed = ref(false)
 const inventorySnapshot = ref(new Map())
 const newInventoryItems = reactive({})
+const hoveredInventoryItemId = ref(null)
+const inventoryTooltip = reactive({
+  x: 12,
+  y: 12,
+  visible: false,
+})
+const openedChestFx = ref(null)
+const mapAnimTick = ref(0)
+const mapAnimTimer = ref(null)
+const mapGridRef = ref(null)
+const mapPlayerMotionTimer = ref(null)
+const mapPlayerVisual = reactive({
+  x: 0,
+  y: 0,
+  walking: false,
+  facing: 'down',
+})
+const mapPlayerFrame = ref(0)
+const mapPlayerFrameTimer = ref(null)
 
 const creation = reactive({
   name: 'Aelys',
@@ -109,6 +136,7 @@ const currentClass = computed(() => {
 const playerPortrait = computed(() => currentClass.value?.portrait ?? CLASS_DEFINITIONS[0]?.portrait ?? '')
 const skillCatalog = computed(() => currentClass.value?.skills ?? [])
 const passiveCatalog = computed(() => currentClass.value?.passives ?? [])
+const passiveBranches = computed(() => currentClass.value?.passiveTree ?? [])
 const currentNpc = computed(() => (run.value ? nearbyNpc(run.value) : null))
 const currentResource = computed(() => (run.value ? nearbyResource(run.value) : null))
 const currentChest = computed(() => (run.value ? nearbyChest(run.value) : null))
@@ -119,6 +147,42 @@ const combatEnemy = computed(() => {
   }
   return ENEMY_TEMPLATES[run.value.combat.enemyTemplateId] ?? null
 })
+const characterStatRows = computed(() => {
+  if (!run.value || !stats.value) {
+    return []
+  }
+  const list = [
+    { id: 'max-hp', label: 'PV max', value: stats.value.maxHp },
+    { id: 'max-mana', label: 'Mana max', value: stats.value.maxMana },
+    { id: 'atk', label: 'ATK', value: stats.value.attack },
+    { id: 'def', label: 'DEF', value: stats.value.defense },
+    { id: 'crit', label: 'Critique', value: `${Math.round((stats.value.critChance ?? 0) * 100)}%` },
+    { id: 'dodge', label: 'Esquive', value: `${Math.round((stats.value.dodgeChance ?? 0) * 100)}%` },
+    { id: 'speed', label: 'Vitesse', value: stats.value.speed },
+  ]
+  const magicPower = Math.max(1, Math.round(stats.value.attack * (1 + (stats.value.spellPowerPercent ?? 0))))
+  list.push({ id: 'magic', label: 'Puissance magique', value: magicPower })
+  return list
+})
+const passiveResetRemaining = computed(() => {
+  if (!run.value) {
+    return PASSIVE_RESET_RULES.limit
+  }
+  const used = run.value.player.passiveResetsUsed ?? 0
+  return Math.max(0, PASSIVE_RESET_RULES.limit - used)
+})
+const passivePointBadge = computed(() => Math.max(0, run.value?.player?.passivePoints ?? 0))
+const merchantShopEntries = computed(() =>
+  CONSUMABLES_SHOP.map((shop) => {
+    const limited = (shop.stock ?? 0) > 0
+    const remaining = limited ? run.value?.world?.shopStock?.[shop.id] ?? shop.stock ?? 0 : null
+    return {
+      ...shop,
+      limited,
+      remaining,
+    }
+  }),
+)
 const consumableItems = computed(() => {
   if (!run.value) {
     return []
@@ -153,6 +217,11 @@ const COMBAT_CONSUMABLE_GROUP_DEFS = [
   { id: 'buff', label: 'Buff', icon: '/assets/Icons/skills.png' },
   { id: 'utility', label: 'Utilitaire', icon: '/assets/Icons/armor.png' },
 ]
+
+const INVENTORY_TOOLTIP_WIDTH = 304
+const INVENTORY_TOOLTIP_HEIGHT = 192
+const INVENTORY_TOOLTIP_GAP = 16
+const INVENTORY_TOOLTIP_PAD = 10
 
 function consumableGroupIdFromEffect(effect) {
   if (effect === 'heal_80' || effect === 'mana_60' || effect === 'heal_45_mana_35') {
@@ -202,6 +271,16 @@ const inventoryGroups = computed(() => {
 })
 const inventoryActiveGroup = computed(() => inventoryGroups.value.find((entry) => entry.id === inventoryTab.value) ?? null)
 const newInventoryCount = computed(() => Object.keys(newInventoryItems).length)
+const hoveredInventoryItem = computed(() => {
+  if (!run.value || !hoveredInventoryItemId.value) {
+    return null
+  }
+  return run.value.player.inventory.find((item) => item.id === hoveredInventoryItemId.value) ?? null
+})
+const inventoryTooltipStyle = computed(() => ({
+  left: `${inventoryTooltip.x}px`,
+  top: `${inventoryTooltip.y}px`,
+}))
 
 const combatConsumableGroups = computed(() => {
   const groups = COMBAT_CONSUMABLE_GROUP_DEFS.map((entry) => ({ ...entry, items: [] }))
@@ -242,20 +321,20 @@ function sortInventoryItems(left, right) {
 function inventoryTypeLabel(item) {
   if (item.kind === 'equipment') {
     if (item.slot === 'weapon') {
-      return 'Type: Arme'
+      return 'Categorie: Arme'
     }
     if (item.slot === 'armor') {
-      return 'Type: Armure'
+      return 'Categorie: Armure'
     }
     if (item.slot === 'trinket') {
-      return 'Type: Babiole'
+      return 'Categorie: Babiole'
     }
-    return 'Type: Equipement'
+    return 'Categorie: Equipement'
   }
   if (item.kind === 'consumable') {
-    return 'Type: Consommable'
+    return 'Categorie: Consommable'
   }
-  return `Type: ${item.kind ?? 'Divers'}`
+  return `Categorie: ${item.kind ?? 'Divers'}`
 }
 
 function inventoryDetail(item) {
@@ -263,9 +342,61 @@ function inventoryDetail(item) {
     return `ATK ${item.attack ?? 0} DEF ${item.defense ?? 0}`
   }
   if (item.kind === 'consumable') {
-    return `${consumableGroupLabel(item.effect)} | Quantite: ${item.quantity ?? 0}`
+    return `Quantite: ${item.quantity ?? 0}`
   }
   return ''
+}
+
+function consumableDescription(effect) {
+  if (effect === 'heal_80') {
+    return 'Rend 80 PV.'
+  }
+  if (effect === 'mana_60') {
+    return 'Rend 60 mana.'
+  }
+  if (effect === 'heal_45_mana_35') {
+    return 'Rend 45 PV et 35 mana.'
+  }
+  if (effect === 'buff_resistance') {
+    return 'Augmente la DEF de 24% pendant 3 tours.'
+  }
+  if (effect === 'buff_damage') {
+    return 'Augmente les degats de 24% pendant 3 tours.'
+  }
+  if (effect === 'buff_crit') {
+    return 'Augmente le critique pendant 3 tours.'
+  }
+  if (effect === 'cleanse_and_guard') {
+    return 'Retire les debuffs et donne un bouclier.'
+  }
+  return 'Objet utilitaire.'
+}
+
+function itemDescription(item) {
+  if (!item) {
+    return ''
+  }
+  if (item.description) {
+    return item.description
+  }
+  if (item.kind === 'consumable') {
+    return consumableDescription(item.effect)
+  }
+  if (item.kind === 'equipment') {
+    const bonuses = []
+    if ((item.attack ?? 0) > 0) {
+      bonuses.push(`ATK +${item.attack}`)
+    }
+    if ((item.defense ?? 0) > 0) {
+      bonuses.push(`DEF +${item.defense}`)
+    }
+    return bonuses.join(' | ') || 'Equipement'
+  }
+  return ''
+}
+
+function itemSellPrice(item) {
+  return sellValueForItem(item)
 }
 
 function rarityLabel(rarity) {
@@ -314,6 +445,49 @@ function canUseConsumable(item) {
   return !consumableDisableReason(item)
 }
 
+function recipeRequirements(recipeId) {
+  return recipeMaterialRequirements(recipeId) ?? {}
+}
+
+function recipeRequirementEntries(recipe) {
+  const required = recipeRequirements(recipe.id)
+  return Object.entries(required).map(([material, needed]) => {
+    const owned = run.value?.player?.materials?.[material] ?? 0
+    return {
+      material,
+      label: MATERIAL_LABELS[material] ?? material,
+      needed,
+      owned,
+      enough: owned >= needed,
+    }
+  })
+}
+
+function canCraftRecipe(recipe) {
+  return Boolean(run.value) && canCraft(run.value, recipe.id)
+}
+
+function shopItemDisabled(shop) {
+  if (!run.value) {
+    return true
+  }
+  if ((shop.stock ?? 0) > 0) {
+    const remaining = run.value.world.shopStock?.[shop.id] ?? shop.stock ?? 0
+    if (remaining <= 0) {
+      return true
+    }
+  }
+  return run.value.player.gold < shop.price
+}
+
+function shopStockLabel(shop) {
+  if ((shop.stock ?? 0) <= 0) {
+    return 'Stock: infini'
+  }
+  const remaining = run.value?.world?.shopStock?.[shop.id] ?? shop.stock ?? 0
+  return `Stock: ${remaining}`
+}
+
 function clearNewInventoryBadges() {
   for (const key of Object.keys(newInventoryItems)) {
     delete newInventoryItems[key]
@@ -337,6 +511,136 @@ function inventoryGroupHasNew(groupId) {
     return false
   }
   return group.items.some((item) => itemIsNew(item.id))
+}
+
+function setInventoryTooltipPosition(clientX, clientY) {
+  const viewportWidth = window.innerWidth || 1280
+  const viewportHeight = window.innerHeight || 720
+
+  let x = clientX + INVENTORY_TOOLTIP_GAP
+  let y = clientY + INVENTORY_TOOLTIP_GAP
+
+  if (x + INVENTORY_TOOLTIP_WIDTH + INVENTORY_TOOLTIP_PAD > viewportWidth) {
+    x = clientX - INVENTORY_TOOLTIP_WIDTH - INVENTORY_TOOLTIP_GAP
+  }
+  if (y + INVENTORY_TOOLTIP_HEIGHT + INVENTORY_TOOLTIP_PAD > viewportHeight) {
+    y = viewportHeight - INVENTORY_TOOLTIP_HEIGHT - INVENTORY_TOOLTIP_PAD
+  }
+
+  if (x < INVENTORY_TOOLTIP_PAD) {
+    x = INVENTORY_TOOLTIP_PAD
+  }
+  if (y < INVENTORY_TOOLTIP_PAD) {
+    y = INVENTORY_TOOLTIP_PAD
+  }
+
+  inventoryTooltip.x = Math.round(x)
+  inventoryTooltip.y = Math.round(y)
+}
+
+function updateInventoryTooltipFromEvent(event) {
+  if (!event) {
+    return
+  }
+
+  if (typeof event.clientX === 'number' && typeof event.clientY === 'number') {
+    setInventoryTooltipPosition(event.clientX, event.clientY)
+    return
+  }
+
+  const rect = event.currentTarget?.getBoundingClientRect?.()
+  if (rect) {
+    setInventoryTooltipPosition(rect.right, rect.top + rect.height * 0.5)
+  }
+}
+
+function showInventoryItemTooltip(item, event = null) {
+  if (!item?.id) {
+    hideInventoryItemTooltip()
+    return
+  }
+  markInventoryItemSeen(item.id)
+  if (item.kind !== 'equipment') {
+    hideInventoryItemTooltip()
+    return
+  }
+  hoveredInventoryItemId.value = item.id
+  inventoryTooltip.visible = true
+  updateInventoryTooltipFromEvent(event)
+}
+
+function moveInventoryItemTooltip(event) {
+  if (!inventoryTooltip.visible) {
+    return
+  }
+  updateInventoryTooltipFromEvent(event)
+}
+
+function hideInventoryItemTooltip() {
+  hoveredInventoryItemId.value = null
+  inventoryTooltip.visible = false
+}
+
+function equippedItemForComparison(item) {
+  if (!run.value || item?.kind !== 'equipment') {
+    return null
+  }
+  return run.value.player.equipment?.[item.slot] ?? null
+}
+
+function equippedComparisonLabel(item) {
+  const equipped = equippedItemForComparison(item)
+  if (!equipped) {
+    return 'Equipe: aucun objet sur ce slot'
+  }
+  return `Equipe: ${equipped.name} (${rarityLabel(equipped.rarity)})`
+}
+
+function equipmentCompareRows(item) {
+  if (item?.kind !== 'equipment') {
+    return []
+  }
+  const equipped = equippedItemForComparison(item)
+  const candidateAttack = item.attack ?? 0
+  const candidateDefense = item.defense ?? 0
+  const equippedAttack = equipped?.attack ?? 0
+  const equippedDefense = equipped?.defense ?? 0
+  return [
+    {
+      id: 'atk',
+      label: 'ATK',
+      candidate: candidateAttack,
+      equipped: equippedAttack,
+      delta: candidateAttack - equippedAttack,
+    },
+    {
+      id: 'def',
+      label: 'DEF',
+      candidate: candidateDefense,
+      equipped: equippedDefense,
+      delta: candidateDefense - equippedDefense,
+    },
+  ]
+}
+
+function statDeltaLabel(delta) {
+  if (delta > 0) {
+    return `+${delta}`
+  }
+  if (delta < 0) {
+    return `${delta}`
+  }
+  return '0'
+}
+
+function statDeltaClass(delta) {
+  if (delta > 0) {
+    return 'delta-up'
+  }
+  if (delta < 0) {
+    return 'delta-down'
+  }
+  return 'delta-flat'
 }
 
 function selectInventoryTab(groupId) {
@@ -379,6 +683,37 @@ const COMBAT_SOUND_BANK = {
   playerDeath: ['/assets/sounds/14_human_death_spin.wav'],
   enemyDeath: ['/assets/sounds/24_orc_death_spin.wav'],
 }
+
+const UI_SOUND_BANK = {
+  chestOpen: [
+    '/assets/sounds/01_chest_open_1.wav',
+    '/assets/sounds/01_chest_open_2.wav',
+    '/assets/sounds/01_chest_open_3.wav',
+    '/assets/sounds/01_chest_open_4.wav',
+  ],
+  portal: ['/assets/sounds/portal-jump.mp3'],
+  portal_spawned: ['/assets/sounds/portal_spawn.mp3'],
+  uiOpen: ['/assets/sounds/05_door_open_1.mp3', '/assets/sounds/05_door_open_2.mp3'],
+  uiClose: ['/assets/sounds/06_door_close_1.mp3', '/assets/sounds/06_door_close_2.mp3'],
+  uiConfirm: ['/assets/sounds/04_sack_open_1.wav', '/assets/sounds/04_sack_open_2.wav', '/assets/sounds/04_sack_open_3.wav'],
+  sellOrBuy: ['/assets/sounds/sell_or_buy.mp3'],
+  levelUp: ['/assets/sounds/level_up.mp3'],
+  craft: ['/assets/sounds/craft.mp3'],
+  drinkPotion: ['/assets/sounds/drink_potion.wav'],
+  passiveGet: ['/assets/sounds/passive_get.mp3'],
+}
+
+const MAP_PLAYER_SPRITES = {
+  idle: '/assets/Entities/Characters/Body_A/Animations/Idle_Base/Idle_Down-Sheet.png',
+  walk: '/assets/Entities/Characters/Body_A/Animations/Run_Base/Run_Down-Sheet.png',
+}
+
+const MAP_PORTAL_SPRITES = {
+  secret: '/assets/world/PORTAL RED-Recovered-Recovered-Sheet.png',
+  back: '/assets/world/PORTAL BLUE-Sheet.png',
+}
+
+const MAP_CHEST_SPRITE = '/assets/world/treasure-chest.png'
 
 const BACKGROUND_MUSIC = {
   world: '/assets/musics/Goblins_Den_(Regular).wav',
@@ -898,6 +1233,20 @@ function playCombatSound(pool, volume = 0.22) {
   }
 }
 
+function playUiSound(pool, volume = 0.24) {
+  const source = randomFrom(pool)
+  if (!source) {
+    return
+  }
+  try {
+    const sound = new Audio(source)
+    sound.volume = volume
+    void sound.play().catch(() => {})
+  } catch {
+    // Ignore UI sound failures.
+  }
+}
+
 function actorStateRef(side) {
   return side === 'player' ? combatPlayerState : combatEnemyState
 }
@@ -1013,10 +1362,7 @@ function inferSkillAnimationStyle(skill) {
   if (skill.effect === 'heal' || skill.effect === 'shield' || skill.effect === 'buff' || skill.effect === 'debuff') {
     return 'magic'
   }
-  if (skill.effect === 'dot' && (skill.minRange ?? 1) >= 2) {
-    return 'magic'
-  }
-  if ((skill.minRange ?? 1) >= 3 || (skill.maxRange ?? 1) >= 4) {
+  if (skill.effect === 'dot') {
     return 'magic'
   }
   if ((skill.manaCost ?? 0) >= 14) {
@@ -1151,7 +1497,6 @@ function snapshotCombatState(battle) {
     enemyMana: battle.enemyMana ?? 0,
     enemyAp: battle.enemyAp,
     playerAp: battle.playerAp,
-    distance: battle.distance,
     actor: battle.actor,
     turn: battle.turn,
     enemySkills: [...(combatEnemy.value?.skills ?? ENEMY_TEMPLATES[battle.enemyTemplateId]?.skills ?? [])],
@@ -1316,6 +1661,9 @@ watch(
   (current) => {
     clearLootModalTimer()
     lootModal.value = null
+    hoveredInventoryItemId.value = null
+    inventoryTooltip.visible = false
+    openedChestFx.value = null
     clearNewInventoryBadges()
     inventorySnapshot.value = new Map()
     inventoryTrackingPrimed.value = false
@@ -1330,8 +1678,82 @@ watch(
     }
     inventorySnapshot.value = seeded
     inventoryTrackingPrimed.value = true
+    syncMapPlayerToRun()
   },
   { immediate: true },
+)
+
+watch(
+  () => Boolean(run.value?.levelUpModal),
+  (isOpen, wasOpen) => {
+    if (isOpen && !wasOpen) {
+      playUiSound(UI_SOUND_BANK.levelUp, 0.34)
+    }
+  },
+)
+
+watch(
+  () => (run.value ? `${run.value.world.currentMapId}:${run.value.world.playerPosition.x}:${run.value.world.playerPosition.y}` : ''),
+  () => {
+    if (!run.value) {
+      return
+    }
+    if (!mapPlayerVisual.walking) {
+      syncMapPlayerToRun()
+    }
+  },
+)
+
+watch(
+  () => mapPlayerVisual.walking,
+  () => {
+    mapPlayerFrame.value = 0
+    restartMapPlayerFrameTicker()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => openedChestFx.value,
+  (fx) => {
+    if (!fx) {
+      return
+    }
+    window.setTimeout(() => {
+      if (!openedChestFx.value) {
+        return
+      }
+      const elapsed = mapAnimTick.value - (openedChestFx.value.startTick ?? mapAnimTick.value)
+      if (elapsed >= 8) {
+        openedChestFx.value = null
+      }
+    }, 1100)
+  },
+)
+
+watch(
+  () => [inventoryModalOpen.value, passivesModalOpen.value, skillsModalOpen.value, npcOpen.value, Boolean(riddleModal.value)],
+  (current, previous) => {
+    if (!previous) {
+      return
+    }
+    const wasAnyOpen = previous.some(Boolean)
+    const isAnyOpen = current.some(Boolean)
+    if (isAnyOpen && !wasAnyOpen) {
+      playUiSound(UI_SOUND_BANK.uiOpen, 0.2)
+    } else if (!isAnyOpen && wasAnyOpen) {
+      playUiSound(UI_SOUND_BANK.uiClose, 0.2)
+    }
+  },
+)
+
+watch(
+  () => inventoryModalOpen.value,
+  (isOpen) => {
+    if (!isOpen) {
+      hideInventoryItemTooltip()
+    }
+  },
 )
 
 watch(
@@ -1393,10 +1815,109 @@ const mapGridStyle = computed(() => {
     return {}
   }
   return {
+    '--grid-cols': activeMap.value.width,
+    '--grid-rows': activeMap.value.height,
+    '--grid-gap': '2px',
+    '--grid-pad': '6px',
     gridTemplateColumns: `repeat(${activeMap.value.width}, minmax(24px, 1fr))`,
-    backgroundImage: `linear-gradient(145deg, rgba(12, 24, 29, 0.75), rgba(26, 11, 7, 0.82)), url('${activeMap.value.background}')`,
+    backgroundImage: 'linear-gradient(145deg, rgba(7, 15, 20, 0.98), rgba(18, 10, 8, 0.98))',
   }
 })
+
+const mapPlayerStyle = computed(() => {
+  if (!activeMap.value) {
+    return {}
+  }
+  return {
+    '--player-x': mapPlayerVisual.x,
+    '--player-y': mapPlayerVisual.y,
+  }
+})
+
+const mapPlayerSpriteSource = computed(() => (mapPlayerVisual.walking ? MAP_PLAYER_SPRITES.walk : MAP_PLAYER_SPRITES.idle))
+const mapPlayerSpriteFrames = computed(() => (mapPlayerVisual.walking ? 6 : 4))
+const mapPlayerStripStyle = computed(() => {
+  const frames = Math.max(1, mapPlayerSpriteFrames.value)
+  const frame = mapPlayerFrame.value % frames
+  return {
+    width: `${frames * 100}%`,
+    transform: `translateX(-${frame * (100 / frames)}%)`,
+  }
+})
+
+function tileSpriteStripStyle(sprite) {
+  const frames = Math.max(1, sprite?.frames ?? 1)
+  const frame = Math.max(0, sprite?.frame ?? (mapAnimTick.value % frames))
+  return {
+    width: `${frames * 100}%`,
+    transform: `translateX(-${(frame % frames) * (100 / frames)}%)`,
+  }
+}
+
+function buildMapCellSprite(cell) {
+  if (!cell.discovered) {
+    return null
+  }
+  if (cell.enemy) {
+    return {
+      src: ENEMY_TEMPLATES[cell.enemy.templateId]?.asset ?? '',
+      frames: 4,
+      className: 'entity-enemy',
+    }
+  }
+  if (cell.npc) {
+    return {
+      src: cell.npc.portrait ?? '',
+      frames: 4,
+      className: 'entity-npc',
+    }
+  }
+  if (cell.resource) {
+    return {
+      src: RESOURCE_TABLE[cell.resource.type]?.icon ?? '/assets/Icons/skills.png',
+      frames: 1,
+      className: 'entity-resource',
+    }
+  }
+  if (cell.chestFxFrame != null) {
+    return {
+      src: MAP_CHEST_SPRITE,
+      frames: 1,
+      frame: 0,
+      className: 'entity-chest opening',
+    }
+  }
+  if (cell.chest) {
+    return {
+      src: MAP_CHEST_SPRITE,
+      frames: 1,
+      frame: 0,
+      className: 'entity-chest',
+    }
+  }
+  if (cell.hasPortal) {
+    return {
+      src: MAP_PORTAL_SPRITES.secret,
+      frames: 8,
+      className: 'entity-portal secret',
+    }
+  }
+  if (cell.hasBackPortal) {
+    return {
+      src: MAP_PORTAL_SPRITES.back,
+      frames: 8,
+      className: 'entity-portal return',
+    }
+  }
+  if (cell.isExit) {
+    return {
+      src: MAP_PORTAL_SPRITES.back,
+      frames: 8,
+      className: 'entity-portal exit',
+    }
+  }
+  return null
+}
 
 const mapCells = computed(() => {
   if (!run.value || !activeMap.value || !activeMapState.value) {
@@ -1408,6 +1929,7 @@ const mapCells = computed(() => {
   const px = run.value.world.playerPosition.x
   const py = run.value.world.playerPosition.y
   const rows = []
+  const fx = openedChestFx.value
 
   for (let y = 0; y < map.height; y += 1) {
     for (let x = 0; x < map.width; x += 1) {
@@ -1427,8 +1949,16 @@ const mapCells = computed(() => {
         mapState.secretPortal.x === x &&
         mapState.secretPortal.y === y
       const hasBackPortal = discovered && mapState.backPortal && mapState.backPortal.x === x && mapState.backPortal.y === y
+      const hasChestFx =
+        fx &&
+        fx.mapId === map.id &&
+        fx.x === x &&
+        fx.y === y &&
+        typeof fx.startTick === 'number' &&
+        mapAnimTick.value - fx.startTick <= 8
+      const chestFxFrame = hasChestFx ? Math.max(0, Math.min(7, mapAnimTick.value - fx.startTick)) : null
 
-      rows.push({
+      const cell = {
         id: toKey(x, y),
         x,
         y,
@@ -1441,8 +1971,11 @@ const mapCells = computed(() => {
         isExit,
         hasPortal,
         hasBackPortal,
+        chestFxFrame,
         player: px === x && py === y,
-      })
+      }
+      cell.sprite = buildMapCellSprite(cell)
+      rows.push(cell)
     }
   }
 
@@ -1471,24 +2004,12 @@ function itemAffixes(item) {
 }
 
 function cellIcon(cell) {
-  if (!cell.discovered) {
-    return ''
-  }
-  if (cell.enemy) {
-    return ENEMY_TEMPLATES[cell.enemy.templateId]?.asset ?? ''
-  }
-  if (cell.npc) {
-    return cell.npc.portrait ?? ''
-  }
-  return ''
+  return cell?.sprite?.src ?? ''
 }
 
 function cellLabel(cell) {
   if (!cell.discovered) {
     return ''
-  }
-  if (cell.player) {
-    return 'P'
   }
   if (cell.chest) {
     return 'C'
@@ -1503,7 +2024,7 @@ function cellLabel(cell) {
     return 'B'
   }
   if (cell.isExit) {
-    return 'X'
+    return 'B'
   }
   return ''
 }
@@ -1538,7 +2059,7 @@ function cellClass(cell) {
     enemy: Boolean(cell.enemy),
     npc: Boolean(cell.npc),
     resource: Boolean(cell.resource),
-    chest: Boolean(cell.chest),
+    chest: Boolean(cell.chest || cell.chestFxFrame != null),
     exit: cell.isExit,
     secret: cell.hasPortal,
     back: cell.hasBackPortal,
@@ -1573,7 +2094,11 @@ function closeMetaModals() {
   skillsModalOpen.value = false
   passivesModalOpen.value = false
   riddleModal.value = null
+  riddleFeedbackModal.value = null
   lootModal.value = null
+  portalConfirmModal.value = null
+  hoveredInventoryItemId.value = null
+  inventoryTooltip.visible = false
   clearLootModalTimer()
 }
 
@@ -1630,12 +2155,84 @@ function scheduleEnemyTurn() {
   }, 650)
 }
 
+function stopMapPlayerMotion() {
+  if (mapPlayerMotionTimer.value) {
+    window.clearTimeout(mapPlayerMotionTimer.value)
+    mapPlayerMotionTimer.value = null
+  }
+  mapPlayerVisual.walking = false
+}
+
+function syncMapPlayerToRun() {
+  if (!run.value) {
+    return
+  }
+  const current = run.value.world.playerPosition
+  mapPlayerVisual.x = current.x
+  mapPlayerVisual.y = current.y
+  mapPlayerVisual.walking = false
+}
+
+function animateMapPlayerMove(from, to) {
+  stopMapPlayerMotion()
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  if (Math.abs(dx) + Math.abs(dy) !== 1) {
+    mapPlayerVisual.x = to.x
+    mapPlayerVisual.y = to.y
+    return
+  }
+
+  if (dx > 0) {
+    mapPlayerVisual.facing = 'right'
+  } else if (dx < 0) {
+    mapPlayerVisual.facing = 'left'
+  } else if (dy > 0) {
+    mapPlayerVisual.facing = 'down'
+  } else {
+    mapPlayerVisual.facing = 'up'
+  }
+
+  mapPlayerVisual.x = from.x
+  mapPlayerVisual.y = from.y
+  mapPlayerVisual.walking = true
+  window.requestAnimationFrame(() => {
+    mapPlayerVisual.x = to.x
+    mapPlayerVisual.y = to.y
+  })
+  mapPlayerMotionTimer.value = window.setTimeout(() => {
+    mapPlayerVisual.walking = false
+    mapPlayerMotionTimer.value = null
+  }, 190)
+}
+
+function restartMapPlayerFrameTicker() {
+  if (mapPlayerFrameTimer.value) {
+    window.clearInterval(mapPlayerFrameTimer.value)
+    mapPlayerFrameTimer.value = null
+  }
+  const frameMax = mapPlayerVisual.walking ? 6 : 4
+  mapPlayerFrameTimer.value = window.setInterval(() => {
+    mapPlayerFrame.value = (mapPlayerFrame.value + 1) % frameMax
+  }, mapPlayerVisual.walking ? 90 : 170)
+}
+
+function ensureMapAnimTicker() {
+  if (mapAnimTimer.value) {
+    return
+  }
+  mapAnimTimer.value = window.setInterval(() => {
+    mapAnimTick.value += 1
+  }, 120)
+}
+
 function startNewGame() {
   run.value = createRun({
     name: creation.name,
     classId: creation.classId,
     difficulty: creation.difficulty,
   })
+  syncMapPlayerToRun()
   npcOpen.value = false
   closeMetaModals()
   setInfo('Nouvelle campagne lancee.')
@@ -1649,6 +2246,7 @@ function continueSavedGame() {
     return
   }
   run.value = hydrateRun(loaded.snapshot)
+  syncMapPlayerToRun()
   npcOpen.value = false
   closeMetaModals()
   setInfo('Sauvegarde chargee.')
@@ -1658,19 +2256,102 @@ function continueSavedGame() {
 function abandonAndDeleteSave() {
   clearSnapshot()
   run.value = null
+  stopMapPlayerMotion()
   npcOpen.value = false
   closeMetaModals()
   updateSaveState()
   setInfo('Sauvegarde supprimee.')
 }
 
+function portalModalFromPrompt(prompt) {
+  if (!prompt) {
+    return null
+  }
+
+  if (prompt.type === 'secret') {
+    const targetName = MAPS[prompt.targetMapId]?.name ?? 'salle secrete'
+    return {
+      title: 'Portail secret',
+      text: `Entrer dans ${targetName} ?`,
+      color: '#9f74ff',
+    }
+  }
+
+  if (prompt.type === 'back') {
+    const returnTargetId = prompt.targetMapId === 'return' ? run.value?.world?.returnMapId : prompt.targetMapId
+    const targetName = MAPS[returnTargetId]?.name ?? 'la salle precedente'
+    return {
+      title: 'Portail de retour',
+      text: `Retourner vers ${targetName} ?`,
+      color: 'rgb(255, 93, 134)',
+    }
+  }
+
+  const targetName = MAPS[prompt.targetMapId]?.name ?? 'la zone suivante'
+  return {
+    title: 'Portail de zone',
+    text: `Aller vers ${targetName} ?`,
+    color: '#6db5ff',
+  }
+}
+
+function confirmPortalMove() {
+  if (!run.value || !portalConfirmModal.value) {
+    return
+  }
+  const result = usePortalAtPosition(run.value)
+  portalConfirmModal.value = null
+  if (!result.ok) {
+    if (result.reason) {
+      setInfo(result.reason)
+    }
+  } else if (result.blockedExit) {
+    setInfo('Sortie verrouillee: boss encore vivant.')
+  } else {
+    syncMapPlayerToRun()
+    playUiSound(UI_SOUND_BANK.portal, 0.3)
+  }
+  persistRun()
+  scheduleEnemyTurn()
+}
+
+function cancelPortalMove() {
+  portalConfirmModal.value = null
+}
+
 function handleMove(dx, dy) {
   if (!run.value) {
     return
   }
-  const result = attemptMove(run.value, dx, dy)
+  if (portalConfirmModal.value) {
+    return
+  }
+  const previousMapId = run.value.world.currentMapId
+  const from = {
+    x: run.value.world.playerPosition.x,
+    y: run.value.world.playerPosition.y,
+  }
+  const result = attemptMove(run.value, dx, dy, { deferPortalTransition: true })
   if (!result.ok && result.reason) {
     setInfo(result.reason)
+  } else if (result.ok) {
+    const to = {
+      x: run.value.world.playerPosition.x,
+      y: run.value.world.playerPosition.y,
+    }
+    const movedToAnotherMap = previousMapId !== run.value.world.currentMapId || Boolean(result.mapId)
+    if (movedToAnotherMap) {
+      syncMapPlayerToRun()
+      playUiSound(UI_SOUND_BANK.portal, 0.3)
+    } else if (from.x !== to.x || from.y !== to.y) {
+      animateMapPlayerMove(from, to)
+    }
+    if (result.portalPrompt) {
+      portalConfirmModal.value = portalModalFromPrompt(result.portalPrompt)
+    }
+    if (result.blockedExit) {
+      setInfo('Sortie verrouillee: boss encore vivant.')
+    }
   }
   npcOpen.value = false
   persistRun()
@@ -1722,6 +2403,14 @@ function openChestAction() {
   const result = openNearbyChest(run.value)
   if (!result.ok) {
     setInfo(result.reason)
+  } else if (result.chest) {
+    openedChestFx.value = {
+      mapId: run.value.world.currentMapId,
+      x: result.chest.x,
+      y: result.chest.y,
+      startTick: mapAnimTick.value,
+    }
+    playUiSound(UI_SOUND_BANK.chestOpen, 0.3)
   }
   persistRun()
 }
@@ -1757,7 +2446,18 @@ function answerRiddle(optionId) {
   if (!result.ok && result.reason) {
     setInfo(result.reason)
   } else if (result.ok) {
-    setInfo(result.text)
+    riddleFeedbackModal.value = {
+      title: result.correct ? 'Reponse validee' : 'Mauvaise reponse',
+      text: result.text,
+      portalOpened: Boolean(result.portalOpened),
+    }
+    if (result.portalOpened) {
+      playUiSound(UI_SOUND_BANK.portal_spawned, 0.3)
+    } 
+    // else {
+    //   playUiSound(UI_SOUND_BANK.uiConfirm, 0.24)
+    // }
+    npcOpen.value = false
     riddleModal.value = null
   }
   persistRun()
@@ -1793,6 +2493,11 @@ function npcAction(action, payload = null) {
     const result = buyConsumable(run.value, payload)
     if (!result.ok) {
       setInfo(result.reason)
+    } else if (result.remainingStock != null) {
+      setInfo(`Achat confirme. Stock restant: ${result.remainingStock}.`)
+      playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
+    } else {
+      playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
     }
   }
 
@@ -1800,6 +2505,18 @@ function npcAction(action, payload = null) {
     const result = craftItem(run.value, payload)
     if (!result.ok) {
       setInfo(result.reason)
+    } else {
+      playUiSound(UI_SOUND_BANK.craft, 0.3)
+    }
+  }
+
+  if (action === 'respec') {
+    const result = resetPassiveTree(run.value)
+    if (!result.ok) {
+      setInfo(result.reason)
+    } else {
+      setInfo(`Talents reinitialises (${result.refunded} points recuperes).`)
+      playUiSound(UI_SOUND_BANK.uiConfirm, 0.26)
     }
   }
 
@@ -1812,7 +2529,13 @@ function skillReady(skill) {
   }
   const battle = run.value.combat
   const cooldown = battle.playerCooldowns[skill.id] ?? 0
-  return cooldown <= 0 && battle.playerAp >= skill.apCost && run.value.player.mana >= skill.manaCost
+  const manaCost = effectiveSkillManaCost(skill)
+  return cooldown <= 0 && battle.playerAp >= skill.apCost && run.value.player.mana >= manaCost
+}
+
+function effectiveSkillManaCost(skill) {
+  const reduction = stats.value?.manaCostReductionPercent ?? 0
+  return Math.max(0, Math.floor((skill?.manaCost ?? 0) * (1 - reduction)))
 }
 
 function normalAttackReady() {
@@ -1876,6 +2599,8 @@ function consumeItem(itemId) {
   const result = useConsumable(run.value, itemId)
   if (!result.ok) {
     setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.drinkPotion, 0.28)
   }
   persistRun()
   scheduleEnemyTurn()
@@ -1910,6 +2635,57 @@ function sellAction(itemId) {
   const result = sellItem(run.value, itemId)
   if (!result.ok) {
     setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
+  }
+  persistRun()
+}
+
+function sellLootItem(itemId) {
+  if (!run.value || !lootModal.value) {
+    return
+  }
+  const result = sellItem(run.value, itemId)
+  if (!result.ok) {
+    setInfo(result.reason)
+    return
+  }
+  lootModal.value.items = (lootModal.value.items ?? []).filter((item) => item.id !== itemId)
+  playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
+  persistRun()
+}
+
+function equipLootItem(itemId) {
+  if (!run.value || !lootModal.value) {
+    return
+  }
+  const result = equipItem(run.value, itemId)
+  if (!result.ok) {
+    setInfo(result.reason)
+    return
+  }
+  lootModal.value.items = (lootModal.value.items ?? []).filter((item) => item.id !== itemId)
+  playUiSound(UI_SOUND_BANK.uiConfirm, 0.2)
+  persistRun()
+}
+
+function sellAllFromActiveCategory() {
+  if (!run.value || !inventoryActiveGroup.value?.items?.length) {
+    return
+  }
+  const ids = inventoryActiveGroup.value.items.map((item) => item.id)
+  let soldCount = 0
+  for (const itemId of ids) {
+    const result = sellItem(run.value, itemId)
+    if (result.ok) {
+      soldCount += 1
+    }
+  }
+  if (soldCount > 0) {
+    setInfo(`${soldCount} objet(s) vendus.`)
+    playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
+  } else {
+    setInfo('Aucun objet vendu.')
   }
   persistRun()
 }
@@ -1921,6 +2697,8 @@ function unlockPassiveAction(passiveId) {
   const result = unlockPassive(run.value, passiveId)
   if (!result.ok) {
     setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.passiveGet, 0.3)
   }
   persistRun()
 }
@@ -1972,6 +2750,14 @@ function keyHandler(event) {
   }
 
   const key = event.key.toLowerCase()
+  if (portalConfirmModal.value) {
+    if (key === 'enter') {
+      confirmPortalMove()
+    } else if (key === 'escape') {
+      cancelPortalMove()
+    }
+    return
+  }
   if (!run.value.combat) {
     if (key === 'arrowup' || key === 'w') {
       handleMove(0, -1)
@@ -2030,6 +2816,9 @@ onMounted(async () => {
     loading.value = false
   }
   window.addEventListener('keydown', keyHandler)
+  ensureMapAnimTicker()
+  restartMapPlayerFrameTicker()
+  syncMapPlayerToRun()
 })
 
 onBeforeUnmount(() => {
@@ -2045,6 +2834,15 @@ onBeforeUnmount(() => {
   if (infoTimer.value) {
     window.clearTimeout(infoTimer.value)
     infoTimer.value = null
+  }
+  stopMapPlayerMotion()
+  if (mapAnimTimer.value) {
+    window.clearInterval(mapAnimTimer.value)
+    mapAnimTimer.value = null
+  }
+  if (mapPlayerFrameTimer.value) {
+    window.clearInterval(mapPlayerFrameTimer.value)
+    mapPlayerFrameTimer.value = null
   }
   clearLootModalTimer()
 })
@@ -2123,7 +2921,7 @@ onBeforeUnmount(() => {
 
     <section v-else class="game-screen">
       <header class="hud">
-        <div>
+        <div class="hud-main">
           <h1>{{ run.player.name }} - {{ run.player.classId }}</h1>
           <p>Mode {{ run.metadata.difficulty }} | Niveau {{ run.player.level }}</p>
         </div>
@@ -2141,8 +2939,21 @@ onBeforeUnmount(() => {
             <span v-if="newInventoryCount" class="new-badge">{{ newInventoryCount }}</span>
           </button>
           <button @click="skillsModalOpen = true">Competences</button>
-          <button @click="passivesModalOpen = true">Passifs</button>
+          <button class="hud-icon-btn" @click="passivesModalOpen = true">
+            <img src="/assets/Icons/skills.png" alt="" />
+            <span>Passifs</span>
+            <span v-if="passivePointBadge > 0" class="new-badge">{{ passivePointBadge }}</span>
+          </button>
         </div>
+        <section class="hud-characteristics">
+          <h3>Caracteristiques</h3>
+          <div class="characteristics-grid">
+            <div v-for="entry in characterStatRows" :key="entry.id" class="char-item">
+              <span>{{ entry.label }}</span>
+              <strong>{{ entry.value }}</strong>
+            </div>
+          </div>
+        </section>
       </header>
 
       <p v-if="infoMessage" class="info-msg">{{ infoMessage }}</p>
@@ -2154,28 +2965,34 @@ onBeforeUnmount(() => {
             <p>Niveaux recommandes {{ activeMap.levelRange }}</p>
           </div>
 
-          <div class="map-grid" :style="mapGridStyle">
-            <button
-              v-for="cell in mapCells"
-              :key="cell.id"
-              class="tile-btn"
-              :class="cellClass(cell)"
-              @click="clickCell(cell)"
-            >
-              <img v-if="cellIcon(cell)" class="tile-entity" :src="cellIcon(cell)" alt="icone case" />
-              <span v-else class="tile-symbol">{{ cellLabel(cell) }}</span>
-            </button>
+          <div class="map-grid-shell" :style="mapGridStyle">
+            <div ref="mapGridRef" class="map-grid" :style="mapGridStyle">
+              <button
+                v-for="cell in mapCells"
+                :key="cell.id"
+                class="tile-btn"
+                :class="cellClass(cell)"
+                @click="clickCell(cell)"
+              >
+                <div v-if="cellIcon(cell)" class="tile-sprite" :class="cell.sprite?.className">
+                  <img class="tile-sprite-strip" :src="cellIcon(cell)" alt="sprite case" :style="tileSpriteStripStyle(cell.sprite)" />
+                </div>
+                <span v-else class="tile-symbol">{{ cellLabel(cell) }}</span>
+              </button>
+            </div>
+            <div class="map-player-token" :class="{ walking: mapPlayerVisual.walking }" :style="mapPlayerStyle">
+              <div class="tile-sprite player-sprite">
+                <img class="tile-sprite-strip" :src="mapPlayerSpriteSource" alt="joueur" :style="mapPlayerStripStyle" />
+              </div>
+            </div>
           </div>
 
           <div class="legend">
-            <span>P joueur</span>
-            <span>E ennemi</span>
-            <span>N PNJ</span>
-            <span>C coffre</span>
-            <span>R ressource</span>
-            <span>X sortie</span>
-            <span>S secret</span>
-            <span>B retour</span>
+            <span>Joueur, ennemis et PNJ: sprites animes</span>
+            <span>Coffres: sprite anime</span>
+            <span class="legend-secret">Portail Violet = Salle secrete</span>
+            <span class="legend-exit">Portail Bleu = Nouvelle zone</span>
+            <span class="legend-return">Portail Rose = Salle precedente</span>
           </div>
 
           <div class="controls">
@@ -2337,7 +3154,7 @@ onBeforeUnmount(() => {
                     {{ index + 1 }}. {{ skill.name }}
                     <small>
                       {{ skill.description }}
-                      | PA {{ skill.apCost }} mana {{ skill.manaCost }}
+                      | PA {{ skill.apCost }} mana {{ effectiveSkillManaCost(skill) }}
                       | CD {{ run.combat.playerCooldowns[skill.id] ?? 0 }}
                     </small>
                   </button>
@@ -2421,7 +3238,10 @@ onBeforeUnmount(() => {
                         <span :style="{ width: `${combatPlayerManaPercent}%` }"></span>
                       </div>
                     </div>
-                    <p class="battle-ap-label">PA {{ activeCombatView.playerAp }}</p>
+                    <div class="battle-ap-spotlight">
+                      <img src="/assets/1x1/delapouite/attack-gauge.svg" alt="" />
+                      <p class="battle-ap-label">PA : {{ activeCombatView.playerAp }} / {{ stats.ap }}</p>
+                    </div>
                   </div>
 
                   <div class="battle-actor player" :data-state="combatPlayerState">
@@ -2467,7 +3287,10 @@ onBeforeUnmount(() => {
                         <span :style="{ width: `${combatEnemyManaPercent}%` }"></span>
                       </div>
                     </div>
-                    <p class="battle-ap-label">PA {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap }}</p>
+                    <div class="battle-ap-spotlight enemy">
+                      <img src="/assets/1x1/delapouite/attack-gauge.svg" alt="" />
+                      <p class="battle-ap-label">PA : {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap }}</p>
+                    </div>
                   </div>
 
                   <div class="battle-actor enemy" :data-state="combatEnemyState">
@@ -2513,7 +3336,16 @@ onBeforeUnmount(() => {
               <img src="/assets/Icons/backpack.png" alt="" />
               Inventaire
             </h2>
-            <p>{{ run.player.inventory.length }} objet(s)</p>
+            <div class="inventory-head-actions">
+              <p>{{ run.player.inventory.length }} objet(s)</p>
+              <button
+                class="secondary"
+                :disabled="!(inventoryActiveGroup?.items?.length ?? 0)"
+                @click="sellAllFromActiveCategory"
+              >
+                Tout vendre
+              </button>
+            </div>
           </header>
           <div v-if="inventoryGroups.length" class="inventory-groups">
             <div class="inventory-tabs">
@@ -2540,8 +3372,11 @@ onBeforeUnmount(() => {
                 <li
                   v-for="item in inventoryActiveGroup.items"
                   :key="`modal-${inventoryActiveGroup.id}-${item.id}`"
-                  @mouseenter="markInventoryItemSeen(item.id)"
-                  @focusin="markInventoryItemSeen(item.id)"
+                  @mouseenter="showInventoryItemTooltip(item, $event)"
+                  @mousemove="moveInventoryItemTooltip($event)"
+                  @focusin="showInventoryItemTooltip(item, $event)"
+                  @mouseleave="hideInventoryItemTooltip"
+                  @focusout="hideInventoryItemTooltip"
                 >
                   <img class="item-icon" :src="itemIcon(item)" alt="item" />
                   <div class="item-main">
@@ -2552,7 +3387,9 @@ onBeforeUnmount(() => {
                     <p :class="item.rarity">{{ rarityLabel(item.rarity) }}</p>
 
                     <p class="inventory-type">{{ inventoryTypeLabel(item) }}</p>
-                    <p v-if="inventoryDetail(item)">{{ inventoryDetail(item) }}</p>
+                    <p v-if="item.kind === 'consumable'" class="inventory-qty">Quantite: {{ item.quantity ?? 0 }}</p>
+                    <p v-if="itemDescription(item)">{{ itemDescription(item) }}</p>
+                    <p class="inventory-price">Prix de vente: {{ itemSellPrice(item) }} or</p>
                     <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
                     <div class="row-actions">
                       <button v-if="item.kind === 'equipment'" @click="equipAction(item.id)">Equiper</button>
@@ -2569,6 +3406,26 @@ onBeforeUnmount(() => {
                   </div>
                 </li>
               </ul>
+              <div
+                v-if="inventoryTooltip.visible && hoveredInventoryItem?.kind === 'equipment'"
+                class="item-compare-tooltip floating"
+                :style="inventoryTooltipStyle"
+              >
+                <p class="compare-title">Comparaison equipement</p>
+                <p class="compare-equipped-name">{{ equippedComparisonLabel(hoveredInventoryItem) }}</p>
+                <div class="compare-head">
+                  <span>Stat</span>
+                  <span>Objet</span>
+                  <span>Equipe</span>
+                  <span>Delta</span>
+                </div>
+                <div v-for="row in equipmentCompareRows(hoveredInventoryItem)" :key="`cmp-${hoveredInventoryItem.id}-${row.id}`" class="compare-row">
+                  <span>{{ row.label }}</span>
+                  <span>{{ row.candidate }}</span>
+                  <span>{{ row.equipped }}</span>
+                  <strong :class="statDeltaClass(row.delta)">{{ statDeltaLabel(row.delta) }}</strong>
+                </div>
+              </div>
             </section>
           </div>
           <p v-else>Inventaire vide.</p>
@@ -2605,11 +3462,30 @@ onBeforeUnmount(() => {
                 <div class="item-main">
                   <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
                   <p>{{ inventoryTypeLabel(item) }}</p>
+                  <p v-if="itemDescription(item)">{{ itemDescription(item) }}</p>
+                  <p class="inventory-price">Prix de vente: {{ itemSellPrice(item) }} or</p>
+                  <div class="row-actions">
+                    <button v-if="item.kind === 'equipment'" @click="equipLootItem(item.id)">Equiper</button>
+                    <button class="secondary" @click="sellLootItem(item.id)">Vendre l objet</button>
+                  </div>
                 </div>
               </li>
             </ul>
           </section>
           <button class="primary" @click="closeLootModal">Continuer</button>
+        </article>
+      </div>
+
+      <div v-if="portalConfirmModal" class="overlay-meta" @click="cancelPortalMove">
+        <article class="meta-modal portal-confirm-modal" @click.stop>
+          <header>
+            <h2 :style="{ color: portalConfirmModal.color }">{{ portalConfirmModal.title }}</h2>
+          </header>
+          <p>{{ portalConfirmModal.text }}</p>
+          <div class="row-actions">
+            <button class="primary" @click="confirmPortalMove">Prendre le portail</button>
+            <button class="secondary" @click="cancelPortalMove">Rester ici</button>
+          </div>
         </article>
       </div>
 
@@ -2626,18 +3502,36 @@ onBeforeUnmount(() => {
             <button v-if="currentNpc.role === 'lore'" @click="npcAction('lore')">Donne moi un indice</button>
             <button v-if="currentNpc.role === 'healer'" @click="npcAction('heal')">Soin complet (55 or)</button>
             <template v-if="currentNpc.role === 'merchant'">
-              <button v-for="shop in CONSUMABLES_SHOP" :key="shop.id" @click="npcAction('buy', shop.id)">
+              <button
+                v-for="shop in merchantShopEntries"
+                :key="shop.id"
+                :disabled="shopItemDisabled(shop)"
+                @click="npcAction('buy', shop.id)"
+              >
                 Acheter {{ shop.name }} ({{ shop.price }} or)
+                <small>{{ shop.description }}</small>
+                <small>{{ shopStockLabel(shop) }}</small>
               </button>
             </template>
             <template v-if="currentNpc.role === 'craft'">
               <button
                 v-for="recipe in RECIPES"
                 :key="recipe.id"
-                :disabled="!canCraft(run, recipe.id)"
+                :disabled="!canCraftRecipe(recipe)"
                 @click="npcAction('craft', recipe.id)"
               >
                 Forger {{ recipe.name }} ({{ RARITIES[recipe.rarity].label }})
+                <small>{{ recipe.description }}</small>
+                <small v-for="cost in recipeRequirementEntries(recipe)" :key="`cost-${recipe.id}-${cost.material}`" :class="{ warning: !cost.enough }">
+                  {{ cost.label }}: {{ cost.owned }}/{{ cost.needed }}
+                </small>
+              </button>
+            </template>
+            <template v-if="currentNpc.role === 'respec'">
+              <button :disabled="passiveResetRemaining <= 0 || run.player.gold < PASSIVE_RESET_RULES.cost" @click="npcAction('respec')">
+                Reinitialiser les talents ({{ PASSIVE_RESET_RULES.cost }} or)
+                <small>Limite: {{ PASSIVE_RESET_RULES.limit }} fois par partie</small>
+                <small>Restant: {{ passiveResetRemaining }}</small>
               </button>
             </template>
             <button class="secondary" @click="npcOpen = false">Fermer</button>
@@ -2654,7 +3548,7 @@ onBeforeUnmount(() => {
             <li v-for="skill in skillCatalog" :key="skill.id">
               <strong>{{ skill.name }}</strong>
               <p>{{ skill.description }}</p>
-              <p>Niveau {{ skill.unlockLevel }} | PA {{ skill.apCost }} | Mana {{ skill.manaCost }}</p>
+              <p>Niveau {{ skill.unlockLevel }} | PA {{ skill.apCost }} | Mana {{ effectiveSkillManaCost(skill) }}</p>
               <p>CD {{ skill.cooldown }}</p>
             </li>
           </ul>
@@ -2663,23 +3557,49 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="passivesModalOpen" class="overlay-meta" @click="passivesModalOpen = false">
-        <article class="meta-modal" @click.stop>
+        <article class="meta-modal passive-tree-modal" @click.stop>
           <header>
             <h2>Arbre passif - {{ currentClass?.name }}</h2>
             <p>Points disponibles: {{ run.player.passivePoints }}</p>
+            <p>Reinitialisation possible: {{ passiveResetRemaining }} / {{ PASSIVE_RESET_RULES.limit }}</p>
             <p v-if="currentClass?.innatePassive">
               Passif de base actif: <strong>{{ currentClass.innatePassive.name }}</strong> - {{ currentClass.innatePassive.description }}
             </p>
           </header>
-          <ul>
+          <div v-if="passiveBranches.length" class="passive-branches">
+            <section v-for="branch in passiveBranches" :key="branch.id" class="passive-branch">
+              <h3>{{ branch.name }}</h3>
+              <p>{{ branch.description }}</p>
+              <div class="passive-chain">
+                <article
+                  v-for="passive in branch.passives"
+                  :key="passive.id"
+                  class="passive-node"
+                  :class="{
+                    unlocked: run.player.unlockedPassives.includes(passive.id),
+                    major: passive.isMajor,
+                  }"
+                >
+                  <strong>{{ passive.name }}</strong>
+                  <ul v-if="passive.effectLines?.length" class="passive-list passive-list-effects">
+                    <li v-for="(line, lineIndex) in passive.effectLines" :key="`${passive.id}-effect-${lineIndex}`">
+                      {{ line }}
+                    </li>
+                  </ul>
+                  <p v-else class="passive-node-summary">{{ passive.description }}</p>
+                  <small v-if="passive.requires">Prerequis: {{ passive.requiresName ?? passive.requires }}</small>
+                  <button :disabled="!passiveCanUnlock(passive)" @click="unlockPassiveAction(passive.id)">
+                    {{ run.player.unlockedPassives.includes(passive.id) ? 'Debloque' : 'Debloquer' }}
+                  </button>
+                </article>
+              </div>
+            </section>
+          </div>
+          <ul v-else>
             <li v-for="passive in passiveCatalog" :key="passive.id">
               <strong>{{ passive.name }}</strong>
               <p>{{ passive.description }}</p>
-              <small v-if="passive.requires">Prerequis: {{ passive.requires }}</small>
-              <button
-                :disabled="!passiveCanUnlock(passive)"
-                @click="unlockPassiveAction(passive.id)"
-              >
+              <button :disabled="!passiveCanUnlock(passive)" @click="unlockPassiveAction(passive.id)">
                 {{ run.player.unlockedPassives.includes(passive.id) ? 'Debloque' : 'Debloquer' }}
               </button>
             </li>
@@ -2704,6 +3624,18 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <button class="secondary" @click="riddleModal = null">Fermer</button>
+        </article>
+      </div>
+
+      <div v-if="riddleFeedbackModal" class="overlay-meta">
+        <article class="meta-modal riddle-modal">
+          <header>
+            <h2>{{ riddleFeedbackModal.title }}</h2>
+          </header>
+          <p>{{ riddleFeedbackModal.text }}</p>
+          <p v-if="riddleFeedbackModal.portalOpened" class="riddle-feedback-success">Un portail s ouvre.</p>
+          <p v-else>Aucun portail ne reagit.</p>
+          <button class="primary" @click="riddleFeedbackModal = null">Continuer</button>
         </article>
       </div>
 
@@ -2887,6 +3819,14 @@ button.danger {
   padding: 12px;
   border-radius: 14px;
   background: linear-gradient(150deg, rgba(8, 24, 31, 0.9), rgba(66, 28, 17, 0.88));
+  position: sticky;
+  top: 10px;
+  z-index: 14;
+}
+
+.hud-main {
+  display: grid;
+  align-content: center;
 }
 
 .hud h1 {
@@ -2908,6 +3848,45 @@ button.danger {
   display: grid;
   gap: 6px;
   align-content: center;
+}
+
+.hud-characteristics {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(247, 207, 144, 0.27);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(6, 14, 19, 0.72);
+}
+
+.hud-characteristics h3 {
+  margin: 0 0 6px;
+  font-size: 0.96rem;
+  letter-spacing: 0.02em;
+}
+
+.characteristics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.char-item {
+  border: 1px solid rgba(244, 203, 135, 0.25);
+  border-radius: 8px;
+  padding: 6px;
+  background: rgba(11, 26, 33, 0.72);
+  display: grid;
+  gap: 2px;
+}
+
+.char-item span {
+  font-size: 0.74rem;
+  color: #d6c69f;
+}
+
+.char-item strong {
+  font-size: 0.95rem;
+  color: #f8efdb;
 }
 
 .hud-icon-btn {
@@ -2956,34 +3935,99 @@ button.danger {
   margin: 0;
 }
 
-.map-grid {
+.map-grid-shell {
   margin-top: 8px;
+  position: relative;
+}
+
+.map-grid {
   display: grid;
-  gap: 2px;
-  padding: 6px;
+  gap: var(--grid-gap);
+  padding: var(--grid-pad);
   border-radius: 12px;
-  border: 1px solid rgba(239, 199, 131, 0.3);
+  border: 1px solid rgba(239, 199, 131, 0.32);
   background-size: 170px 170px;
 }
 
 .tile-btn {
   height: 28px;
   min-width: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 4px;
   padding: 0;
   font-size: 0.67rem;
-  background: rgba(45, 82, 76, 0.36);
+  background: rgba(23, 43, 39, 0.95);
   display: grid;
   place-items: center;
   overflow: hidden;
 }
 
-.tile-entity {
+.tile-sprite {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  overflow: hidden;
   image-rendering: pixelated;
+}
+
+.tile-sprite-strip {
+  display: block;
+  height: 100%;
+  image-rendering: pixelated;
+  transform-origin: left top;
+}
+
+.tile-sprite.entity-portal.secret {
+  filter: hue-rotate(220deg) saturate(1.35) brightness(1.08);
+}
+
+.tile-sprite.entity-portal.exit {
+  filter: saturate(1.1) brightness(1.06);
+}
+
+.tile-sprite.entity-portal.return {
+  filter: hue-rotate(300deg) saturate(1.7) brightness(1.1) drop-shadow(0 0 5px rgba(255, 93, 134, 0.65));
+}
+
+.tile-sprite.entity-chest.opening {
+  filter: brightness(1.12);
+}
+
+.map-player-token {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  width: calc((100% - (var(--grid-pad) * 2) - ((var(--grid-cols) - 1) * var(--grid-gap))) / var(--grid-cols));
+  height: calc((100% - (var(--grid-pad) * 2) - ((var(--grid-rows) - 1) * var(--grid-gap))) / var(--grid-rows));
+  left: calc(
+    var(--grid-pad) +
+      (
+        (
+            (100% - (var(--grid-pad) * 2) - ((var(--grid-cols) - 1) * var(--grid-gap))) / var(--grid-cols) +
+              var(--grid-gap)
+          ) * var(--player-x)
+      )
+  );
+  top: calc(
+    var(--grid-pad) +
+      (
+        (
+            (100% - (var(--grid-pad) * 2) - ((var(--grid-rows) - 1) * var(--grid-gap))) / var(--grid-rows) +
+              var(--grid-gap)
+          ) * var(--player-y)
+      )
+  );
+  transition: left 190ms linear, top 190ms linear;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+  animation: map-player-idle 1.7s ease-in-out infinite;
+}
+
+.map-player-token.walking {
+  animation: map-player-walk 320ms ease-in-out infinite;
+}
+
+.player-sprite {
+  width: 100%;
+  height: 100%;
 }
 
 .tile-symbol {
@@ -2993,45 +4037,43 @@ button.danger {
 }
 
 .tile-btn.wall {
-  background: rgba(81, 56, 34, 0.83);
+  background: rgba(74, 52, 37, 0.98);
 }
 
 .tile-btn.water {
-  background: rgba(20, 72, 102, 0.85);
+  background: rgba(19, 68, 96, 0.97);
 }
 
 .tile-btn.player {
-  background: rgba(18, 157, 145, 0.93);
-  color: #041214;
-  font-weight: 700;
+  background: rgba(12, 70, 76, 0.98);
 }
 
 .tile-btn.enemy {
-  background: rgba(156, 52, 30, 0.92);
+  background: rgba(118, 41, 28, 0.98);
 }
 
 .tile-btn.npc {
-  background: rgba(159, 124, 56, 0.9);
+  background: rgba(118, 91, 43, 0.98);
 }
 
 .tile-btn.resource {
-  background: rgba(34, 120, 71, 0.9);
+  background: rgba(28, 92, 58, 0.98);
 }
 
 .tile-btn.chest {
-  background: rgba(181, 129, 40, 0.92);
+  background: rgba(132, 100, 34, 0.98);
 }
 
 .tile-btn.exit {
-  background: rgba(166, 164, 72, 0.9);
+  background: rgba(45, 76, 137, 0.98);
 }
 
 .tile-btn.secret {
-  background: rgba(68, 119, 168, 0.93);
+  background: rgba(84, 51, 137, 0.98);
 }
 
 .tile-btn.back {
-  background: rgba(96, 95, 165, 0.92);
+  background: rgba(255, 93, 134, 0.98);
 }
 
 .uncommon {
@@ -3050,17 +4092,33 @@ button.danger {
   color: rgb(255, 179, 71);
 }
 
+.mythic {
+  color: rgb(255, 93, 134);
+}
+
 .tile-btn.fog {
-  background: rgba(4, 8, 12, 0.95);
+  background: rgba(4, 8, 12, 0.99);
   border-color: rgba(255, 255, 255, 0.01);
 }
 
 .legend {
   display: grid;
-  grid-template-columns: repeat(4, auto);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px 8px;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   margin-top: 6px;
+}
+
+.legend-secret {
+  color: #b996ff;
+}
+
+.legend-exit {
+  color: #6db5ff;
+}
+
+.legend-return {
+  color: rgb(255, 93, 134);
 }
 
 .controls {
@@ -3173,6 +4231,65 @@ button.danger {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+}
+
+.item-compare-tooltip {
+  width: min(304px, 84vw);
+  border: 1px solid rgba(241, 199, 132, 0.5);
+  border-radius: 10px;
+  padding: 8px;
+  background: linear-gradient(145deg, rgba(7, 20, 28, 0.96), rgba(26, 38, 55, 0.96));
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+
+.item-compare-tooltip.floating {
+  position: fixed;
+  z-index: 120;
+  pointer-events: none;
+}
+
+.compare-title {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.compare-equipped-name {
+  margin: 3px 0 7px;
+  font-size: 0.73rem;
+  color: #d7c7a2;
+}
+
+.compare-head,
+.compare-row {
+  display: grid;
+  grid-template-columns: 1fr 0.8fr 0.8fr 0.8fr;
+  gap: 5px;
+  align-items: center;
+  font-size: 0.72rem;
+}
+
+.compare-head {
+  margin-bottom: 3px;
+  color: #b9ced8;
+}
+
+.compare-row {
+  border-top: 1px solid rgba(241, 199, 132, 0.2);
+  padding-top: 3px;
+}
+
+.delta-up {
+  color: #86f0af;
+}
+
+.delta-down {
+  color: #ff9e93;
+}
+
+.delta-flat {
+  color: #d2d8de;
 }
 
 .short-log {
@@ -3482,10 +4599,38 @@ button.danger {
   background: linear-gradient(90deg, #1f6f86, #4eb7e0);
 }
 
+.battle-ap-spotlight {
+  margin-top: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(108, 194, 244, 0.52);
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: linear-gradient(130deg, rgba(17, 75, 110, 0.8), rgba(24, 46, 69, 0.78));
+}
+
+.battle-ap-spotlight img {
+  width: 14px;
+  height: 14px;
+  filter: brightness(1.35);
+}
+
+.battle-ap-spotlight.enemy {
+  border-color: rgba(244, 191, 112, 0.55);
+  background: linear-gradient(130deg, rgba(114, 65, 22, 0.82), rgba(62, 38, 19, 0.82));
+}
+
 .battle-ap-label {
-  margin: 6px 0 0;
-  font-size: 0.77rem;
-  color: #d7cdb2;
+  margin: 0;
+  font-size: 0.95rem;
+  color: #8fd4ff;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.battle-ap-spotlight.enemy .battle-ap-label {
+  color: #ffd28b;
 }
 
 .battle-actor {
@@ -3886,6 +5031,16 @@ button.danger {
   image-rendering: pixelated;
 }
 
+.inventory-head-actions {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.inventory-head-actions p {
+  margin: 0;
+}
+
 .inventory-groups {
   margin: 10px 0;
   display: grid;
@@ -3947,8 +5102,22 @@ button.danger {
   color: #ffffff;
 }
 
+.inventory-qty {
+  font-size: 0.74rem;
+  color: #cfe8ff;
+}
+
+.inventory-price {
+  font-size: 0.75rem;
+  color: #ffd08f;
+}
+
 .loot-modal {
   width: min(88vw, 560px);
+}
+
+.portal-confirm-modal {
+  width: min(90vw, 460px);
 }
 
 .loot-summary {
@@ -3968,6 +5137,122 @@ button.danger {
 
 .loot-items {
   margin-top: 8px;
+}
+
+.npc-actions button {
+  display: grid;
+  justify-items: start;
+  text-align: left;
+  gap: 2px;
+}
+
+.npc-actions button small {
+  font-size: 0.73rem;
+  opacity: 0.86;
+}
+
+.warning {
+  color: #ffb8a5;
+}
+
+.passive-tree-modal {
+  width: min(95vw, 1200px);
+}
+
+.passive-branches {
+  margin: 10px 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.passive-branch {
+  border: 1px solid rgba(240, 198, 130, 0.24);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(8, 16, 22, 0.72);
+}
+
+.passive-branch h3 {
+  margin: 0;
+}
+
+.passive-branch p {
+  margin: 4px 0 8px;
+  font-size: 0.82rem;
+}
+
+.passive-chain {
+  display: grid;
+  gap: 8px;
+}
+
+.passive-node {
+  border: 1px solid rgba(238, 198, 130, 0.2);
+  border-radius: 9px;
+  padding: 8px;
+  background: rgba(11, 22, 29, 0.8);
+  position: relative;
+}
+
+.passive-node-summary {
+  margin: 4px 0 6px;
+  color: rgba(229, 236, 245, 0.95);
+}
+
+.passive-list {
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.passive-node .passive-list li {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 0.76rem;
+  line-height: 1.25;
+}
+
+.passive-list-effects li {
+  color: rgba(188, 230, 255, 0.95);
+}
+
+.passive-list-stats li {
+  color: rgba(164, 255, 206, 0.94);
+  font-weight: 600;
+}
+
+.passive-node::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  width: 2px;
+  height: 8px;
+  background: rgba(236, 194, 126, 0.36);
+}
+
+.passive-node:last-child::after {
+  display: none;
+}
+
+.passive-node.unlocked {
+  border-color: rgba(129, 219, 255, 0.62);
+  box-shadow: 0 0 0 1px rgba(129, 219, 255, 0.24);
+}
+
+.passive-node.major {
+  border-color: rgba(255, 208, 122, 0.72);
+  background: linear-gradient(132deg, rgba(35, 60, 88, 0.78), rgba(70, 38, 17, 0.85));
+}
+
+.riddle-feedback-success {
+  color: #9ff7c7;
+  font-weight: 700;
 }
 
 .meta-modal li {
@@ -4009,6 +5294,26 @@ button.danger {
   border: 1px solid rgba(127, 215, 238, 0.4);
 }
 
+@keyframes map-player-idle {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes map-player-walk {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
 @media (max-width: 1200px) {
   .columns {
     grid-template-columns: 1fr;
@@ -4019,6 +5324,14 @@ button.danger {
   }
 
   .hud {
+    grid-template-columns: 1fr;
+  }
+
+  .characteristics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .passive-branches {
     grid-template-columns: 1fr;
   }
 
@@ -4041,6 +5354,10 @@ button.danger {
   .combat-log-panel {
     order: 3;
     max-height: 40vh;
+  }
+
+  .item-compare-tooltip.floating {
+    width: min(340px, 82vw);
   }
 }
 
@@ -4068,6 +5385,10 @@ button.danger {
   .inventory-tabs {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .legend {
+    grid-template-columns: 1fr;
   }
 
   .battle-scene-topline {
@@ -4100,4 +5421,3 @@ button.danger {
   }
 }
 </style>
-

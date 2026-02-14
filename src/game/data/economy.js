@@ -65,8 +65,6 @@ export const RECIPES = [
       value: 140,
       rarity: 'rare',
       weaponType: 'bow',
-      rangeMin: 2,
-      rangeMax: 3,
       icon: '/assets/Weapons/Wood/Wood.png',
     },
   },
@@ -74,7 +72,7 @@ export const RECIPES = [
     id: 'recipe_bone_dagger',
     name: 'Dague osseuse',
     rarity: 'uncommon',
-    description: 'Arme melee rapide.',
+    description: 'Arme de mêlée rapide.',
     materials: { bone_dust: 4, ore: 2 },
     result: {
       kind: 'equipment',
@@ -85,36 +83,14 @@ export const RECIPES = [
       value: 96,
       rarity: 'uncommon',
       weaponType: 'melee',
-      rangeMin: 1,
-      rangeMax: 1,
       icon: '/assets/Weapons/Bone/Bone.png',
     },
   },
   {
-    id: 'recipe_ritual_staff',
-    name: 'Baton rituel',
-    rarity: 'epic',
-    description: 'Baton de lanceur a moyenne portee.',
-    materials: { wood: 7, ether_drop: 3, obsidian_fragment: 2 },
-    result: {
-      kind: 'equipment',
-      slot: 'weapon',
-      baseName: 'Baton rituel',
-      attack: 6,
-      defense: 2,
-      value: 240,
-      rarity: 'epic',
-      weaponType: 'staff',
-      rangeMin: 2,
-      rangeMax: 3,
-      icon: '/assets/Weapons/Wood/Wood.png',
-    },
-  },
-  {
     id: 'recipe_bark_armor',
-    name: 'Armure d ecorce',
+    name: 'Armure d\'écorce',
     rarity: 'rare',
-    description: 'Armure polyvalente legere.',
+    description: 'Armure polyvalente légère.',
     materials: { wood: 6, resin: 3, herb: 3 },
     result: {
       kind: 'equipment',
@@ -128,10 +104,28 @@ export const RECIPES = [
     },
   },
   {
+    id: 'recipe_ritual_staff',
+    name: 'Baton rituel',
+    rarity: 'epic',
+    description: 'Baton de lanceur polyvalent.',
+    materials: { wood: 7, ether_drop: 3, obsidian_fragment: 2 },
+    result: {
+      kind: 'equipment',
+      slot: 'weapon',
+      baseName: 'Bâton rituel',
+      attack: 6,
+      defense: 2,
+      value: 240,
+      rarity: 'epic',
+      weaponType: 'staff',
+      icon: '/assets/Weapons/Wood/Wood.png',
+    },
+  },
+  {
     id: 'recipe_bastion_plate',
     name: 'Plastron bastion',
     rarity: 'epic',
-    description: 'Armure defensive lourde.',
+    description: 'Armure défensive lourde.',
     materials: { ore: 8, obsidian_fragment: 4, bone_dust: 3 },
     result: {
       kind: 'equipment',
@@ -166,45 +160,55 @@ export const RECIPES = [
 export const CONSUMABLES_SHOP = [
   {
     id: 'shop_potion',
-    name: 'Potion majeure',
+    name: 'Potion majeure de sante',
     price: 45,
     effect: 'heal_80',
+    description: 'Rend 80 PV.',
   },
   {
     id: 'shop_mana',
     name: 'Elixir de mana',
     price: 40,
     effect: 'mana_60',
+    description: 'Rend 60 mana.',
   },
   {
     id: 'shop_resist_tonic',
     name: 'Tonique de resistance',
     price: 62,
     effect: 'buff_resistance',
+    description: 'Augmente la DEF de 24% pendant 3 tours.',
+    stock: 2,
   },
   {
     id: 'shop_fury_draft',
     name: 'Fiole de furie',
     price: 64,
     effect: 'buff_damage',
+    description: 'Augmente les degats de 24% pendant 3 tours.',
   },
   {
     id: 'shop_focus_oil',
     name: 'Huile de focus',
     price: 68,
     effect: 'buff_crit',
+    description: 'Augmente Crit% et Crit DMG pendant 3 tours.',
+    stock: 2,
   },
   {
     id: 'shop_recovery_kit',
     name: 'Kit de recuperation',
     price: 58,
     effect: 'heal_45_mana_35',
+    description: 'Rend 45 PV et 35 mana.',
   },
   {
     id: 'shop_clarity_orb',
     name: 'Orbe de clarte',
     price: 72,
     effect: 'cleanse_and_guard',
+    description: 'Retire les debuffs et confere un bouclier.',
+    stock: 1,
   },
 ]
 
@@ -219,7 +223,7 @@ export const EQUIPMENT_BONUS_POOL = [
   { id: 'bonus_attack', label: 'Degats', key: 'attackFlat', min: 2, max: 7, weight: 11 },
   { id: 'bonus_defense', label: 'Armure', key: 'defenseFlat', min: 2, max: 6, weight: 12 },
   { id: 'bonus_crit', label: 'Chance crit', key: 'critChanceFlat', min: 0.02, max: 0.07, weight: 9, percent: true },
-  { id: 'bonus_crit_damage', label: 'Degats crit', key: 'critDamageFlat', min: 0.08, max: 0.22, weight: 9, percent: true },
+  { id: 'bonus_crit_damage', label: 'Degats crit', key: 'critDamageFlat', min: 0.05, max: 0.15, weight: 9, percent: true },
   { id: 'bonus_dodge', label: 'Chance esquive', key: 'dodgeChanceFlat', min: 0.02, max: 0.08, weight: 10, percent: true },
   { id: 'bonus_parry', label: 'Chance parade', key: 'parryChanceFlat', min: 0.02, max: 0.08, weight: 9, percent: true },
   { id: 'bonus_status', label: 'Chance desorienter', key: 'statusChanceFlat', min: 0.03, max: 0.1, weight: 8, percent: true },
@@ -236,8 +240,6 @@ export const LOOT_BASES = {
       defense: 0,
       value: 60,
       weaponType: 'melee',
-      rangeMin: 1,
-      rangeMax: 1,
       icon: '/assets/Weapons/Hands/Hands.png',
     },
     {
@@ -246,8 +248,6 @@ export const LOOT_BASES = {
       defense: 1,
       value: 78,
       weaponType: 'melee',
-      rangeMin: 1,
-      rangeMax: 1,
       icon: '/assets/Weapons/Bone/Bone.png',
     },
     {
@@ -256,8 +256,6 @@ export const LOOT_BASES = {
       defense: 1,
       value: 96,
       weaponType: 'staff',
-      rangeMin: 2,
-      rangeMax: 3,
       icon: '/assets/Weapons/Wood/Wood.png',
     },
     {
@@ -266,8 +264,6 @@ export const LOOT_BASES = {
       defense: 0,
       value: 88,
       weaponType: 'bow',
-      rangeMin: 2,
-      rangeMax: 3,
       icon: '/assets/Weapons/Wood/Wood.png',
     },
   ],
@@ -284,4 +280,7 @@ export const LOOT_BASES = {
 }
 
 export const EQUIPMENT_SLOTS = ['weapon', 'armor', 'trinket']
+
+
+
 

@@ -3,9 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "dev:desktop": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
+    "build": "vite build && node scripts/copy-assets.cjs",
+    "build:desktop": "npm run build && electron-builder --win portable",
     "preview": "vite preview",
     "lint": "run-s lint:*",
     "lint:oxlint": "oxlint . --fix",
@@ -20,6 +23,10 @@
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@vitejs/plugin-vue": "^6.0.3",
+    "concurrently": "^9.2.1",
+    "cross-env": "^7.0.3",
+    "electron": "^37.2.6",
+    "electron-builder": "^25.1.8",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-oxlint": "~1.42.0",
@@ -29,7 +36,28 @@
     "oxfmt": "^0.27.0",
     "oxlint": "~1.42.0",
     "vite": "^7.3.1",
-    "vite-plugin-vue-devtools": "^8.0.5"
+    "vite-plugin-vue-devtools": "^8.0.5",
+    "wait-on": "^8.0.5"
+  },
+  "build": {
+    "appId": "com.jeutest.rpg",
+    "productName": "JeuTestRPG",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "signAndEditExecutable": false,
+      "artifactName": "JeuTestRPG-${version}-portable.${ext}"
+    }
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

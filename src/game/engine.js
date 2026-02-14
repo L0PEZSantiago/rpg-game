@@ -24,6 +24,19 @@ const MAX_EVENT_LENGTH = 170
 const CHEST_ICON = '/assets/Environment/Props/Static/Resources.png'
 const COMBAT_NORMAL_ATTACK_COST = 2
 const MAP_LAYOUT_VARIANTS = ['none', 'flip_x', 'flip_y', 'flip_xy']
+const ENEMY_BASE_STAT_BOOST = 1.05
+const PASSIVE_LIFESTEAL_MAX_RATIO = 0.3
+const PASSIVE_LIFESTEAL_EFFECTIVENESS = 0.55
+const PASSIVE_LIFESTEAL_HIT_CAP_MAX_HP_RATIO = 0.12
+const NON_BOSS_EQUIPMENT_DROP_CHANCE = 0.6
+const SELL_PRICE_FACTOR = 0.22
+const CRAFT_COST_MULTIPLIER = 1.4
+const PASSIVE_RESET_COST = 200
+const PASSIVE_RESET_LIMIT = 1
+export const PASSIVE_RESET_RULES = {
+  cost: PASSIVE_RESET_COST,
+  limit: PASSIVE_RESET_LIMIT,
+}
 
 const SLOT_DEFAULT_ICON = {
   weapon: '/assets/Weapons/Wood/Wood.png',
@@ -36,8 +49,6 @@ const STARTER_WEAPON_BY_CLASS = {
     name: 'Epee de garnison',
     icon: '/assets/Weapons/Hands/Hands.png',
     weaponType: 'melee',
-    rangeMin: 1,
-    rangeMax: 1,
     attack: 5,
     defense: 2,
   },
@@ -45,8 +56,6 @@ const STARTER_WEAPON_BY_CLASS = {
     name: 'Dague de nuit',
     icon: '/assets/Weapons/Bone/Bone.png',
     weaponType: 'melee',
-    rangeMin: 1,
-    rangeMax: 1,
     attack: 6,
     defense: 0,
   },
@@ -54,8 +63,6 @@ const STARTER_WEAPON_BY_CLASS = {
     name: 'Arc de frêne',
     icon: '/assets/Weapons/Wood/Wood.png',
     weaponType: 'bow',
-    rangeMin: 2,
-    rangeMax: 3,
     attack: 4,
     defense: 1,
   },
@@ -63,8 +70,6 @@ const STARTER_WEAPON_BY_CLASS = {
     name: 'Baton runique',
     icon: '/assets/Weapons/Wood/Wood.png',
     weaponType: 'staff',
-    rangeMin: 2,
-    rangeMax: 3,
     attack: 4,
     defense: 1,
   },
@@ -72,8 +77,6 @@ const STARTER_WEAPON_BY_CLASS = {
     name: 'Baton de seve',
     icon: '/assets/Weapons/Wood/Wood.png',
     weaponType: 'staff',
-    rangeMin: 2,
-    rangeMax: 3,
     attack: 4,
     defense: 1,
   },
@@ -81,8 +84,6 @@ const STARTER_WEAPON_BY_CLASS = {
     name: 'Baton d os',
     icon: '/assets/Weapons/Bone/Bone.png',
     weaponType: 'staff',
-    rangeMin: 2,
-    rangeMax: 3,
     attack: 4,
     defense: 1,
   },
@@ -90,8 +91,6 @@ const STARTER_WEAPON_BY_CLASS = {
     name: 'Luth ferrugineux',
     icon: '/assets/Weapons/Wood/Wood.png',
     weaponType: 'staff',
-    rangeMin: 2,
-    rangeMax: 3,
     attack: 4,
     defense: 1,
   },
@@ -181,6 +180,47 @@ function transformTiles(tiles, variant, width, height) {
   return out.map((row) => row.join(''))
 }
 
+function transformRect(rect, variant, width, height) {
+  if (!rect) {
+    return null
+  }
+  const box = {
+    x: Math.max(0, Math.floor(rect.x ?? 0)),
+    y: Math.max(0, Math.floor(rect.y ?? 0)),
+    width: Math.max(1, Math.floor(rect.width ?? 1)),
+    height: Math.max(1, Math.floor(rect.height ?? 1)),
+  }
+  if (variant === 'flip_x') {
+    box.x = width - box.x - box.width
+  } else if (variant === 'flip_y') {
+    box.y = height - box.y - box.height
+  } else if (variant === 'flip_xy') {
+    box.x = width - box.x - box.width
+    box.y = height - box.y - box.height
+  }
+  return box
+}
+
+function transformedNoSpawnZones(map, variant) {
+  return (map.noSpawnZones ?? [])
+    .map((zone) => transformRect(zone, variant, map.width, map.height))
+    .filter(Boolean)
+}
+
+function markNoSpawnZones(map, tiles, blockedSet, zones) {
+  for (const zone of zones) {
+    const maxX = Math.min(map.width - 1, zone.x + zone.width - 1)
+    const maxY = Math.min(map.height - 1, zone.y + zone.height - 1)
+    for (let y = Math.max(0, zone.y); y <= maxY; y += 1) {
+      for (let x = Math.max(0, zone.x); x <= maxX; x += 1) {
+        if (mapIsWalkable(map, x, y, tiles)) {
+          blockedSet.add(toKey(x, y))
+        }
+      }
+    }
+  }
+}
+
 function walkablePool(map, tiles, blockedSet) {
   const pool = []
   for (let y = 0; y < map.height; y += 1) {
@@ -265,10 +305,13 @@ function findNearestWalkable(map, x, y, blockedSet = new Set(), tiles = map.tile
   return { x: 1, y: 1 }
 }
 
-function placeRandomizedEntities(entities, pool, blockedSet, startCell, minDistance, mapper) {
+function placeRandomizedEntities(map, tiles, entities, pool, blockedSet, startCell, minDistance, mapper) {
   return entities.map((entry) => {
     const randomCell = takeCellFromPool(pool, blockedSet, startCell, minDistance)
-    const cell = randomCell ?? { x: entry.x, y: entry.y }
+    const cell =
+      randomCell ??
+      findNearestWalkable(map, entry.x ?? startCell?.x ?? 1, entry.y ?? startCell?.y ?? 1, blockedSet, tiles)
+    blockedSet.add(toKey(cell.x, cell.y))
     return mapper(entry, cell)
   })
 }
@@ -295,6 +338,7 @@ function createMapState(mapId) {
   const transformedExit = transformPoint(map.exit, layoutVariant, map.width, map.height)
   const transformedSecret = transformPoint(map.secretPortal, layoutVariant, map.width, map.height)
   const transformedBack = transformPoint(map.backPortal, layoutVariant, map.width, map.height)
+  const noSpawnZones = transformedNoSpawnZones(map, layoutVariant)
 
   const blocked = new Set()
   const start = findNearestWalkable(map, transformedStart.x, transformedStart.y, blocked, tiles)
@@ -336,21 +380,23 @@ function createMapState(mapId) {
     blocked.add(toKey(backPortal.x, backPortal.y))
   }
 
+  markNoSpawnZones(map, tiles, blocked, noSpawnZones)
+
   const pool = walkablePool(map, tiles, blocked)
 
-  const npcs = placeRandomizedEntities(map.npcs ?? [], pool, blocked, start, 1, (npc, cell) => ({
+  const npcs = placeRandomizedEntities(map, tiles, map.npcs ?? [], pool, blocked, start, 1, (npc, cell) => ({
     ...npc,
     x: cell.x,
     y: cell.y,
   }))
 
-  const resources = placeRandomizedEntities(map.resources ?? [], pool, blocked, start, 2, (resource, cell) => ({
+  const resources = placeRandomizedEntities(map, tiles, map.resources ?? [], pool, blocked, start, 2, (resource, cell) => ({
     ...resource,
     x: cell.x,
     y: cell.y,
   }))
 
-  const chests = placeRandomizedEntities(map.chests ?? [], pool, blocked, start, 3, (chest, cell) => ({
+  const chests = placeRandomizedEntities(map, tiles, map.chests ?? [], pool, blocked, start, 3, (chest, cell) => ({
     ...chest,
     x: cell.x,
     y: cell.y,
@@ -358,7 +404,7 @@ function createMapState(mapId) {
     icon: CHEST_ICON,
   }))
 
-  const enemies = placeRandomizedEntities(map.enemies ?? [], pool, blocked, start, 3, (enemySpawn, cell) =>
+  const enemies = placeRandomizedEntities(map, tiles, map.enemies ?? [], pool, blocked, start, 3, (enemySpawn, cell) =>
     createEnemyInstance(enemySpawn, cell, false),
   )
 
@@ -386,6 +432,7 @@ function createMapState(mapId) {
     selectedRiddles: {},
     bossDefeated: false,
     secretPortalRevealed: false,
+    noSpawnZones,
   }
 }
 
@@ -404,7 +451,7 @@ function createStarterInventory(selectedClass) {
       quantity: 2,
       rarity: 'common',
       value: 24,
-      icon: '/assets/Weapons/Hands/Hands.png',
+      icon: '/assets/Icons/life_potion.png',
     },
     {
       id: uid('consumable'),
@@ -427,10 +474,18 @@ function createStarterInventory(selectedClass) {
       value: 45,
       icon: starter.icon,
       weaponType: starter.weaponType,
-      rangeMin: starter.rangeMin,
-      rangeMax: starter.rangeMax,
     },
   ]
+}
+
+function createShopStock() {
+  const stock = {}
+  for (const item of CONSUMABLES_SHOP) {
+    if ((item.stock ?? 0) > 0) {
+      stock[item.id] = item.stock
+    }
+  }
+  return stock
 }
 
 export function createRun({ name, classId, difficulty }) {
@@ -465,12 +520,14 @@ export function createRun({ name, classId, difficulty }) {
       },
       materials: createMaterialBag(),
       deaths: 0,
+      passiveResetsUsed: 0,
     },
     world: {
       currentMapId: firstMapId,
       returnMapId: null,
       playerPosition: { ...firstStart },
       maps,
+      shopStock: createShopStock(),
     },
     combat: null,
     pendingLootModal: null,
@@ -514,9 +571,22 @@ function ensurePlayerState(run) {
   run.player.equipment ??= { weapon: null, armor: null, trinket: null }
   run.player.unlockedPassives ??= []
   run.player.passivePoints ??= 0
+  run.player.passiveResetsUsed ??= 0
   run.player.deaths ??= 0
   run.player.nextXp ??= xpForLevel(run.player.level || 1)
   run.player.preparedBuffs ??= []
+}
+
+function ensureShopStockState(run) {
+  run.world.shopStock ??= {}
+  for (const item of CONSUMABLES_SHOP) {
+    if ((item.stock ?? 0) <= 0) {
+      continue
+    }
+    if (run.world.shopStock[item.id] == null) {
+      run.world.shopStock[item.id] = item.stock
+    }
+  }
 }
 
 export function hydrateRun(rawSnapshot) {
@@ -532,6 +602,7 @@ export function hydrateRun(rawSnapshot) {
   run.world.currentMapId ??= MAP_ORDER[0]
   run.world.playerPosition ??= { ...MAPS[run.world.currentMapId].start }
   run.world.returnMapId ??= null
+  run.world.shopStock ??= createShopStock()
   run.combat ??= null
   run.pendingLootModal ??= null
   run.gameOver ??= false
@@ -539,6 +610,7 @@ export function hydrateRun(rawSnapshot) {
   run.victory ??= false
 
   ensurePlayerState(run)
+  ensureShopStockState(run)
 
   for (const [mapId] of mapEntries()) {
     const state = ensureMapState(run, mapId)
@@ -566,6 +638,7 @@ export function hydrateRun(rawSnapshot) {
     state.selectedRiddles ??= {}
     state.bossDefeated ??= false
     state.secretPortalRevealed ??= false
+    state.noSpawnZones ??= []
   }
 
   syncVitals(run, false)
@@ -605,17 +678,6 @@ function equipmentBonusStats(run) {
   return out
 }
 
-function weaponRange(run) {
-  const weapon = run.player.equipment.weapon
-  if (!weapon) {
-    return { min: 1, max: 1 }
-  }
-  return {
-    min: Math.max(1, weapon.rangeMin ?? 1),
-    max: Math.max(1, weapon.rangeMax ?? 1),
-  }
-}
-
 export function derivedStats(run) {
   const selectedClass = classById(run.player.classId)
   const level = run.player.level
@@ -651,14 +713,22 @@ export function derivedStats(run) {
     lifeRegenFlat: 0,
     healingDonePercent: 0,
     healingTakenPercent: 0,
+    maxHpPercent: 0,
+    maxManaPercent: 0,
+    attackPercent: 0,
+    defensePercent: 0,
+    speedPercent: 0,
+    spellPowerPercent: 0,
+    lowHpDamagePercent: 0,
+    manaCostReductionPercent: 0,
+    cooldownReductionPercent: 0,
+    damageReductionPercent: 0,
     gatherBonus: 0,
     bossDamagePercent: 0,
     highHpDamagePercent: 0,
     lowHpDefensePercent: 0,
     highManaDamagePercent: 0,
-    longRangeDamagePercent: 0,
     lifeStealPercent: 0,
-    rangeFlat: 0,
     normalAttackCost: COMBAT_NORMAL_ATTACK_COST,
   }
 
@@ -682,28 +752,52 @@ export function derivedStats(run) {
   stats.lifeRegenFlat += allBonuses.lifeRegenFlat ?? 0
   stats.healingDonePercent += allBonuses.healingDonePercent ?? 0
   stats.healingTakenPercent += allBonuses.healingTakenPercent ?? 0
+  stats.maxHpPercent += allBonuses.maxHpPercent ?? 0
+  stats.maxManaPercent += allBonuses.maxManaPercent ?? 0
+  stats.attackPercent += allBonuses.attackPercent ?? 0
+  stats.defensePercent += allBonuses.defensePercent ?? 0
+  stats.speedPercent += allBonuses.speedPercent ?? 0
+  stats.spellPowerPercent += allBonuses.spellPowerPercent ?? 0
+  stats.lowHpDamagePercent += allBonuses.lowHpDamagePercent ?? 0
+  stats.manaCostReductionPercent += allBonuses.manaCostReductionPercent ?? 0
+  stats.cooldownReductionPercent += allBonuses.cooldownReductionPercent ?? 0
+  stats.damageReductionPercent += allBonuses.damageReductionPercent ?? 0
   stats.gatherBonus += allBonuses.gatherBonus ?? 0
   stats.bossDamagePercent += allBonuses.bossDamagePercent ?? 0
   stats.highHpDamagePercent += allBonuses.highHpDamagePercent ?? 0
   stats.lowHpDefensePercent += allBonuses.lowHpDefensePercent ?? 0
   stats.highManaDamagePercent += allBonuses.highManaDamagePercent ?? 0
-  stats.longRangeDamagePercent += allBonuses.longRangeDamagePercent ?? 0
   stats.lifeStealPercent += allBonuses.lifeStealPercent ?? 0
-  stats.rangeFlat += allBonuses.rangeFlat ?? 0
+
+  if (stats.maxHpPercent !== 0) {
+    stats.maxHp = Math.floor(stats.maxHp * (1 + stats.maxHpPercent))
+  }
+  if (stats.maxManaPercent !== 0) {
+    stats.maxMana = Math.floor(stats.maxMana * (1 + stats.maxManaPercent))
+  }
+  if (stats.attackPercent !== 0) {
+    stats.attack = Math.floor(stats.attack * (1 + stats.attackPercent))
+  }
+  if (stats.defensePercent !== 0) {
+    stats.defense = Math.floor(stats.defense * (1 + stats.defensePercent))
+  }
+  if (stats.speedPercent !== 0) {
+    stats.speed = Math.floor(stats.speed * (1 + stats.speedPercent))
+  }
+  if (stats.spellPowerPercent !== 0) {
+    stats.damagePercent += stats.spellPowerPercent
+  }
 
   if (run.player.hp / Math.max(1, stats.maxHp) > 0.7) {
     stats.damagePercent += stats.highHpDamagePercent
   }
   if (run.player.hp / Math.max(1, stats.maxHp) < 0.3) {
     stats.defense = Math.floor(stats.defense * (1 + stats.lowHpDefensePercent))
+    stats.damagePercent += stats.lowHpDamagePercent
   }
   if (run.player.mana / Math.max(1, stats.maxMana) > 0.5) {
     stats.damagePercent += stats.highManaDamagePercent
   }
-
-  const weapon = weaponRange(run)
-  stats.weaponRangeMin = weapon.min
-  stats.weaponRangeMax = weapon.max + stats.rangeFlat
 
   stats.maxHp = Math.max(1, Math.floor(stats.maxHp))
   stats.maxMana = Math.max(0, Math.floor(stats.maxMana))
@@ -717,6 +811,9 @@ export function derivedStats(run) {
   stats.toppleChance = clamp(stats.toppleChance, 0, 0.5)
   stats.statusChance = clamp(stats.statusChance, 0, 0.35)
   stats.statusResist = clamp(stats.statusResist, 0, 0.75)
+  stats.manaCostReductionPercent = clamp(stats.manaCostReductionPercent, 0, 0.6)
+  stats.cooldownReductionPercent = clamp(stats.cooldownReductionPercent, 0, 0.45)
+  stats.damageReductionPercent = clamp(stats.damageReductionPercent, 0, 0.55)
   return stats
 }
 
@@ -751,6 +848,38 @@ export function unlockPassive(run, passiveId) {
   syncVitals(run, false)
   appendLog(run, `Passif appris: ${passive.name}.`)
   return { ok: true, passive }
+}
+
+export function resetPassiveTree(run) {
+  const resetCount = run.player.passiveResetsUsed ?? 0
+  if (resetCount >= PASSIVE_RESET_LIMIT) {
+    return { ok: false, reason: 'La reinitialisation des talents est deja utilisee pour cette partie.' }
+  }
+  if (run.player.gold < PASSIVE_RESET_COST) {
+    return { ok: false, reason: `Il faut ${PASSIVE_RESET_COST} or pour reinitialiser les talents.` }
+  }
+
+  const unlocked = run.player.unlockedPassives ?? []
+  if (!unlocked.length) {
+    return { ok: false, reason: 'Aucun passif a reinitialiser.' }
+  }
+
+  run.player.gold -= PASSIVE_RESET_COST
+  run.player.passivePoints += unlocked.length
+  run.player.unlockedPassives = []
+  run.player.passiveResetsUsed = resetCount + 1
+  syncVitals(run, false)
+  appendLog(
+    run,
+    `Talents reinitialises (${unlocked.length} points rendus) pour ${PASSIVE_RESET_COST} or. Reinitialisation unique consommee.`,
+  )
+  return {
+    ok: true,
+    refunded: unlocked.length,
+    cost: PASSIVE_RESET_COST,
+    used: run.player.passiveResetsUsed,
+    limit: PASSIVE_RESET_LIMIT,
+  }
 }
 
 export function dismissLevelUpModal(run) {
@@ -1094,8 +1223,6 @@ function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null 
 
   if (slot === 'weapon') {
     item.weaponType = base.weaponType ?? 'melee'
-    item.rangeMin = base.rangeMin ?? (item.weaponType === 'melee' ? 1 : 2)
-    item.rangeMax = base.rangeMax ?? (item.weaponType === 'melee' ? 1 : 3)
   }
 
   if (isBoss && rarity === 'mythic') {
@@ -1162,11 +1289,12 @@ function grantXp(run, xp) {
 
 function applyDifficultyToEnemy(template, difficulty) {
   const tactical = difficulty.enemyTacticsMultiplier ?? 1
+  const statBoost = ENEMY_BASE_STAT_BOOST
   return {
-    maxHp: Math.floor(template.maxHp * difficulty.enemyHpMultiplier),
+    maxHp: Math.floor(template.maxHp * difficulty.enemyHpMultiplier * statBoost),
     maxMana: template.maxMana,
-    attack: Math.floor(template.attack * difficulty.enemyDamageMultiplier),
-    defense: Math.floor(template.defense * difficulty.enemyArmorMultiplier),
+    attack: Math.floor(template.attack * difficulty.enemyDamageMultiplier * statBoost),
+    defense: Math.floor(template.defense * difficulty.enemyArmorMultiplier * statBoost),
     speed: template.speed,
     ap: template.ap,
     critChance: clamp((template.critChance ?? 0.06) * tactical, 0.02, 0.5),
@@ -1218,7 +1346,8 @@ function resolveEnemyDeath(run, enemyRef) {
     addMaterial(run, drop.material, drop.quantity)
   }
 
-  const lootCount = enemy.isBoss ? 2 : 1
+  const shouldDropEquipment = enemy.isBoss || chance(NON_BOSS_EQUIPMENT_DROP_CHANCE)
+  const lootCount = enemy.isBoss ? 2 : shouldDropEquipment ? 1 : 0
   const loots = Array.from({ length: lootCount }, () =>
     buildLootItem({ run, isBoss: enemy.isBoss, sourceName: template?.name ?? 'Boss' }),
   )
@@ -1243,10 +1372,10 @@ function resolveEnemyDeath(run, enemyRef) {
     })),
   }
 
-  appendLog(
-    run,
-    `${template?.name ?? 'Ennemi'} vaincu: +${xp} XP, +${gold} or, loot ${loots.map((item) => `${RARITIES[item.rarity].label} ${item.name}`).join(', ')}.`,
-  )
+  const lootLine = loots.length
+    ? `loot ${loots.map((item) => `${RARITIES[item.rarity].label} ${item.name}`).join(', ')}`
+    : 'aucun equipement'
+  appendLog(run, `${template?.name ?? 'Ennemi'} vaincu: +${xp} XP, +${gold} or, ${lootLine}.`)
 
   if (enemy.isBoss) {
     mapState.bossDefeated = true
@@ -1293,7 +1422,46 @@ function transitionToMap(run, targetMapId) {
   return { ok: true, mapId: nextMapId }
 }
 
-export function attemptMove(run, dx, dy) {
+function portalAtPosition(run, mapState, x, y) {
+  if (mapState.exit?.x === x && mapState.exit?.y === y) {
+    return { type: 'exit', targetMapId: mapState.exit.targetMapId }
+  }
+  if (
+    mapState.secretPortal &&
+    mapState.secretPortalRevealed &&
+    mapState.secretPortal.x === x &&
+    mapState.secretPortal.y === y
+  ) {
+    return { type: 'secret', targetMapId: mapState.secretPortal.targetMapId }
+  }
+  if (mapState.backPortal && mapState.backPortal.x === x && mapState.backPortal.y === y) {
+    return { type: 'back', targetMapId: mapState.backPortal.targetMapId }
+  }
+  return null
+}
+
+export function usePortalAtPosition(run) {
+  if (run.gameOver) {
+    return { ok: false, reason: 'Partie terminee.' }
+  }
+  if (run.combat) {
+    return { ok: false, reason: 'Impossible de prendre un portail en combat.' }
+  }
+
+  const mapState = currentMapState(run)
+  const position = run.world.playerPosition
+  const portal = portalAtPosition(run, mapState, position.x, position.y)
+  if (!portal) {
+    return { ok: false, reason: 'Aucun portail sur cette case.' }
+  }
+  if (portal.type === 'exit' && !mapState.bossDefeated) {
+    appendLog(run, 'Sortie verrouillee: le boss de la zone est encore vivant.')
+    return { ok: true, blockedExit: true }
+  }
+  return transitionToMap(run, portal.targetMapId)
+}
+
+export function attemptMove(run, dx, dy, options = {}) {
   if (run.gameOver) {
     return { ok: false, reason: 'Partie terminée.' }
   }
@@ -1321,30 +1489,22 @@ export function attemptMove(run, dx, dy) {
     return { ok: true, combat: true }
   }
 
-  if (mapState.exit?.x === nx && mapState.exit?.y === ny) {
-    if (!mapState.bossDefeated) {
+  const deferPortalTransition = options.deferPortalTransition ?? false
+  const portal = portalAtPosition(run, mapState, nx, ny)
+  if (portal) {
+    if (portal.type === 'exit' && !mapState.bossDefeated) {
       appendLog(run, 'Sortie verrouillee: le boss de la zone est encore vivant.')
       return { ok: true, blockedExit: true }
     }
-    return transitionToMap(run, mapState.exit.targetMapId)
-  }
-
-  if (
-    mapState.secretPortal &&
-    currentMapState(run).secretPortalRevealed &&
-    mapState.secretPortal.x === nx &&
-    mapState.secretPortal.y === ny
-  ) {
-    return transitionToMap(run, mapState.secretPortal.targetMapId)
-  }
-
-  if (mapState.backPortal && mapState.backPortal.x === nx && mapState.backPortal.y === ny) {
-    return transitionToMap(run, mapState.backPortal.targetMapId)
+    if (deferPortalTransition) {
+      return { ok: true, portalPrompt: portal }
+    }
+    return transitionToMap(run, portal.targetMapId)
   }
 
   const chest = chestAtPosition(run, nx, ny)
   if (chest) {
-    appendLog(run, 'Un coffre ancien est a portee. Ouvre-le pour recuperer son contenu.')
+    appendLog(run, 'Un coffre ancien est a proximite. Ouvre-le pour recuperer son contenu.')
   }
 
   return { ok: true }
@@ -1372,6 +1532,10 @@ function reduceEffects(effects) {
 function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, options = {}) {
   const ignoreAvoidance = options.ignoreAvoidance ?? false
   let damage = incomingDamage
+  const damageReduction = clamp(targetStats.damageReductionPercent ?? 0, 0, 0.55)
+  if (damageReduction > 0) {
+    damage = Math.max(0, Math.floor(damage * (1 - damageReduction)))
+  }
 
   const guaranteedDodge = targetEffects.find(
     (effect) =>
@@ -1496,6 +1660,48 @@ function statusLabel(kind) {
   return 'alteration'
 }
 
+function consumeNextAttackMissChance(effects) {
+  if (!effects?.length) {
+    return 0
+  }
+  const missEffect = effects.find(
+    (effect) =>
+      effect.type === 'debuff' &&
+      effect.stat === 'nextAttackMissChance' &&
+      (effect.turns ?? 0) > 0 &&
+      (effect.value ?? 0) > 0,
+  )
+  if (!missEffect) {
+    return 0
+  }
+
+  const chanceValue = clamp(missEffect.value ?? 0.35, 0, 0.95)
+  missEffect.value = 0
+  missEffect.turns = 0
+  return chanceValue
+}
+
+function applyPassiveLifeSteal(run, battle, side, attacker, dealtDamage) {
+  const ratio = clamp(attacker?.lifeStealPercent ?? 0, 0, PASSIVE_LIFESTEAL_MAX_RATIO) * PASSIVE_LIFESTEAL_EFFECTIVENESS
+  if (dealtDamage <= 0 || ratio <= 0) {
+    return 0
+  }
+
+  const maxHp = Math.max(1, Math.floor(attacker?.maxHp ?? 1))
+  const healCap = Math.max(1, Math.floor(maxHp * PASSIVE_LIFESTEAL_HIT_CAP_MAX_HP_RATIO))
+  const heal = Math.min(healCap, Math.max(1, Math.floor(dealtDamage * ratio)))
+  if (side === 'player') {
+    const before = run.player.hp
+    run.player.hp = clamp(run.player.hp + heal, 0, maxHp)
+    return Math.max(0, run.player.hp - before)
+  }
+
+  const before = battle.enemyHp
+  const enemyMaxHp = battle.enemyStats.maxHp ?? before
+  battle.enemyHp = clamp(battle.enemyHp + heal, 0, enemyMaxHp)
+  return Math.max(0, battle.enemyHp - before)
+}
+
 function applySkillStatusEffect(run, side, statusEffect, attacker, defender, targetEffects, targetName) {
   if (!statusEffect?.kind) {
     return null
@@ -1508,7 +1714,18 @@ function applySkillStatusEffect(run, side, statusEffect, attacker, defender, tar
 
   const turns = statusEffect.turns ?? 1
   const value = statusEffect.value ?? 1
-  if (statusEffect.kind === 'disorient' || statusEffect.kind === 'topple') {
+  if (statusEffect.kind === 'disorient') {
+    targetEffects.push({
+      id: uid('status'),
+      type: 'debuff',
+      stat: 'nextAttackMissChance',
+      value: clamp(statusEffect.missChance ?? 0.35, 0.05, 0.95),
+      turns,
+    })
+    return `${targetName} subit ${statusLabel(statusEffect.kind)}.`
+  }
+
+  if (statusEffect.kind === 'topple') {
     targetEffects.push({
       id: uid('status'),
       type: 'debuff',
@@ -1719,6 +1936,28 @@ function applySkill(run, side, skill) {
   const targetName = side === 'player' ? battle.enemyName : run.player.name
   let text = `${actorName} lance ${skill.name}.`
   let restoredAp = 0
+  const isAttackSkill = ['damage', 'control', 'execute', 'dot', 'lifesteal', 'debuff'].includes(skill.effect)
+  if (isAttackSkill) {
+    const attackerEffects = side === 'player' ? battle.playerEffects : battle.enemyEffects
+    const disorientMissChance = consumeNextAttackMissChance(attackerEffects)
+    if (disorientMissChance > 0 && chance(disorientMissChance)) {
+      if (side === 'player') {
+        const manaCost = skillManaCostFor('player', skill, playerStats)
+        const cooldownValue = skillCooldownFor('player', skill, playerStats)
+        battle.playerAp = Math.max(0, battle.playerAp - skill.apCost)
+        run.player.mana = clamp(run.player.mana - manaCost, 0, playerStats.maxMana)
+        battle.playerCooldowns[skill.id] = cooldownValue
+      } else {
+        const manaCost = skillManaCostFor('enemy', skill)
+        const cooldownValue = skillCooldownFor('enemy', skill)
+        battle.enemyAp = Math.max(0, battle.enemyAp - skill.apCost)
+        battle.enemyMana = clamp((battle.enemyMana ?? battle.enemyStats.maxMana) - manaCost, 0, battle.enemyStats.maxMana)
+        battle.enemyCooldowns[skill.id] = cooldownValue
+      }
+      appendLog(run, `${actorName} rate son coup a cause de la desorientation.`)
+      return { ok: true, finished: false }
+    }
+  }
 
   if (skill.effect === 'damage' || skill.effect === 'control' || skill.effect === 'execute') {
     const effectivePower = skillPowerByAp(side, skill, attacker)
@@ -1740,6 +1979,8 @@ function applySkill(run, side, skill) {
     } else {
       run.player.hp = result.hp
     }
+
+    const lifeStealHealed = !result.dodged ? applyPassiveLifeSteal(run, battle, side, attacker, result.damage) : 0
 
     const counter = effectAmount(targetEffects, 'buff', 'counterDamagePercent')
     if (counter > 0 && result.damage > 0) {
@@ -1763,6 +2004,9 @@ function applySkill(run, side, skill) {
       text += ` ${targetName} pare et subit ${result.damage} degats.`
     } else {
       text += ` ${targetName} subit ${result.damage} degats.`
+    }
+    if (lifeStealHealed > 0) {
+      text += ` Vol de vie: +${lifeStealHealed} PV.`
     }
 
     if (!result.dodged && skill.statusEffect) {
@@ -1788,10 +2032,16 @@ function applySkill(run, side, skill) {
       } else {
         run.player.hp = impactResult.hp
       }
+      const lifeStealHealed = !impactResult.dodged
+        ? applyPassiveLifeSteal(run, battle, side, attacker, impactResult.damage)
+        : 0
       canApplyAilment = !impactResult.dodged
       text += impactResult.dodged
         ? ` ${targetName} esquive l impact.`
         : ` ${targetName} subit ${impactResult.damage} degats initiaux.`
+      if (lifeStealHealed > 0) {
+        text += ` Vol de vie: +${lifeStealHealed} PV.`
+      }
     }
 
     if (canApplyAilment) {
@@ -1904,10 +2154,14 @@ function applySkill(run, side, skill) {
       } else {
         run.player.hp = result.hp
       }
+      const lifeStealHealed = !result.dodged ? applyPassiveLifeSteal(run, battle, side, attacker, result.damage) : 0
       if (damage.crit && !result.dodged) {
         text += ' Critique.'
       }
       text += result.dodged ? ` ${targetName} esquive.` : ` ${targetName} perd ${result.damage} PV.`
+      if (lifeStealHealed > 0) {
+        text += ` Vol de vie: +${lifeStealHealed} PV.`
+      }
     }
     const debuffType = skill.debuffType ?? 'enemyDefensePercent'
     const effects = side === 'player' ? battle.enemyEffects : battle.playerEffects
@@ -1929,13 +2183,17 @@ function applySkill(run, side, skill) {
   }
 
   if (side === 'player') {
+    const manaCost = skillManaCostFor('player', skill, playerStats)
+    const cooldownValue = skillCooldownFor('player', skill, playerStats)
     battle.playerAp = Math.max(0, battle.playerAp - skill.apCost + restoredAp)
-    run.player.mana = clamp(run.player.mana - skill.manaCost, 0, derivedStats(run).maxMana)
-    battle.playerCooldowns[skill.id] = skill.cooldown ?? 0
+    run.player.mana = clamp(run.player.mana - manaCost, 0, playerStats.maxMana)
+    battle.playerCooldowns[skill.id] = cooldownValue
   } else {
+    const manaCost = skillManaCostFor('enemy', skill)
+    const cooldownValue = skillCooldownFor('enemy', skill)
     battle.enemyAp = Math.max(0, battle.enemyAp - skill.apCost + restoredAp)
-    battle.enemyMana = clamp((battle.enemyMana ?? battle.enemyStats.maxMana) - skill.manaCost, 0, battle.enemyStats.maxMana)
-    battle.enemyCooldowns[skill.id] = skill.cooldown ?? 0
+    battle.enemyMana = clamp((battle.enemyMana ?? battle.enemyStats.maxMana) - manaCost, 0, battle.enemyStats.maxMana)
+    battle.enemyCooldowns[skill.id] = cooldownValue
   }
 
   appendLog(run, text)
@@ -1965,6 +2223,8 @@ function normalAttackResult(run, side) {
           critDamage: playerStats.critDamage,
           toppleChance: playerStats.toppleChance,
           statusChance: playerStats.statusChance,
+          lifeStealPercent: playerStats.lifeStealPercent,
+          maxHp: playerStats.maxHp,
         }
       : {
           attack: battle.enemyStats.attack,
@@ -1973,6 +2233,8 @@ function normalAttackResult(run, side) {
           critDamage: battle.enemyStats.critDamage ?? 0.42,
           toppleChance: battle.enemyStats.toppleChance ?? 0.08,
           statusChance: battle.enemyStats.toppleChance ?? 0.08,
+          lifeStealPercent: battle.enemyStats.lifeStealPercent ?? 0,
+          maxHp: battle.enemyStats.maxHp,
         }
 
   const defender =
@@ -1990,6 +2252,19 @@ function normalAttackResult(run, side) {
           statusResist: playerStats.statusResist,
         }
 
+  const attackerEffects = side === 'player' ? battle.playerEffects : battle.enemyEffects
+  const disorientMissChance = consumeNextAttackMissChance(attackerEffects)
+  if (disorientMissChance > 0 && chance(disorientMissChance)) {
+    if (side === 'player') {
+      battle.playerAp = Math.max(0, battle.playerAp - playerStats.normalAttackCost)
+      appendLog(run, `${run.player.name} rate son attaque normale a cause de la desorientation.`)
+    } else {
+      battle.enemyAp = Math.max(0, battle.enemyAp - COMBAT_NORMAL_ATTACK_COST)
+      appendLog(run, `${battle.enemyName} rate son attaque a cause de la desorientation.`)
+    }
+    return { ok: true, finished: false }
+  }
+
   const damage = computeDamage(attacker, defender, 1)
   const currentHp = side === 'player' ? battle.enemyHp : run.player.hp
   const targetEffects = side === 'player' ? battle.enemyEffects : battle.playerEffects
@@ -1997,7 +2272,8 @@ function normalAttackResult(run, side) {
 
   if (side === 'player') {
     battle.enemyHp = result.hp
-    battle.playerAp -= playerStats.normalAttackCost
+    battle.playerAp = Math.max(0, battle.playerAp - playerStats.normalAttackCost)
+    const lifeStealHealed = !result.dodged ? applyPassiveLifeSteal(run, battle, side, attacker, result.damage) : 0
     let text = ''
     if (damage.crit && !result.dodged) {
       text += 'Critique. '
@@ -2008,6 +2284,9 @@ function normalAttackResult(run, side) {
       text += `${battle.enemyName} pare partiellement (${result.damage}).`
     } else {
       text += `Attaque normale: ${result.damage} degats.`
+    }
+    if (lifeStealHealed > 0) {
+      text += ` Vol de vie: +${lifeStealHealed} PV.`
     }
     if (!result.dodged && chance(statusChance(run, side, attacker, defender, attacker.toppleChance ?? 0.06))) {
       battle.enemyEffects.push({
@@ -2022,7 +2301,8 @@ function normalAttackResult(run, side) {
     appendLog(run, text)
   } else {
     run.player.hp = result.hp
-    battle.enemyAp -= COMBAT_NORMAL_ATTACK_COST
+    battle.enemyAp = Math.max(0, battle.enemyAp - COMBAT_NORMAL_ATTACK_COST)
+    const lifeStealHealed = !result.dodged ? applyPassiveLifeSteal(run, battle, side, attacker, result.damage) : 0
     let text = ''
     if (damage.crit && !result.dodged) {
       text += 'Critique ennemi. '
@@ -2033,6 +2313,9 @@ function normalAttackResult(run, side) {
       text += `Tu pares une partie du coup (${result.damage}).`
     } else {
       text += `${battle.enemyName} frappe: ${result.damage} degats.`
+    }
+    if (lifeStealHealed > 0) {
+      text += ` Vol de vie: +${lifeStealHealed} PV.`
     }
     if (!result.dodged && chance(statusChance(run, side, attacker, defender, attacker.toppleChance ?? 0.06))) {
       battle.playerEffects.push({
@@ -2117,8 +2400,6 @@ export function startCombat(run, enemy) {
     enemyStats: scaled,
     enemyHp: Math.max(1, Math.floor(scaled.maxHp * hpRatio)),
     enemyMana: Math.floor(scaled.maxMana * manaRatio),
-    enemyRangeMin: template.weaponRangeMin ?? 1,
-    enemyRangeMax: template.weaponRangeMax ?? 1,
     enemyFleeResist: template.fleeResist ?? 0.2,
     enemyEffects: [],
     playerEffects: preparedBuffs,
@@ -2126,7 +2407,6 @@ export function startCombat(run, enemy) {
     playerCooldowns: {},
     playerAp: 0,
     enemyAp: 0,
-    distance: 1,
     actor: playerStats.speed + randomInt(0, 6) >= scaled.speed + randomInt(0, 6) ? 'player' : 'enemy',
     turn: 1,
   }
@@ -2138,11 +2418,34 @@ export function startCombat(run, enemy) {
   startTurn(run)
 }
 
-function skillCanBeUsed(skill, ap, mana, cooldowns) {
+function skillManaCostFor(side, skill, stats = null) {
+  if (!skill) {
+    return 0
+  }
+  if (side !== 'player') {
+    return skill.manaCost ?? 0
+  }
+  const reduction = clamp(stats?.manaCostReductionPercent ?? 0, 0, 0.6)
+  return Math.max(0, Math.floor((skill.manaCost ?? 0) * (1 - reduction)))
+}
+
+function skillCooldownFor(side, skill, stats = null) {
+  if (!skill) {
+    return 0
+  }
+  if (side !== 'player') {
+    return skill.cooldown ?? 0
+  }
+  const reduction = clamp(stats?.cooldownReductionPercent ?? 0, 0, 0.45)
+  return Math.max(0, Math.floor((skill.cooldown ?? 0) * (1 - reduction)))
+}
+
+function skillCanBeUsed(side, skill, ap, mana, cooldowns, stats = null) {
   if (!skill) {
     return false
   }
-  if (ap < skill.apCost || mana < skill.manaCost) {
+  const manaCost = skillManaCostFor(side, skill, stats)
+  if (ap < skill.apCost || mana < manaCost) {
     return false
   }
   if ((cooldowns[skill.id] ?? 0) > 0) {
@@ -2162,7 +2465,8 @@ export function playerUseSkill(run, skillId) {
     return { ok: false, reason: 'Competence indisponible.' }
   }
 
-  if (!skillCanBeUsed(skill, battle.playerAp, run.player.mana, battle.playerCooldowns)) {
+  const playerStats = derivedStats(run)
+  if (!skillCanBeUsed('player', skill, battle.playerAp, run.player.mana, battle.playerCooldowns, playerStats)) {
     return { ok: false, reason: 'PA, mana ou cooldown insuffisants.' }
   }
 
@@ -2198,7 +2502,9 @@ function bestEnemySkill(run) {
   if (!template) {
     return null
   }
-  const usable = template.skills.filter((skill) => skillCanBeUsed(skill, battle.enemyAp, battle.enemyMana, battle.enemyCooldowns))
+  const usable = template.skills.filter((skill) =>
+    skillCanBeUsed('enemy', skill, battle.enemyAp, battle.enemyMana, battle.enemyCooldowns),
+  )
   if (!usable.length) {
     return null
   }
@@ -2440,11 +2746,18 @@ export function buyConsumable(run, shopId) {
   if (!entry) {
     return { ok: false, reason: 'Objet boutique inconnu.' }
   }
+  const currentStock = run.world.shopStock?.[entry.id]
+  if ((entry.stock ?? 0) > 0 && (currentStock ?? 0) <= 0) {
+    return { ok: false, reason: 'Stock epuise.' }
+  }
   if (run.player.gold < entry.price) {
     return { ok: false, reason: 'Or insuffisant.' }
   }
 
   run.player.gold -= entry.price
+  if ((entry.stock ?? 0) > 0) {
+    run.world.shopStock[entry.id] = Math.max(0, (run.world.shopStock[entry.id] ?? entry.stock) - 1)
+  }
   addInventoryItem(run, {
     id: uid('consumable'),
     kind: 'consumable',
@@ -2453,10 +2766,13 @@ export function buyConsumable(run, shopId) {
     quantity: 1,
     rarity: 'common',
     value: entry.price,
+    description: entry.description ?? '',
     icon: '/assets/Weapons/Hands/Hands.png',
   })
-  appendLog(run, `${entry.name} achete pour ${entry.price} or.`)
-  return { ok: true }
+  const stockText =
+    (entry.stock ?? 0) > 0 ? ` Stock restant: ${run.world.shopStock[entry.id] ?? 0}.` : ''
+  appendLog(run, `${entry.name} achete pour ${entry.price} or.${stockText}`)
+  return { ok: true, remainingStock: run.world.shopStock?.[entry.id] ?? null }
 }
 
 export function sellItem(run, itemId) {
@@ -2465,15 +2781,56 @@ export function sellItem(run, itemId) {
     return { ok: false, reason: 'Objet introuvable.' }
   }
 
-  const value = Math.max(1, Math.floor((item.value ?? 12) * 0.55))
+  const value = sellValueForItem(item)
   run.player.gold += value
   removeInventoryItem(run, item.id)
   appendLog(run, `${item.name} vendu pour ${value} or.`)
   return { ok: true }
 }
 
+export function sellValueForItem(item) {
+  return Math.max(1, Math.floor((item?.value ?? 12) * SELL_PRICE_FACTOR))
+}
+
 function recipeById(recipeId) {
   return RECIPES.find((entry) => entry.id === recipeId) ?? null
+}
+
+function recipeUsesBaseCost(recipe) {
+  if (!recipe) {
+    return true
+  }
+  if (recipe.rarity === 'legendary' || recipe.result?.rarity === 'legendary') {
+    return true
+  }
+  if (recipe.result?.kind === 'consumable' && (recipe.result?.effect === 'heal_80' || recipe.result?.effect === 'mana_60')) {
+    return true
+  }
+  return false
+}
+
+function effectiveRecipeMaterials(recipe) {
+  if (!recipe) {
+    return {}
+  }
+  if (recipeUsesBaseCost(recipe)) {
+    return { ...recipe.materials }
+  }
+
+  const scaled = {}
+  for (const [material, quantity] of Object.entries(recipe.materials)) {
+    const base = Number(quantity) || 0
+    scaled[material] = Math.max(base + 1, Math.ceil(base * CRAFT_COST_MULTIPLIER))
+  }
+  return scaled
+}
+
+export function recipeMaterialRequirements(recipeId) {
+  const recipe = recipeById(recipeId)
+  if (!recipe) {
+    return null
+  }
+  return effectiveRecipeMaterials(recipe)
 }
 
 export function canCraft(run, recipeId) {
@@ -2481,7 +2838,8 @@ export function canCraft(run, recipeId) {
   if (!recipe) {
     return false
   }
-  return Object.entries(recipe.materials).every(([material, qty]) => (run.player.materials[material] ?? 0) >= qty)
+  const materials = effectiveRecipeMaterials(recipe)
+  return Object.entries(materials).every(([material, qty]) => (run.player.materials[material] ?? 0) >= qty)
 }
 
 export function craftItem(run, recipeId) {
@@ -2493,7 +2851,8 @@ export function craftItem(run, recipeId) {
     return { ok: false, reason: 'Materiaux insuffisants.' }
   }
 
-  for (const [material, qty] of Object.entries(recipe.materials)) {
+  const effectiveMaterials = effectiveRecipeMaterials(recipe)
+  for (const [material, qty] of Object.entries(effectiveMaterials)) {
     run.player.materials[material] -= qty
   }
 
@@ -2525,8 +2884,6 @@ export function craftItem(run, recipeId) {
 
     if (recipe.result.slot === 'weapon') {
       item.weaponType = recipe.result.weaponType ?? 'melee'
-      item.rangeMin = recipe.result.rangeMin ?? (item.weaponType === 'melee' ? 1 : 2)
-      item.rangeMax = recipe.result.rangeMax ?? (item.weaponType === 'melee' ? 1 : 3)
     }
 
     addInventoryItem(run, applyRandomBonusesToItem(run, item))
@@ -2613,6 +2970,7 @@ export function answerNpcRiddle(run, npcId, optionId) {
   }
 
   const mapState = currentMapState(run)
+  const wasPortalRevealed = Boolean(mapState.secretPortalRevealed)
   const key = riddleAttemptKey(npc.id, riddle.id)
   if (mapState.solvedRiddles.includes(key)) {
     return { ok: false, reason: 'Enigme deja resolue.' }
@@ -2625,7 +2983,13 @@ export function answerNpcRiddle(run, npcId, optionId) {
   if (!correct) {
     mapState.failedRiddles.push(key)
     appendLog(run, riddle.failText ?? 'Mauvaise reponse.')
-    return { ok: true, correct: false, text: riddle.failText ?? 'Mauvaise reponse.' }
+    return {
+      ok: true,
+      correct: false,
+      text: riddle.failText ?? 'Mauvaise reponse.',
+      portalOpened: false,
+      mapId: run.world.currentMapId,
+    }
   }
 
   mapState.solvedRiddles.push(key)
@@ -2643,7 +3007,13 @@ export function answerNpcRiddle(run, npcId, optionId) {
   }
 
   appendLog(run, riddle.successText ?? 'Enigme resolue.')
-  return { ok: true, correct: true, text: riddle.successText ?? 'Enigme resolue.' }
+  return {
+    ok: true,
+    correct: true,
+    text: riddle.successText ?? 'Enigme resolue.',
+    portalOpened: !wasPortalRevealed && Boolean(mapState.secretPortalRevealed),
+    mapId: run.world.currentMapId,
+  }
 }
 
 export function progressSummary(run) {

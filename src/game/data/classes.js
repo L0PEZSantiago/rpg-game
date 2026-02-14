@@ -1,4 +1,5 @@
 import { PLAYER_ASSET, ROGUE_ASSET, SKELETON_MAGE_ASSET, WIZZARD_ASSET } from './constants'
+import skilltreeData from '../skilltree.json'
 
 const sharedPassives = {
   survival_instinct: {
@@ -53,8 +54,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Projectile arcanique rapide.',
         apCost: 3,
         manaCost: 10,
-        minRange: 2,
-        maxRange: 6,
         cooldown: 1,
         effect: 'damage',
         power: 1.2,
@@ -63,11 +62,9 @@ const RAW_CLASS_DEFINITIONS = [
         id: 'mage_nova',
         name: 'Nova de verre',
         unlockLevel: 2,
-        description: 'Explosion de courte portée qui ignore une partie de l\'armure de la cible.',
+        description: 'Explosion concentree qui ignore une partie de l\'armure de la cible.',
         apCost: 4,
         manaCost: 16,
-        minRange: 1,
-        maxRange: 3,
         cooldown: 2,
         effect: 'damage',
         power: 1.45,
@@ -80,8 +77,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Vous protège avec un bouclier magique temporaire.',
         apCost: 3,
         manaCost: 14,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 3,
         effect: 'shield',
         shieldRatio: 0.42,
@@ -93,8 +88,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Pose une marque sur la cible infligeant des dégâts pendant 3 tours.',
         apCost: 4,
         manaCost: 19,
-        minRange: 2,
-        maxRange: 6,
         cooldown: 3,
         effect: 'dot',
         power: 0.75,
@@ -109,8 +102,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Canalise le mana pour envoyer un rayon à haute energie.',
         apCost: 5,
         manaCost: 28,
-        minRange: 2,
-        maxRange: 7,
         cooldown: 4,
         effect: 'damage',
         power: 2.15,
@@ -170,11 +161,9 @@ const RAW_CLASS_DEFINITIONS = [
         id: 'druid_thorn',
         name: 'Dard epineux',
         unlockLevel: 1,
-        description: 'Inflige des dégâts de nature à distance.',
+        description: 'Inflige des degats de nature continus.',
         apCost: 3,
         manaCost: 9,
-        minRange: 2,
-        maxRange: 5,
         cooldown: 1,
         effect: 'damage',
         power: 1.08,
@@ -186,8 +175,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Soin direct et régenération courte.',
         apCost: 4,
         manaCost: 13,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 2,
         effect: 'heal',
         healRatio: 0.78,
@@ -199,8 +186,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Augmente l\'armure de 30% pendant 2 tours.',
         apCost: 3,
         manaCost: 12,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 3,
         effect: 'buff',
         buffType: 'defensePercent',
@@ -214,8 +199,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Empoissone l\'ennemi infligeant des dégâts pendant 4 tours.',
         apCost: 4,
         manaCost: 16,
-        minRange: 2,
-        maxRange: 6,
         cooldown: 3,
         effect: 'dot',
         power: 0.68,
@@ -230,8 +213,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Attaque frontale lourde.',
         apCost: 5,
         manaCost: 21,
-        minRange: 1,
-        maxRange: 2,
         cooldown: 4,
         effect: 'damage',
         power: 2,
@@ -291,8 +272,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Attaque de mêlée précise et rapide.',
         apCost: 3,
         manaCost: 6,
-        minRange: 1,
-        maxRange: 2,
         cooldown: 1,
         effect: 'damage',
         power: 1.32,
@@ -304,8 +283,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Gagne +2 PA et esquive un coup.',
         apCost: 0,
         manaCost: 10,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 3,
         effect: 'buff',
         buffType: 'dodge',
@@ -320,8 +297,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Coupe les artères de la cible infligeant un violent saignement.',
         apCost: 4,
         manaCost: 12,
-        minRange: 1,
-        maxRange: 3,
         cooldown: 2,
         effect: 'dot',
         power: 0.86,
@@ -333,11 +308,9 @@ const RAW_CLASS_DEFINITIONS = [
         id: 'assassin_blade_fan',
         name: 'Eventail de lames',
         unlockLevel: 6,
-        description: 'Pluie de dagues à moyenne portée.',
+        description: 'Pluie de dagues concentree.',
         apCost: 4,
         manaCost: 14,
-        minRange: 2,
-        maxRange: 4,
         cooldown: 2,
         effect: 'damage',
         power: 1.55,
@@ -349,8 +322,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Dégâts amplifiés sur les cibles faibles.',
         apCost: 5,
         manaCost: 20,
-        minRange: 1,
-        maxRange: 2,
         cooldown: 4,
         effect: 'execute',
         power: 1.6,
@@ -421,8 +392,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Frappe mêlée fiable.',
         apCost: 3,
         manaCost: 4,
-        minRange: 1,
-        maxRange: 2,
         cooldown: 1,
         effect: 'damage',
         power: 1.28,
@@ -434,25 +403,21 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Vous arme d\'un bouclier massif permettant de bloquer les coups ennemi.',
         apCost: 3,
         manaCost: 8,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 3,
         effect: 'shield',
         shieldRatio: 0.5,
       },
       {
-        id: 'warrior_chain',
-        name: 'Chaine de guerre',
+        id: 'warrior_charge',
+        name: 'Charge brise-ligne',
         unlockLevel: 4,
-        description: 'Se sert d\'un grappin afin d\'attirer l\'ennemi à lui de 2 de distance.',
+        description: 'Charge avec violence et desoriente la cible.',
         apCost: 3,
         manaCost: 9,
-        minRange: 2,
-        maxRange: 5,
         cooldown: 3,
         effect: 'control',
-        pullDistance: 2,
-        power: 0.8,
+        power: 1.05,
+        statusEffect: { kind: 'topple', chance: 0.4, turns: 1, value: 1 },
       },
       {
         id: 'warrior_rally',
@@ -461,8 +426,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Attaque +30% pendant 2 tours.',
         apCost: 3,
         manaCost: 11,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 3,
         effect: 'buff',
         buffType: 'attackPercent',
@@ -476,8 +439,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Coup fatal très couteux.',
         apCost: 6,
         manaCost: 18,
-        minRange: 1,
-        maxRange: 2,
         cooldown: 4,
         effect: 'damage',
         power: 2.3,
@@ -537,11 +498,9 @@ const RAW_CLASS_DEFINITIONS = [
         id: 'archer_precise_shot',
         name: 'Tir de précision',
         unlockLevel: 1,
-        description: 'Tir de longue portée précis.',
+        description: 'Tir precis perçant.',
         apCost: 3,
         manaCost: 8,
-        minRange: 2,
-        maxRange: 7,
         cooldown: 1,
         effect: 'damage',
         power: 1.25,
@@ -553,8 +512,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Réduit les PA de la cible de 1 au tour suivant.',
         apCost: 3,
         manaCost: 10,
-        minRange: 2,
-        maxRange: 6,
         cooldown: 2,
         effect: 'debuff',
         debuffType: 'enemyApPenalty',
@@ -569,8 +526,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Fais tomber une pluie de flèches sur les ennemis.',
         apCost: 5,
         manaCost: 15,
-        minRange: 3,
-        maxRange: 7,
         cooldown: 3,
         effect: 'damage',
         power: 1.9,
@@ -582,8 +537,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Esquive la prochaine attaque.',
         apCost: 3,
         manaCost: 12,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 3,
         effect: 'buff',
         buffType: 'dodge',
@@ -597,8 +550,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Fait tomber des cieux une flèche chargée en mana infligeant de lourds dégâts.',
         apCost: 6,
         manaCost: 22,
-        minRange: 3,
-        maxRange: 8,
         cooldown: 4,
         effect: 'damage',
         power: 2.25,
@@ -609,9 +560,9 @@ const RAW_CLASS_DEFINITIONS = [
         id: 'falcon_eyes',
         tier: 1,
         name: 'Oeil du faucon',
-        description: '+1 portée max.',
+        description: '+3% degats globaux.',
         requires: null,
-        bonuses: { rangeFlat: 1 },
+        bonuses: { damagePercent: 0.03 },
       },
       {
         id: 'hunter_stride',
@@ -637,9 +588,9 @@ const RAW_CLASS_DEFINITIONS = [
         id: 'predator_mark',
         tier: 4,
         name: 'Marque du prédateur',
-        description: '+15% Dégâts aux cibles à distance supérieure ou égale à 4.',
+        description: '+15% Degats globaux.',
         requires: 'critical_draw',
-        bonuses: { longRangeDamagePercent: 0.15 },
+        bonuses: { damagePercent: 0.15 },
       },
     ],
   },
@@ -668,8 +619,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Envoie une déferlante de piques osseusses.',
         apCost: 3,
         manaCost: 9,
-        minRange: 2,
-        maxRange: 6,
         cooldown: 0,
         effect: 'damage',
         power: 1.15,
@@ -681,8 +630,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Draîne la vie de la cible.',
         apCost: 4,
         manaCost: 12,
-        minRange: 2,
-        maxRange: 5,
         cooldown: 2,
         effect: 'lifesteal',
         power: 1.28,
@@ -695,8 +642,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Dégâts +20% pendant 3 tours.',
         apCost: 3,
         manaCost: 14,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 3,
         effect: 'buff',
         buffType: 'damagePercent',
@@ -710,8 +655,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Inflige des dégâts pendant 4 tours, idéal sur les boss.',
         apCost: 4,
         manaCost: 17,
-        minRange: 2,
-        maxRange: 6,
         cooldown: 3,
         effect: 'dot',
         power: 0.78,
@@ -726,8 +669,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Puissante rafale d\'orbes démoniaques.',
         apCost: 6,
         manaCost: 26,
-        minRange: 2,
-        maxRange: 6,
         cooldown: 4,
         effect: 'damage',
         power: 2.22,
@@ -790,8 +731,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Dégâts sonore direct.',
         apCost: 3,
         manaCost: 8,
-        minRange: 2,
-        maxRange: 5,
         cooldown: 0,
         effect: 'damage',
         power: 1.1,
@@ -803,8 +742,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Vous soigne une partie de votre vie.',
         apCost: 3,
         manaCost: 12,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 2,
         effect: 'heal',
         healRatio: 0.66,
@@ -816,8 +753,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: '+25% d\'attaque et +2 vitesse de tour.',
         apCost: 3,
         manaCost: 13,
-        minRange: 0,
-        maxRange: 0,
         cooldown: 3,
         effect: 'buff',
         buffType: 'attackPercent',
@@ -831,8 +766,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Affaiblit l\'armure de l\'ennemie de 20% pendant 2 tours.',
         apCost: 4,
         manaCost: 16,
-        minRange: 2,
-        maxRange: 6,
         cooldown: 3,
         effect: 'debuff',
         debuffType: 'enemyDefensePercent',
@@ -847,8 +780,6 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Crescendo dévastateur infligeant de lourds dégâts.',
         apCost: 6,
         manaCost: 24,
-        minRange: 2,
-        maxRange: 6,
         cooldown: 4,
         effect: 'damage',
         power: 2.18,
@@ -931,8 +862,8 @@ const CLASS_INNATE_PASSIVES = {
   archer: {
     id: 'innate_hunter_instinct',
     name: 'Instinct du chasseur',
-    description: '+5% esquive et +8% Dégâts longue portée.',
-    bonuses: { dodgeChanceFlat: 0.05, longRangeDamagePercent: 0.08 },
+    description: '+5% esquive et +8% Degats.',
+    bonuses: { dodgeChanceFlat: 0.05, damagePercent: 0.08 },
   },
   necromancer: {
     id: 'innate_grave_ritual',
@@ -958,7 +889,7 @@ const SKILL_STATUS_AUGMENTS = {
   assassin_blade_fan: {
     statusEffect: { kind: 'disorient', chance: 0.24, turns: 1, value: 1 },
   },
-  warrior_chain: {
+  warrior_charge: {
     statusEffect: { kind: 'topple', chance: 0.45, turns: 1, value: 1 },
   },
   archer_pin: {
@@ -972,8 +903,605 @@ const SKILL_STATUS_AUGMENTS = {
   },
 }
 
+const TREE_CLASS_ALIASES = {
+  mage: ['mage'],
+  druid: ['druide', 'druid'],
+  assassin: ['assassin'],
+  warrior: ['guerrier', 'warrior'],
+  archer: ['archer'],
+  necromancer: ['necroman', 'necromancien', 'necromancer'],
+  bard: ['barde', 'bard'],
+}
+
+const TREE_BRANCH_REBALANCE = {
+  assassin_shadow: 1.1,
+  assassin_agility: 1.22,
+  assassin_deadly_blades: 1.16,
+  archer_precision: 1.12,
+  archer_rapid_fire: 1.16,
+  archer_hunter_survival: 1.24,
+  warrior_defender: 1.2,
+  warrior_berserker: 1.1,
+  warrior_weapon_mastery: 1.13,
+  necro_dark_magic: 1.12,
+  necro_drain: 1.24,
+  necro_ritual_mana: 1.18,
+  druid_nature_guard: 1.22,
+  druid_harmony: 1.18,
+  druid_wild_form: 1.13,
+  bard_support_melodies: 1.24,
+  bard_inspiration: 1.13,
+  bard_virtuoso: 1.18,
+  mage_pure_arcana: 1.1,
+  mage_mana_pool: 1.16,
+  mage_control: 1.16,
+}
+
+const TREE_MAJOR_MULTIPLIER = 1.06
+
+const TREE_EFFECT_META_KEYS = new Set([
+  'condition',
+  'threshold',
+  'durationTurns',
+  'maxTurns',
+  'value',
+  'scalesPerMissingHpPct',
+  'maxPct',
+])
+
+const TREE_EFFECT_NOT_SCALABLE = new Set([
+  'threshold',
+  'durationTurns',
+  'maxTurns',
+  'value',
+  'scalesPerMissingHpPct',
+  'maxPct',
+])
+
+const TREE_EFFECT_LABELS = {
+  maxHpPct: 'PV max',
+  maxManaPct: 'Mana max',
+  atkPct: 'ATK',
+  defPct: 'DEF',
+  armorPct: 'Armure',
+  speedPct: 'Vitesse',
+  critChancePct: 'Chance critique',
+  magicCritChancePct: 'Chance critique magique',
+  critDamagePct: 'Degats critiques',
+  dodgeChancePct: 'Esquive',
+  dodgeChanceVsPhysicalPct: 'Esquive vs physique',
+  dodgeChanceConditionalPct: 'Esquive conditionnelle',
+  dodgeChanceScalingPct: 'Esquive scalable',
+  bonusCritChanceConditionalPct: 'Critique conditionnel',
+  blockChancePct: 'Parade',
+  manaRegenPct: 'Regen mana',
+  hpRegenPct: 'Regen PV',
+  healingDonePct: 'Soin prodigue',
+  healingSkillBonusPct: 'Puissance des soins',
+  healingReceivedPct: 'Soins recus',
+  lifestealPct: 'Vol de vie',
+  magicLifestealPct: 'Vol de vie magique',
+  healFromDamagePct: 'Soin sur degats',
+  manaCostReductionPct: 'Reduction cout mana',
+  cooldownReductionPct: 'Reduction cooldown',
+  damagePct: 'Degats',
+  skillDamagePct: 'Degats de competence',
+  basicAttackDamagePct: 'Degats attaque de base',
+  singleTargetDamagePct: 'Degats monocible',
+  singleTargetSkillDamagePct: 'Degats monocible de competence',
+  weaponDamagePct: 'Degats d arme',
+  damageIn1v1Pct: 'Degats en duel',
+  damageAfterSkillPct: 'Degats apres competence',
+  damageAfterCritPct: 'Degats apres critique',
+  damageAfterBeingHitPct: 'Degats apres avoir ete touche',
+  damageWhenActFirstPct: 'Degats en initiative',
+  damageWhileBuffedPct: 'Degats sous buff',
+  damageVsDebuffedPct: 'Degats sur cible affaiblie',
+  damageVsCursedPct: 'Degats sur cible maudite',
+  magicDamagePct: 'Degats magiques',
+  magicPenPct: 'Penetration magique',
+  armorPenPct: 'Penetration armure',
+  spellPowerPct: 'Puissance magique',
+  spellAccuracyPct: 'Precision magique',
+  accuracyPct: 'Precision',
+  damageVarianceReductionPct: 'Stabilite des degats',
+  spellStabilityPct: 'Stabilite des sorts',
+  supportSkillEffectivenessPct: 'Efficacite support',
+  buffEffectivenessPct: 'Efficacite des buffs',
+  buffDebuffDurationPct: 'Duree buff/debuff',
+  buffDurationPct: 'Duree des buffs',
+  positiveEffectivenessPct: 'Efficacite des effets positifs',
+  effectivenessPct: 'Efficacite globale',
+  shieldStrengthPct: 'Force des boucliers',
+  damageVsBossPct: 'Degats contre boss',
+  firstTurnDamagePct: 'Degats tour 1',
+  damageVsHighHpPct: 'Degats contre cible haute vie',
+  damageWhenHighHpPct: 'Degats avec PV eleves',
+  damageVsFullHpPct: 'Degats contre cible pleine vie',
+  damageWhenManaAbovePct: 'Degats avec mana eleve',
+  damageWhenBelowHpPct: 'Degats avec PV bas',
+  damageWhenLowHpPct: 'Degats avec PV bas',
+  damageVsLowHpPct: 'Degats contre cible basse vie',
+  damageScalingPerTurnPct: 'Degats par tour',
+  damageReductionAfterDodgePct: 'Reduction apres esquive',
+  damageReductionAfterSpellPct: 'Reduction apres sort',
+  damageTakenReductionPct: 'Reduction de degats',
+  damageTakenReductionWhenHighHpPct: 'Reduction avec PV eleves',
+  physicalDamageTakenReductionPct: 'Reduction physique',
+  physicalResistPct: 'Resistance physique',
+  magicResistPct: 'Resistance magique',
+  critDamageTakenReductionPct: 'Reduction degats critiques recus',
+  enemyCritChanceReductionPct: 'Reduction critique ennemi',
+  debuffResistPct: 'Resistance debuffs',
+  slowResistPct: 'Resistance ralentissement',
+  interruptResistPct: 'Resistance interruption',
+}
+
+const TREE_DAMAGE_KEYS = new Set([
+  'damagePct',
+  'skillDamagePct',
+  'basicAttackDamagePct',
+  'singleTargetDamagePct',
+  'singleTargetSkillDamagePct',
+  'weaponDamagePct',
+  'damageIn1v1Pct',
+  'damageAfterSkillPct',
+  'damageAfterCritPct',
+  'damageWhenActFirstPct',
+  'damageWhileBuffedPct',
+  'damageVsDebuffedPct',
+  'damageVsCursedPct',
+  'magicDamagePct',
+  'magicPenPct',
+  'armorPenPct',
+])
+
+const TREE_SUPPORT_KEYS = new Set([
+  'supportSkillEffectivenessPct',
+  'buffEffectivenessPct',
+  'buffDebuffDurationPct',
+  'buffDurationPct',
+  'positiveEffectivenessPct',
+  'effectivenessPct',
+  'spellStabilityPct',
+  'damageVarianceReductionPct',
+])
+
+const TREE_DEFENSIVE_KEYS = new Set([
+  'damageReductionAfterDodgePct',
+  'damageReductionAfterSpellPct',
+  'damageTakenReductionPct',
+  'damageTakenReductionWhenHighHpPct',
+  'physicalDamageTakenReductionPct',
+  'physicalResistPct',
+  'magicResistPct',
+  'critDamageTakenReductionPct',
+  'enemyCritChanceReductionPct',
+  'debuffResistPct',
+  'slowResistPct',
+  'interruptResistPct',
+])
+
+function normalizeLabel(value) {
+  return (value ?? '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+function passiveTreeForClass(classId) {
+  const aliases = TREE_CLASS_ALIASES[classId] ?? [classId]
+  for (const entry of skilltreeData?.passiveTrees ?? []) {
+    const normalized = normalizeLabel(entry.class)
+    if (aliases.some((alias) => normalized.includes(normalizeLabel(alias)))) {
+      return entry
+    }
+  }
+  return null
+}
+
+function addBonus(out, key, value) {
+  if (!value) {
+    return
+  }
+  out[key] = (out[key] ?? 0) + value
+}
+
+function percent(value) {
+  return (Number(value) || 0) / 100
+}
+
+function formatPct(value) {
+  const pct = Math.abs(value) * 100
+  const rounded = Number.parseFloat(pct.toFixed(1))
+  return Number.isInteger(rounded) ? `${rounded}` : `${rounded}`
+}
+
+function formatRawPercent(value) {
+  const rounded = Number.parseFloat(Math.abs(value).toFixed(1))
+  return Number.isInteger(rounded) ? `${rounded}` : `${rounded}`
+}
+
+function formatSignedPercent(value) {
+  return `${value >= 0 ? '+' : '-'}${formatRawPercent(value)}%`
+}
+
+function effectSuffix(key, effect) {
+  if (key === 'firstTurnDamagePct') {
+    return ' (tour 1 uniquement)'
+  }
+  if (
+    key === 'damageAfterSkillPct' ||
+    key === 'damageAfterCritPct' ||
+    key === 'damageAfterBeingHitPct' ||
+    key === 'damageReductionAfterDodgePct' ||
+    key === 'damageReductionAfterSpellPct'
+  ) {
+    const turns = Math.max(1, Math.round(effect.durationTurns ?? 1))
+    return ` (${turns} tour${turns > 1 ? 's' : ''})`
+  }
+  if (key === 'damageScalingPerTurnPct') {
+    const maxTurns = Math.max(1, Math.round(effect.maxTurns ?? 3))
+    return ` (cumul max ${maxTurns} tours)`
+  }
+  if (key === 'damageVsLowHpPct') {
+    return ` (cible <= ${Math.round(effect.threshold ?? 50)}% PV)`
+  }
+  if (key === 'damageVsHighHpPct' || key === 'damageVsFullHpPct') {
+    return ` (cible >= ${Math.round(effect.threshold ?? 70)}% PV)`
+  }
+  if (key === 'damageWhenLowHpPct' || key === 'damageWhenBelowHpPct') {
+    return ` (si PV <= ${Math.round(effect.threshold ?? 50)}%)`
+  }
+  if (key === 'damageWhenHighHpPct') {
+    return ` (si PV >= ${Math.round(effect.threshold ?? 70)}%)`
+  }
+  if (key === 'damageWhenManaAbovePct') {
+    return ` (si mana >= ${Math.round(effect.threshold ?? 50)}%)`
+  }
+  if (key === 'dodgeChanceConditionalPct' || key === 'bonusCritChanceConditionalPct') {
+    if (effect.condition === 'mana_above_pct') {
+      return ` (si mana >= ${Math.round(effect.value ?? 50)}%)`
+    }
+    if (effect.condition === 'advantage_state') {
+      return ' (si la cible est deja sous un etat)'
+    }
+  }
+  if (key === 'dodgeChanceScalingPct') {
+    const maxPct = Math.round(effect.maxPct ?? effect[key] ?? 0)
+    const scaleStep = Math.round(effect.scalesPerMissingHpPct ?? 50)
+    return ` (max +${maxPct}%, tous les ${scaleStep}% PV manquants)`
+  }
+  return ''
+}
+
+function toSentenceCaseLabel(key) {
+  if (TREE_EFFECT_LABELS[key]) {
+    return TREE_EFFECT_LABELS[key]
+  }
+  const plain = key.replace(/Pct$/g, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  return plain.charAt(0).toUpperCase() + plain.slice(1).toLowerCase()
+}
+
+function describeTreeEffect(effect = {}) {
+  const lines = []
+  for (const [key, rawValue] of Object.entries(effect)) {
+    if (TREE_EFFECT_META_KEYS.has(key)) {
+      continue
+    }
+    if (typeof rawValue !== 'number') {
+      continue
+    }
+    const label = toSentenceCaseLabel(key)
+    const text = `${label} ${formatSignedPercent(rawValue)}${effectSuffix(key, effect)}`
+    lines.push(text)
+  }
+  return lines
+}
+
+function rebalanceEffectValue(rawValue, multiplier) {
+  if (typeof rawValue !== 'number') {
+    return rawValue
+  }
+  const scaled = rawValue * multiplier
+  const rounded = Number.parseFloat(scaled.toFixed(1))
+  return rounded
+}
+
+function rebalanceTreeEffect(effect = {}, branchId, isMajor) {
+  const branchMultiplier = TREE_BRANCH_REBALANCE[branchId] ?? 1
+  const multiplier = branchMultiplier * (isMajor ? TREE_MAJOR_MULTIPLIER : 1)
+  if (multiplier === 1) {
+    return { ...effect }
+  }
+
+  const tuned = {}
+  for (const [key, rawValue] of Object.entries(effect)) {
+    if (typeof rawValue !== 'number') {
+      tuned[key] = rawValue
+      continue
+    }
+    if (TREE_EFFECT_NOT_SCALABLE.has(key)) {
+      tuned[key] = rawValue
+      continue
+    }
+    tuned[key] = rebalanceEffectValue(rawValue, multiplier)
+  }
+  return tuned
+}
+
+function mapTreeEffectToBonuses(effect = {}) {
+  const out = {}
+
+  for (const [key, rawValue] of Object.entries(effect)) {
+    if (typeof rawValue !== 'number') {
+      continue
+    }
+    const value = Number(rawValue)
+    const scaled = percent(value)
+
+    if (key === 'maxHpPct') {
+      addBonus(out, 'maxHpPercent', scaled)
+      continue
+    }
+    if (key === 'maxManaPct') {
+      addBonus(out, 'maxManaPercent', scaled)
+      continue
+    }
+    if (key === 'atkPct') {
+      addBonus(out, 'attackPercent', scaled)
+      continue
+    }
+    if (key === 'defPct' || key === 'armorPct') {
+      addBonus(out, 'defensePercent', scaled)
+      continue
+    }
+    if (key === 'speedPct') {
+      addBonus(out, 'speedPercent', scaled)
+      continue
+    }
+    if (key === 'critChancePct' || key === 'magicCritChancePct' || key === 'bonusCritChanceConditionalPct') {
+      addBonus(out, 'critChanceFlat', scaled)
+      continue
+    }
+    if (key === 'critDamagePct') {
+      addBonus(out, 'critDamageFlat', scaled)
+      continue
+    }
+    if (key === 'dodgeChancePct' || key === 'dodgeChanceConditionalPct' || key === 'dodgeChanceVsPhysicalPct') {
+      addBonus(out, 'dodgeChanceFlat', scaled)
+      continue
+    }
+    if (key === 'blockChancePct') {
+      addBonus(out, 'parryChanceFlat', scaled)
+      continue
+    }
+    if (key === 'manaRegenPct') {
+      addBonus(out, 'manaRegenFlat', Math.max(1, Math.round(value / 2)))
+      continue
+    }
+    if (key === 'hpRegenPct') {
+      addBonus(out, 'lifeRegenFlat', Math.max(1, Math.round(value / 2)))
+      continue
+    }
+    if (key === 'healingDonePct' || key === 'healingSkillBonusPct') {
+      addBonus(out, 'healingDonePercent', scaled)
+      continue
+    }
+    if (key === 'healingReceivedPct') {
+      addBonus(out, 'healingTakenPercent', scaled)
+      continue
+    }
+    if (key === 'lifestealPct' || key === 'magicLifestealPct' || key === 'healFromDamagePct') {
+      addBonus(out, 'lifeStealPercent', scaled)
+      continue
+    }
+    if (key === 'manaCostReductionPct') {
+      addBonus(out, 'manaCostReductionPercent', scaled)
+      continue
+    }
+    if (key === 'cooldownReductionPct') {
+      addBonus(out, 'cooldownReductionPercent', scaled)
+      continue
+    }
+    if (key === 'damageVsBossPct') {
+      addBonus(out, 'bossDamagePercent', scaled)
+      continue
+    }
+    if (key === 'damageVsHighHpPct' || key === 'damageWhenHighHpPct' || key === 'damageVsFullHpPct' || key === 'firstTurnDamagePct') {
+      addBonus(out, 'highHpDamagePercent', scaled)
+      continue
+    }
+    if (key === 'damageWhenManaAbovePct') {
+      addBonus(out, 'highManaDamagePercent', scaled)
+      continue
+    }
+    if (key === 'damageWhenBelowHpPct' || key === 'damageWhenLowHpPct' || key === 'damageVsLowHpPct') {
+      addBonus(out, 'lowHpDamagePercent', scaled)
+      continue
+    }
+    if (TREE_DEFENSIVE_KEYS.has(key)) {
+      const reductionScale = key === 'damageTakenReductionWhenHighHpPct' ? 0.85 : 0.72
+      addBonus(out, 'damageReductionPercent', scaled * reductionScale)
+      addBonus(out, 'statusResistFlat', scaled * 0.45)
+      continue
+    }
+    if (key === 'dodgeChanceScalingPct') {
+      addBonus(out, 'dodgeChanceFlat', scaled * 0.75)
+      continue
+    }
+    if (key === 'shieldStrengthPct') {
+      addBonus(out, 'defensePercent', scaled * 0.72)
+      continue
+    }
+    if (key === 'spellPowerPct') {
+      addBonus(out, 'spellPowerPercent', scaled)
+      continue
+    }
+    if (key === 'damageScalingPerTurnPct' || key === 'damageAfterBeingHitPct') {
+      addBonus(out, 'damagePercent', scaled * 0.7)
+      continue
+    }
+    if (key === 'spellAccuracyPct' || key === 'accuracyPct') {
+      addBonus(out, 'damagePercent', scaled * 0.65)
+      addBonus(out, 'critChanceFlat', scaled * 0.35)
+      continue
+    }
+    if (TREE_SUPPORT_KEYS.has(key)) {
+      addBonus(out, 'damagePercent', scaled * 0.55)
+      addBonus(out, 'healingDonePercent', scaled * 0.55)
+      addBonus(out, 'damageReductionPercent', scaled * 0.35)
+      continue
+    }
+    if (TREE_DAMAGE_KEYS.has(key)) {
+      addBonus(out, 'damagePercent', scaled)
+      continue
+    }
+  }
+
+  if (!Object.keys(out).length) {
+    out.damagePercent = 0.01
+  }
+  return out
+}
+
+function summarizeBonusesLines(bonuses) {
+  const lines = []
+  if (bonuses.maxHpPercent) {
+    lines.push(`PV max +${formatPct(bonuses.maxHpPercent)}%`)
+  }
+  if (bonuses.maxManaPercent) {
+    lines.push(`Mana max +${formatPct(bonuses.maxManaPercent)}%`)
+  }
+  if (bonuses.attackPercent) {
+    lines.push(`ATK +${formatPct(bonuses.attackPercent)}%`)
+  }
+  if (bonuses.defensePercent) {
+    lines.push(`DEF +${formatPct(bonuses.defensePercent)}%`)
+  }
+  if (bonuses.speedPercent) {
+    lines.push(`Vitesse +${formatPct(bonuses.speedPercent)}%`)
+  }
+  if (bonuses.critChanceFlat) {
+    lines.push(`Critique +${formatPct(bonuses.critChanceFlat)}%`)
+  }
+  if (bonuses.critDamageFlat) {
+    lines.push(`Degats critiques +${formatPct(bonuses.critDamageFlat)}%`)
+  }
+  if (bonuses.dodgeChanceFlat) {
+    lines.push(`Esquive +${formatPct(bonuses.dodgeChanceFlat)}%`)
+  }
+  if (bonuses.parryChanceFlat) {
+    lines.push(`Parade +${formatPct(bonuses.parryChanceFlat)}%`)
+  }
+  if (bonuses.statusResistFlat) {
+    lines.push(`Resistance aux etats +${formatPct(bonuses.statusResistFlat)}%`)
+  }
+  if (bonuses.damagePercent) {
+    lines.push(`Degats +${formatPct(bonuses.damagePercent)}%`)
+  }
+  if (bonuses.bossDamagePercent) {
+    lines.push(`Degats boss +${formatPct(bonuses.bossDamagePercent)}%`)
+  }
+  if (bonuses.highHpDamagePercent) {
+    lines.push(`Degats (haute vie) +${formatPct(bonuses.highHpDamagePercent)}%`)
+  }
+  if (bonuses.lowHpDamagePercent) {
+    lines.push(`Degats (basse vie) +${formatPct(bonuses.lowHpDamagePercent)}%`)
+  }
+  if (bonuses.highManaDamagePercent) {
+    lines.push(`Degats (mana eleve) +${formatPct(bonuses.highManaDamagePercent)}%`)
+  }
+  if (bonuses.manaRegenFlat) {
+    lines.push(`Regen mana +${bonuses.manaRegenFlat}`)
+  }
+  if (bonuses.lifeRegenFlat) {
+    lines.push(`Regen PV +${bonuses.lifeRegenFlat}`)
+  }
+  if (bonuses.healingDonePercent) {
+    lines.push(`Soins prodigues +${formatPct(bonuses.healingDonePercent)}%`)
+  }
+  if (bonuses.healingTakenPercent) {
+    lines.push(`Soins recus +${formatPct(bonuses.healingTakenPercent)}%`)
+  }
+  if (bonuses.lifeStealPercent) {
+    lines.push(`Vol de vie +${formatPct(bonuses.lifeStealPercent)}%`)
+  }
+  if (bonuses.manaCostReductionPercent) {
+    lines.push(`Cout mana -${formatPct(bonuses.manaCostReductionPercent)}%`)
+  }
+  if (bonuses.cooldownReductionPercent) {
+    lines.push(`Cooldown -${formatPct(bonuses.cooldownReductionPercent)}%`)
+  }
+  if (bonuses.damageReductionPercent) {
+    lines.push(`Reduction des degats +${formatPct(bonuses.damageReductionPercent)}%`)
+  }
+  if (bonuses.spellPowerPercent) {
+    lines.push(`Puissance magique +${formatPct(bonuses.spellPowerPercent)}%`)
+  }
+  if (bonuses.gatherBonus) {
+    lines.push(`Recolte +${formatPct(bonuses.gatherBonus)}%`)
+  }
+  return lines
+}
+
+function summarizeBonuses(bonuses) {
+  return summarizeBonusesLines(bonuses).join(' | ')
+}
+
+function buildPassiveTree(classId, fallbackPassives) {
+  const tree = passiveTreeForClass(classId)
+  if (!tree?.branches?.length) {
+    return {
+      branches: [],
+      passives: fallbackPassives,
+    }
+  }
+
+  const branches = tree.branches.map((branch) => {
+    let previousPassive = null
+    const passives = (branch.passives ?? []).map((node, index) => {
+      const isMajor = node.tier === 'major'
+      const tunedEffect = rebalanceTreeEffect(node.effect ?? {}, branch.id, isMajor)
+      const bonuses = mapTreeEffectToBonuses(tunedEffect)
+      const statLines = summarizeBonusesLines(bonuses)
+      const effectLines = describeTreeEffect(tunedEffect)
+      const passive = {
+        id: node.id,
+        tier: isMajor ? 9 : index + 1,
+        name: node.name,
+        description: summarizeBonuses(bonuses) || branch.description || 'Bonus passif.',
+        requires: previousPassive?.id ?? null,
+        requiresName: previousPassive?.name ?? null,
+        bonuses,
+        effectLines,
+        statLines,
+        tunedEffect,
+        branchId: branch.id,
+        branchName: branch.name,
+        isMajor,
+      }
+      previousPassive = passive
+      return passive
+    })
+    return {
+      id: branch.id,
+      name: branch.name,
+      description: branch.description,
+      passives,
+    }
+  })
+
+  return {
+    branches,
+    passives: branches.flatMap((branch) => branch.passives),
+  }
+}
+
 export const CLASS_DEFINITIONS = RAW_CLASS_DEFINITIONS.map((entry) => {
   const innate = CLASS_INNATE_PASSIVES[entry.id]
+  const passiveTree = buildPassiveTree(entry.id, entry.passives ?? [])
   return {
     ...entry,
     baseStats: {
@@ -981,6 +1509,8 @@ export const CLASS_DEFINITIONS = RAW_CLASS_DEFINITIONS.map((entry) => {
       ...entry.baseStats,
     },
     innatePassive: innate,
+    passiveTree: passiveTree.branches,
+    passives: passiveTree.passives,
     skills: entry.skills.map((skill) => ({
       ...skill,
       ...SKILL_STATUS_AUGMENTS[skill.id],
@@ -998,3 +1528,7 @@ export function getClassSkillById(classId, skillId) {
   const selectedClass = pickClass(classId)
   return selectedClass.skills.find((skill) => skill.id === skillId) ?? null
 }
+
+
+
+
