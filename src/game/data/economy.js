@@ -161,21 +161,21 @@ export const CONSUMABLES_SHOP = [
   {
     id: 'shop_potion',
     name: 'Potion majeure de sante',
-    price: 45,
+    price: 54,
     effect: 'heal_80',
     description: 'Rend 80 PV.',
   },
   {
     id: 'shop_mana',
     name: 'Elixir de mana',
-    price: 40,
+    price: 48,
     effect: 'mana_60',
     description: 'Rend 60 mana.',
   },
   {
     id: 'shop_resist_tonic',
     name: 'Tonique de resistance',
-    price: 62,
+    price: 75,
     effect: 'buff_resistance',
     description: 'Augmente la DEF de 24% pendant 3 tours.',
     stock: 2,
@@ -183,14 +183,14 @@ export const CONSUMABLES_SHOP = [
   {
     id: 'shop_fury_draft',
     name: 'Fiole de furie',
-    price: 64,
+    price: 77,
     effect: 'buff_damage',
     description: 'Augmente les degats de 24% pendant 3 tours.',
   },
   {
     id: 'shop_focus_oil',
     name: 'Huile de focus',
-    price: 68,
+    price: 82,
     effect: 'buff_crit',
     description: 'Augmente Crit% et Crit DMG pendant 3 tours.',
     stock: 2,
@@ -198,14 +198,14 @@ export const CONSUMABLES_SHOP = [
   {
     id: 'shop_recovery_kit',
     name: 'Kit de recuperation',
-    price: 58,
+    price: 70,
     effect: 'heal_45_mana_35',
     description: 'Rend 45 PV et 35 mana.',
   },
   {
     id: 'shop_clarity_orb',
     name: 'Orbe de clarte',
-    price: 72,
+    price: 86,
     effect: 'cleanse_and_guard',
     description: 'Retire les debuffs et confere un bouclier.',
     stock: 1,
@@ -280,7 +280,6 @@ export const LOOT_BASES = {
 }
 
 export const EQUIPMENT_SLOTS = ['weapon', 'armor', 'trinket']
-
 
 
 

@@ -29,6 +29,8 @@ const PASSIVE_LIFESTEAL_MAX_RATIO = 0.3
 const PASSIVE_LIFESTEAL_EFFECTIVENESS = 0.55
 const PASSIVE_LIFESTEAL_HIT_CAP_MAX_HP_RATIO = 0.12
 const NON_BOSS_EQUIPMENT_DROP_CHANCE = 0.6
+const MYTHIC_RATE_REDUCTION = 0.95
+const CHEST_MYTHIC_CHANCE = 0.05
 const SELL_PRICE_FACTOR = 0.22
 const CRAFT_COST_MULTIPLIER = 1.4
 const PASSIVE_RESET_COST = 200
@@ -1052,7 +1054,7 @@ function rarityWeights(isBoss) {
       { value: 'rare', weight: 20 },
       { value: 'epic', weight: 16 },
       { value: 'legendary', weight: 16 },
-      { value: 'mythic', weight: 8 },
+      { value: 'mythic', weight: 8 * MYTHIC_RATE_REDUCTION },
     ]
   }
   return [
@@ -1195,14 +1197,14 @@ function applyRandomBonusesToItem(run, item) {
   return item
 }
 
-function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null }) {
+function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null, forcedRarity = null }) {
   const slot = weightedChoice([
     { value: 'weapon', weight: 44 },
     { value: 'armor', weight: 33 },
     { value: 'trinket', weight: 23 },
   ])
 
-  const rarity = rarityRoll({ isBoss, bias: rarityBias })
+  const rarity = forcedRarity ?? rarityRoll({ isBoss, bias: rarityBias })
   const base = pickLootBase(slot, rarity) ?? randomChoice(LOOT_BASES[slot])
   const difficulty = difficultyFor(run)
   const rarityData = RARITIES[rarity]
@@ -1244,8 +1246,16 @@ export function openNearbyChest(run) {
   chest.opened = true
   const map = currentMap(run)
   const lootCount = map.isSecret ? 2 : 1
-  const loots = Array.from({ length: lootCount }, () =>
-    buildLootItem({ run, isBoss: false, sourceName: 'Coffre', rarityBias: chest.rarityBias ?? null }),
+  const chestHasMythic = chance(CHEST_MYTHIC_CHANCE)
+  const mythicIndex = chestHasMythic ? randomInt(0, lootCount - 1) : -1
+  const loots = Array.from({ length: lootCount }, (_, index) =>
+    buildLootItem({
+      run,
+      isBoss: false,
+      sourceName: 'Coffre',
+      rarityBias: chest.rarityBias ?? null,
+      forcedRarity: index === mythicIndex ? 'mythic' : null,
+    }),
   )
   for (const item of loots) {
     addInventoryItem(run, item)

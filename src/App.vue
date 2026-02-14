@@ -81,6 +81,7 @@ const infoTimer = ref(null)
 const skillsModalOpen = ref(false)
 const passivesModalOpen = ref(false)
 const inventoryModalOpen = ref(false)
+const characteristicsModalOpen = ref(false)
 const riddleModal = ref(null)
 const riddleFeedbackModal = ref(null)
 const lootModal = ref(null)
@@ -109,6 +110,8 @@ const mapPlayerVisual = reactive({
 })
 const mapPlayerFrame = ref(0)
 const mapPlayerFrameTimer = ref(null)
+const npcDialogueText = ref('')
+const npcDialogueTimer = ref(null)
 
 const creation = reactive({
   name: 'Aelys',
@@ -122,6 +125,10 @@ const selectedClass = computed(() =>
   CLASS_DEFINITIONS.find((entry) => entry.id === creation.classId) ?? CLASS_DEFINITIONS[0],
 )
 const selectedClassInnate = computed(() => selectedClass.value?.innatePassive ?? null)
+const selectedClassSprite = computed(() => {
+  const source = selectedClass.value?.portrait ?? ''
+  return spriteSetForSource(source).idle || source
+})
 
 const activeMap = computed(() => (run.value ? currentMap(run.value) : null))
 const activeMapState = computed(() => (run.value ? currentMapState(run.value) : null))
@@ -134,6 +141,10 @@ const currentClass = computed(() => {
   return CLASS_DEFINITIONS.find((entry) => entry.id === run.value.player.classId) ?? null
 })
 const playerPortrait = computed(() => currentClass.value?.portrait ?? CLASS_DEFINITIONS[0]?.portrait ?? '')
+const playerIdleSprite = computed(() => {
+  const source = playerPortrait.value
+  return spriteSetForSource(source).idle || source
+})
 const skillCatalog = computed(() => currentClass.value?.skills ?? [])
 const passiveCatalog = computed(() => currentClass.value?.passives ?? [])
 const passiveBranches = computed(() => currentClass.value?.passiveTree ?? [])
@@ -203,6 +214,14 @@ const shouldEmphasizeEndTurn = computed(() => {
   const canAttack = normalAttackReady()
   const canUseSkill = unlockedPlayerSkills.value.some((skill) => skillReady(skill))
   return !canAttack && !canUseSkill
+})
+const npcDialogueSceneEnabled = computed(() => {
+  const role = currentNpc.value?.role ?? ''
+  return role !== 'merchant' && role !== 'craft'
+})
+const npcIdleSprite = computed(() => {
+  const source = currentNpc.value?.portrait ?? ''
+  return spriteSetForSource(source).idle || source
 })
 
 const INVENTORY_GROUP_DEFS = [
@@ -1199,7 +1218,7 @@ function startMusicTrack(trackRef, source, volume) {
     trackRef.value = audio
   }
   trackRef.value.volume = volume
-  void trackRef.value.play().catch(() => {})
+  void trackRef.value.play().catch(() => { })
 }
 
 function syncBackgroundMusic() {
@@ -1227,7 +1246,7 @@ function playCombatSound(pool, volume = 0.22) {
   try {
     const sound = new Audio(source)
     sound.volume = volume
-    void sound.play().catch(() => {})
+    void sound.play().catch(() => { })
   } catch {
     // Ignore sound failures (autoplay, format or permissions).
   }
@@ -1241,7 +1260,7 @@ function playUiSound(pool, volume = 0.24) {
   try {
     const sound = new Audio(source)
     sound.volume = volume
-    void sound.play().catch(() => {})
+    void sound.play().catch(() => { })
   } catch {
     // Ignore UI sound failures.
   }
@@ -1731,20 +1750,51 @@ watch(
   },
 )
 
+const OPEN_BACKPACK_SOUND = ['/assets/sounds/open_backpack.mp3']
+const NPC_DIALOG_SOUND = ['/assets/sounds/npc_dialog.mp3']
+
 watch(
-  () => [inventoryModalOpen.value, passivesModalOpen.value, skillsModalOpen.value, npcOpen.value, Boolean(riddleModal.value)],
+  () => [
+    inventoryModalOpen.value,
+    passivesModalOpen.value,
+    skillsModalOpen.value,
+    characteristicsModalOpen.value,
+    npcOpen.value,
+    Boolean(riddleModal.value),
+  ],
   (current, previous) => {
     if (!previous) {
       return
     }
-    const wasAnyOpen = previous.some(Boolean)
-    const isAnyOpen = current.some(Boolean)
-    if (isAnyOpen && !wasAnyOpen) {
-      playUiSound(UI_SOUND_BANK.uiOpen, 0.2)
-    } else if (!isAnyOpen && wasAnyOpen) {
-      playUiSound(UI_SOUND_BANK.uiClose, 0.2)
+    const inventoryChanged = current[0] !== previous[0]
+    const npcChanged = current[4] !== previous[4]
+    if (inventoryChanged) {
+      playUiSound(OPEN_BACKPACK_SOUND, 0.2)
+      return
+    }
+    if (npcChanged) {
+      playUiSound(NPC_DIALOG_SOUND, 0.2)
+      return
     }
   },
+)
+
+watch(
+  () => [npcOpen.value, currentNpc.value?.id, currentNpc.value?.dialogue, npcDialogueSceneEnabled.value],
+  ([isOpen, _id, dialogue, sceneEnabled]) => {
+    if (!isOpen) {
+      stopNpcDialogueAnimation()
+      npcDialogueText.value = ''
+      return
+    }
+    if (!sceneEnabled) {
+      stopNpcDialogueAnimation()
+      npcDialogueText.value = dialogue ?? ''
+      return
+    }
+    startNpcDialogueAnimation(dialogue ?? '')
+  },
+  { immediate: true },
 )
 
 watch(
@@ -1844,6 +1894,31 @@ const mapPlayerStripStyle = computed(() => {
     transform: `translateX(-${frame * (100 / frames)}%)`,
   }
 })
+
+const uiSpriteFrames = reactive({})
+
+function uiSpriteFrameCount(source, fallbackFrames = 4) {
+  if (!source) {
+    return 1
+  }
+  if (uiSpriteFrames[source]) {
+    return uiSpriteFrames[source]
+  }
+  uiSpriteFrames[source] = Math.max(1, fallbackFrames)
+  loadSpriteMeta(source).then((meta) => {
+    uiSpriteFrames[source] = Math.max(1, meta.frames || fallbackFrames)
+  })
+  return uiSpriteFrames[source]
+}
+
+function animatedSpriteStripStyle(source, fallbackFrames = 4, pace = 1) {
+  const frames = Math.max(1, uiSpriteFrameCount(source, fallbackFrames))
+  const frame = Math.floor(mapAnimTick.value / Math.max(1, pace)) % frames
+  return {
+    width: `${frames * 100}%`,
+    transform: `translateX(-${frame * (100 / frames)}%)`,
+  }
+}
 
 function tileSpriteStripStyle(sprite) {
   const frames = Math.max(1, sprite?.frames ?? 1)
@@ -1983,16 +2058,38 @@ const mapCells = computed(() => {
 })
 
 function itemIcon(item) {
-  if (item.icon) {
-    return item.icon
+  if (!item) {
+    return '/assets/Icons/backpack.png'
   }
-  if (item.slot === 'armor') {
-    return '/assets/Weapons/Hands/Hands.png'
+  if (item.kind === 'consumable') {
+    if (item.effect === 'mana_60') {
+      return '/assets/Icons/mana_potion.png'
+    }
+    if (item.effect === 'heal_80' || item.effect === 'heal_45_mana_35') {
+      return '/assets/Icons/life_potion.png'
+    }
+    return '/assets/Icons/potion.png'
   }
-  if (item.slot === 'trinket') {
-    return '/assets/Weapons/Bone/Bone.png'
+  if (item.kind === 'equipment' && item.slot === 'weapon') {
+    if (item.weaponType === 'staff') {
+      return '/assets/Icons/staff.png'
+    }
+    if (item.weaponType === 'bow') {
+      return '/assets/Icons/archer.png'
+    }
+    const lowerName = (item.name ?? '').toLowerCase()
+    if (lowerName.includes('dague') || lowerName.includes('dagger')) {
+      return '/assets/Icons/dagger.png'
+    }
+    return '/assets/Icons/sword.png'
   }
-  return '/assets/Weapons/Wood/Wood.png'
+  if (item.kind === 'equipment' && item.slot === 'armor') {
+    return '/assets/Icons/armor.png'
+  }
+  if (item.kind === 'equipment' && item.slot === 'trinket') {
+    return '/assets/Icons/skills.png'
+  }
+  return item.icon || '/assets/Icons/backpack.png'
 }
 
 function rarityColor(rarity) {
@@ -2093,12 +2190,15 @@ function closeMetaModals() {
   inventoryModalOpen.value = false
   skillsModalOpen.value = false
   passivesModalOpen.value = false
+  characteristicsModalOpen.value = false
   riddleModal.value = null
   riddleFeedbackModal.value = null
   lootModal.value = null
   portalConfirmModal.value = null
   hoveredInventoryItemId.value = null
   inventoryTooltip.visible = false
+  stopNpcDialogueAnimation()
+  npcDialogueText.value = ''
   clearLootModalTimer()
 }
 
@@ -2371,6 +2471,31 @@ function clickCell(cell) {
   }
 }
 
+function stopNpcDialogueAnimation() {
+  if (npcDialogueTimer.value) {
+    window.clearInterval(npcDialogueTimer.value)
+    npcDialogueTimer.value = null
+  }
+}
+
+function startNpcDialogueAnimation(text) {
+  stopNpcDialogueAnimation()
+  const full = (text ?? '').toString()
+  npcDialogueText.value = ''
+  if (!full.length) {
+    return
+  }
+
+  let index = 0
+  npcDialogueTimer.value = window.setInterval(() => {
+    index += 1
+    npcDialogueText.value = full.slice(0, index)
+    if (index >= full.length) {
+      stopNpcDialogueAnimation()
+    }
+  }, 18)
+}
+
 function openNpcPanel() {
   if (!run.value) {
     return
@@ -2453,7 +2578,7 @@ function answerRiddle(optionId) {
     }
     if (result.portalOpened) {
       playUiSound(UI_SOUND_BANK.portal_spawned, 0.3)
-    } 
+    }
     // else {
     //   playUiSound(UI_SOUND_BANK.uiConfirm, 0.24)
     // }
@@ -2613,6 +2738,8 @@ function equipAction(itemId) {
   const result = equipItem(run.value, itemId)
   if (!result.ok) {
     setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.uiConfirm, 0.22)
   }
   persistRun()
 }
@@ -2624,6 +2751,8 @@ function unequipAction(slot) {
   const result = unequipItem(run.value, slot)
   if (!result.ok) {
     setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.uiConfirm, 0.22)
   }
   persistRun()
 }
@@ -2759,16 +2888,20 @@ function keyHandler(event) {
     return
   }
   if (!run.value.combat) {
-    if (key === 'arrowup' || key === 'w') {
+    if (key === 'arrowup' || key === 'z') {
+      event.preventDefault()
       handleMove(0, -1)
     }
     if (key === 'arrowdown' || key === 's') {
+      event.preventDefault()
       handleMove(0, 1)
     }
-    if (key === 'arrowleft' || key === 'a') {
+    if (key === 'arrowleft' || key === 'q') {
+      event.preventDefault()
       handleMove(-1, 0)
     }
     if (key === 'arrowright' || key === 'd') {
+      event.preventDefault()
       handleMove(1, 0)
     }
     if (key === 'e') {
@@ -2794,6 +2927,7 @@ function keyHandler(event) {
     attemptFleeAction()
   }
   if (key === ' ') {
+    event.preventDefault()
     endTurnAction()
   }
   if (['1', '2', '3', '4', '5'].includes(key)) {
@@ -2844,6 +2978,7 @@ onBeforeUnmount(() => {
     window.clearInterval(mapPlayerFrameTimer.value)
     mapPlayerFrameTimer.value = null
   }
+  stopNpcDialogueAnimation()
   clearLootModalTimer()
 })
 </script>
@@ -2887,7 +3022,10 @@ onBeforeUnmount(() => {
           </label>
 
           <div class="class-preview">
-            <img :src="selectedClass.portrait" alt="portrait classe" />
+            <div class="animated-avatar class-preview-avatar">
+              <img class="animated-avatar-strip" :src="selectedClassSprite" alt="classe"
+                :style="animatedSpriteStripStyle(selectedClassSprite, 4, 1)" />
+            </div>
             <div>
               <strong>{{ selectedClass.name }}</strong>
               <p>{{ selectedClass.intro }}</p>
@@ -2926,9 +3064,15 @@ onBeforeUnmount(() => {
           <p>Mode {{ run.metadata.difficulty }} | Niveau {{ run.player.level }}</p>
         </div>
         <div class="hud-stats">
-          <span>PV {{ run.player.hp }} / {{ stats.maxHp }}</span>
+          <span class="hud-stat-pv">
+            <img src="/assets/Icons/heart.png" alt="" class="hud-stat-icon" />
+            PV {{ run.player.hp }} / {{ stats.maxHp }}
+          </span>
           <span>Mana {{ run.player.mana }} / {{ stats.maxMana }}</span>
-          <span>Or {{ run.player.gold }}</span>
+          <span class="hud-stat-gold">
+            <img src="/assets/Icons/gold_coin.png" alt="" class="hud-stat-icon" />
+            Or {{ run.player.gold }}
+          </span>
           <span>XP {{ run.player.xp }} / {{ run.player.nextXp }}</span>
           <span>Points passifs {{ run.player.passivePoints }}</span>
         </div>
@@ -2944,16 +3088,11 @@ onBeforeUnmount(() => {
             <span>Passifs</span>
             <span v-if="passivePointBadge > 0" class="new-badge">{{ passivePointBadge }}</span>
           </button>
+          <button class="hud-icon-btn" @click="characteristicsModalOpen = true">
+            <img src="/assets/Icons/armor.png" alt="" />
+            <span>Caracteristiques</span>
+          </button>
         </div>
-        <section class="hud-characteristics">
-          <h3>Caracteristiques</h3>
-          <div class="characteristics-grid">
-            <div v-for="entry in characterStatRows" :key="entry.id" class="char-item">
-              <span>{{ entry.label }}</span>
-              <strong>{{ entry.value }}</strong>
-            </div>
-          </div>
-        </section>
       </header>
 
       <p v-if="infoMessage" class="info-msg">{{ infoMessage }}</p>
@@ -2967,20 +3106,24 @@ onBeforeUnmount(() => {
 
           <div class="map-grid-shell" :style="mapGridStyle">
             <div ref="mapGridRef" class="map-grid" :style="mapGridStyle">
-              <button
-                v-for="cell in mapCells"
-                :key="cell.id"
-                class="tile-btn"
-                :class="cellClass(cell)"
-                @click="clickCell(cell)"
-              >
+              <button v-for="cell in mapCells" :key="cell.id" class="tile-btn" :class="cellClass(cell)"
+                @click="clickCell(cell)">
                 <div v-if="cellIcon(cell)" class="tile-sprite" :class="cell.sprite?.className">
-                  <img class="tile-sprite-strip" :src="cellIcon(cell)" alt="sprite case" :style="tileSpriteStripStyle(cell.sprite)" />
+                  <img class="tile-sprite-strip" :src="cellIcon(cell)" alt="sprite case"
+                    :style="tileSpriteStripStyle(cell.sprite)" />
                 </div>
                 <span v-else class="tile-symbol">{{ cellLabel(cell) }}</span>
               </button>
             </div>
-            <div class="map-player-token" :class="{ walking: mapPlayerVisual.walking }" :style="mapPlayerStyle">
+            <div
+              class="map-player-token"
+              :class="{
+                walking: mapPlayerVisual.walking,
+                druid: run.player.classId === 'druid',
+                warrior: run.player.classId === 'warrior',
+              }"
+              :style="mapPlayerStyle"
+            >
               <div class="tile-sprite player-sprite">
                 <img class="tile-sprite-strip" :src="mapPlayerSpriteSource" alt="joueur" :style="mapPlayerStripStyle" />
               </div>
@@ -2988,29 +3131,26 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="legend">
-            <span>Joueur, ennemis et PNJ: sprites animes</span>
-            <span>Coffres: sprite anime</span>
             <span class="legend-secret">Portail Violet = Salle secrete</span>
             <span class="legend-exit">Portail Bleu = Nouvelle zone</span>
             <span class="legend-return">Portail Rose = Salle precedente</span>
           </div>
+          <div class="legend-keys">
+            <span><kbd>Z</kbd> Haut</span>
+            <span><kbd>S</kbd> Bas</span>
+            <span><kbd>Q</kbd> Gauche</span>
+            <span><kbd>D</kbd> Droite</span>
+          </div>
 
           <div class="controls">
-            <div class="dir-grid">
-              <button @click="handleMove(0, -1)">Haut</button>
-              <div></div>
-              <button @click="handleMove(-1, 0)">Gauche</button>
-              <button @click="handleMove(1, 0)">Droite</button>
-              <div></div>
-              <button @click="handleMove(0, 1)">Bas</button>
-            </div>
             <button @click="openNpcPanel">Interagir PNJ (E)</button>
             <button @click="harvestAction">Recolter (F)</button>
             <button @click="openChestAction">Ouvrir coffre (C)</button>
           </div>
 
           <div class="quick-status">
-            <p v-if="currentResource">Ressource proche: {{ currentResource.type }} ({{ currentResource.charges }} charges)</p>
+            <p v-if="currentResource">Ressource proche: {{ currentResource.type }} ({{ currentResource.charges }}
+              charges)</p>
             <p v-if="currentChest">Coffre proche detecte.</p>
           </div>
         </article>
@@ -3027,8 +3167,10 @@ onBeforeUnmount(() => {
                   <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">
                     {{ run.player.equipment.weapon.name }}
                   </strong>
-                  <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0 }}</p>
-                  <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{ bonus }}</p>
+                  <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0
+                    }}</p>
+                  <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{ bonus
+                    }}</p>
                   <button @click="unequipAction('weapon')">Retirer</button>
                 </div>
               </div>
@@ -3043,8 +3185,10 @@ onBeforeUnmount(() => {
                   <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">
                     {{ run.player.equipment.armor.name }}
                   </strong>
-                  <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0 }}</p>
-                  <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus }}</p>
+                  <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0 }}
+                  </p>
+                  <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus
+                    }}</p>
                   <button @click="unequipAction('armor')">Retirer</button>
                 </div>
               </div>
@@ -3059,8 +3203,10 @@ onBeforeUnmount(() => {
                   <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">
                     {{ run.player.equipment.trinket.name }}
                   </strong>
-                  <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ?? 0 }}</p>
-                  <p v-for="bonus in itemAffixes(run.player.equipment.trinket)" :key="bonus" class="item-affix">{{ bonus }}</p>
+                  <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ?? 0
+                    }}</p>
+                  <p v-for="bonus in itemAffixes(run.player.equipment.trinket)" :key="bonus" class="item-affix">{{ bonus
+                    }}</p>
                   <button @click="unequipAction('trinket')">Retirer</button>
                 </div>
               </div>
@@ -3130,11 +3276,13 @@ onBeforeUnmount(() => {
                   <button :disabled="!normalAttackReady()" @click="useNormalAttack">
                     Attaque normale (2 PA)
                   </button>
-                  <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%) (V)</button>
+                  <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%)
+                    (V)</button>
                   <button
                     :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
                     :disabled="run.combat.actor !== 'player'"
-                    @click="endTurnAction"
+                    type="button"
+                    @click.prevent="endTurnAction"
                   >
                     Terminer le tour (Espace)
                   </button>
@@ -3145,12 +3293,8 @@ onBeforeUnmount(() => {
                   Competences
                 </h3>
                 <div class="skills-grid">
-                  <button
-                    v-for="(skill, index) in unlockedPlayerSkills"
-                    :key="skill.id"
-                    :disabled="!skillReady(skill)"
-                    @click="useSkillAction(skill.id)"
-                  >
+                  <button v-for="(skill, index) in unlockedPlayerSkills" :key="skill.id" :disabled="!skillReady(skill)"
+                    @click="useSkillAction(skill.id)">
                     {{ index + 1 }}. {{ skill.name }}
                     <small>
                       {{ skill.description }}
@@ -3165,27 +3309,18 @@ onBeforeUnmount(() => {
                   Inventaire combat
                 </h3>
                 <div class="consumable-tabs">
-                  <button
-                    v-for="group in combatConsumableGroups"
-                    :key="`combat-consumable-tab-${group.id}`"
-                    class="consumable-tab"
-                    :class="{ active: combatActiveConsumableGroup?.id === group.id }"
-                    @click="selectCombatConsumableTab(group.id)"
-                  >
+                  <button v-for="group in combatConsumableGroups" :key="`combat-consumable-tab-${group.id}`"
+                    class="consumable-tab" :class="{ active: combatActiveConsumableGroup?.id === group.id }"
+                    @click="selectCombatConsumableTab(group.id)">
                     <img :src="group.icon" alt="" />
                     <span>{{ group.label }}</span>
                     <small>{{ group.items.length }}</small>
                   </button>
                 </div>
                 <div class="potions-grid">
-                  <button
-                    v-for="item in combatActiveConsumableGroup?.items ?? []"
-                    :key="item.id"
-                    :disabled="!canUseConsumable(item)"
-                    :title="consumableDisableReason(item)"
-                    @click="consumeItem(item.id)"
-                    @mouseenter="markInventoryItemSeen(item.id)"
-                  >
+                  <button v-for="item in combatActiveConsumableGroup?.items ?? []" :key="item.id"
+                    :disabled="!canUseConsumable(item)" :title="consumableDisableReason(item)"
+                    @click="consumeItem(item.id)" @mouseenter="markInventoryItemSeen(item.id)">
                     <span>{{ item.name }} x{{ item.quantity }}</span>
                     <small>{{ consumableGroupLabel(item.effect) }}</small>
                   </button>
@@ -3209,18 +3344,10 @@ onBeforeUnmount(() => {
                   {{ combatOutro.result === 'victory' ? 'Victoire' : 'Defaite' }}
                 </div>
 
-                <div
-                  v-if="combatProjectile.active"
-                  :key="`projectile-${combatProjectile.tick}`"
-                  class="battle-projectile"
-                  :class="`from-${combatProjectile.from}`"
-                ></div>
-                <div
-                  v-if="combatImpact.active"
-                  :key="`impact-${combatImpact.tick}`"
-                  class="battle-impact"
-                  :class="`on-${combatImpact.side}`"
-                ></div>
+                <div v-if="combatProjectile.active" :key="`projectile-${combatProjectile.tick}`"
+                  class="battle-projectile" :class="`from-${combatProjectile.from}`"></div>
+                <div v-if="combatImpact.active" :key="`impact-${combatImpact.tick}`" class="battle-impact"
+                  :class="`on-${combatImpact.side}`"></div>
 
                 <div class="battle-unit player" :class="{ active: run.combat?.actor === 'player' }">
                   <div class="battle-unit-hud">
@@ -3245,21 +3372,14 @@ onBeforeUnmount(() => {
                   </div>
 
                   <div class="battle-actor player" :data-state="combatPlayerState">
-                    <div class="battle-sprite-frame" :style="[battleSpriteViewportStyle('player'), battleSpriteTransformStyle('player')]">
-                      <img
-                        class="battle-sprite-strip"
-                        :src="combatSpriteMeta.player.src || playerPortrait"
-                        alt="sprite joueur"
-                        :style="battleSpriteStripStyle('player')"
-                      />
+                    <div class="battle-sprite-frame"
+                      :style="[battleSpriteViewportStyle('player'), battleSpriteTransformStyle('player')]">
+                      <img class="battle-sprite-strip" :src="combatSpriteMeta.player.src || playerPortrait"
+                        alt="sprite joueur" :style="battleSpriteStripStyle('player')" />
                     </div>
                     <div class="battle-popups">
-                      <span
-                        v-for="popup in combatPopups.player"
-                        :key="popup.id"
-                        class="battle-popup"
-                        :class="popup.kind"
-                      >
+                      <span v-for="popup in combatPopups.player" :key="popup.id" class="battle-popup"
+                        :class="popup.kind">
                         {{ popup.label }}
                       </span>
                     </div>
@@ -3289,26 +3409,21 @@ onBeforeUnmount(() => {
                     </div>
                     <div class="battle-ap-spotlight enemy">
                       <img src="/assets/1x1/delapouite/attack-gauge.svg" alt="" />
-                      <p class="battle-ap-label">PA : {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap }}</p>
+                      <p class="battle-ap-label">PA : {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap
+                        }}</p>
                     </div>
                   </div>
 
                   <div class="battle-actor enemy" :data-state="combatEnemyState">
-                    <div class="battle-sprite-frame" :style="[battleSpriteViewportStyle('enemy'), battleSpriteTransformStyle('enemy')]">
-                      <img
-                        class="battle-sprite-strip"
-                        :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')"
-                        alt="sprite ennemi"
-                        :style="battleSpriteStripStyle('enemy')"
-                      />
+                    <div class="battle-sprite-frame"
+                      :style="[battleSpriteViewportStyle('enemy'), battleSpriteTransformStyle('enemy')]">
+                      <img class="battle-sprite-strip"
+                        :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')" alt="sprite ennemi"
+                        :style="battleSpriteStripStyle('enemy')" />
                     </div>
                     <div class="battle-popups">
-                      <span
-                        v-for="popup in combatPopups.enemy"
-                        :key="popup.id"
-                        class="battle-popup"
-                        :class="popup.kind"
-                      >
+                      <span v-for="popup in combatPopups.enemy" :key="popup.id" class="battle-popup"
+                        :class="popup.kind">
                         {{ popup.label }}
                       </span>
                     </div>
@@ -3320,7 +3435,8 @@ onBeforeUnmount(() => {
             <section class="combat-log-panel">
               <h3>Journal du combat</h3>
               <ul>
-                <li v-for="(entry, index) in combatLogEntries" :key="`combat-${index}-${entry}`" :class="combatLogClasses(entry)">
+                <li v-for="(entry, index) in combatLogEntries" :key="`combat-${index}-${entry}`"
+                  :class="combatLogClasses(entry)">
                   {{ entry }}
                 </li>
               </ul>
@@ -3338,24 +3454,16 @@ onBeforeUnmount(() => {
             </h2>
             <div class="inventory-head-actions">
               <p>{{ run.player.inventory.length }} objet(s)</p>
-              <button
-                class="secondary"
-                :disabled="!(inventoryActiveGroup?.items?.length ?? 0)"
-                @click="sellAllFromActiveCategory"
-              >
+              <button class="secondary" :disabled="!(inventoryActiveGroup?.items?.length ?? 0)"
+                @click="sellAllFromActiveCategory">
                 Tout vendre
               </button>
             </div>
           </header>
           <div v-if="inventoryGroups.length" class="inventory-groups">
             <div class="inventory-tabs">
-              <button
-                v-for="group in inventoryGroups"
-                :key="`group-tab-${group.id}`"
-                class="inventory-tab"
-                :class="{ active: inventoryActiveGroup?.id === group.id }"
-                @click="selectInventoryTab(group.id)"
-              >
+              <button v-for="group in inventoryGroups" :key="`group-tab-${group.id}`" class="inventory-tab"
+                :class="{ active: inventoryActiveGroup?.id === group.id }" @click="selectInventoryTab(group.id)">
                 <img :src="group.icon" alt="" />
                 <span>{{ group.label }}</span>
                 <small>{{ group.items.length }}</small>
@@ -3369,15 +3477,10 @@ onBeforeUnmount(() => {
                 <small>({{ inventoryActiveGroup.items.length }})</small>
               </h3>
               <ul>
-                <li
-                  v-for="item in inventoryActiveGroup.items"
-                  :key="`modal-${inventoryActiveGroup.id}-${item.id}`"
-                  @mouseenter="showInventoryItemTooltip(item, $event)"
-                  @mousemove="moveInventoryItemTooltip($event)"
-                  @focusin="showInventoryItemTooltip(item, $event)"
-                  @mouseleave="hideInventoryItemTooltip"
-                  @focusout="hideInventoryItemTooltip"
-                >
+                <li v-for="item in inventoryActiveGroup.items" :key="`modal-${inventoryActiveGroup.id}-${item.id}`"
+                  @mouseenter="showInventoryItemTooltip(item, $event)" @mousemove="moveInventoryItemTooltip($event)"
+                  @focusin="showInventoryItemTooltip(item, $event)" @mouseleave="hideInventoryItemTooltip"
+                  @focusout="hideInventoryItemTooltip">
                   <img class="item-icon" :src="itemIcon(item)" alt="item" />
                   <div class="item-main">
                     <div class="item-name-row">
@@ -3393,12 +3496,8 @@ onBeforeUnmount(() => {
                     <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
                     <div class="row-actions">
                       <button v-if="item.kind === 'equipment'" @click="equipAction(item.id)">Equiper</button>
-                      <button
-                        v-if="item.kind === 'consumable'"
-                        :disabled="!canUseConsumable(item)"
-                        :title="consumableDisableReason(item)"
-                        @click="consumeItem(item.id)"
-                      >
+                      <button v-if="item.kind === 'consumable'" :disabled="!canUseConsumable(item)"
+                        :title="consumableDisableReason(item)" @click="consumeItem(item.id)">
                         Utiliser
                       </button>
                       <button @click="sellAction(item.id)">Vendre</button>
@@ -3406,11 +3505,8 @@ onBeforeUnmount(() => {
                   </div>
                 </li>
               </ul>
-              <div
-                v-if="inventoryTooltip.visible && hoveredInventoryItem?.kind === 'equipment'"
-                class="item-compare-tooltip floating"
-                :style="inventoryTooltipStyle"
-              >
+              <div v-if="inventoryTooltip.visible && hoveredInventoryItem?.kind === 'equipment'"
+                class="item-compare-tooltip floating" :style="inventoryTooltipStyle">
                 <p class="compare-title">Comparaison equipement</p>
                 <p class="compare-equipped-name">{{ equippedComparisonLabel(hoveredInventoryItem) }}</p>
                 <div class="compare-head">
@@ -3419,7 +3515,8 @@ onBeforeUnmount(() => {
                   <span>Equipe</span>
                   <span>Delta</span>
                 </div>
-                <div v-for="row in equipmentCompareRows(hoveredInventoryItem)" :key="`cmp-${hoveredInventoryItem.id}-${row.id}`" class="compare-row">
+                <div v-for="row in equipmentCompareRows(hoveredInventoryItem)"
+                  :key="`cmp-${hoveredInventoryItem.id}-${row.id}`" class="compare-row">
                   <span>{{ row.label }}</span>
                   <span>{{ row.candidate }}</span>
                   <span>{{ row.equipped }}</span>
@@ -3430,6 +3527,34 @@ onBeforeUnmount(() => {
           </div>
           <p v-else>Inventaire vide.</p>
           <button class="secondary" @click="inventoryModalOpen = false">Fermer</button>
+        </article>
+      </div>
+
+      <div v-if="characteristicsModalOpen && run" class="overlay-meta" @click="characteristicsModalOpen = false">
+        <article class="meta-modal characteristics-modal" @click.stop>
+          <header class="inventory-modal-head">
+            <h2>
+              <img src="/assets/Icons/armor.png" alt="" />
+              Caracteristiques
+            </h2>
+          </header>
+          <div class="characteristics-hero">
+            <div class="animated-avatar characteristics-avatar">
+              <img class="animated-avatar-strip" :src="playerIdleSprite" alt="joueur"
+                :style="animatedSpriteStripStyle(playerIdleSprite, 4, 1)" />
+            </div>
+            <div>
+              <strong>{{ run.player.name }}</strong>
+              <p>{{ currentClass?.name }} - Niveau {{ run.player.level }}</p>
+            </div>
+          </div>
+          <div class="characteristics-grid">
+            <div v-for="entry in characterStatRows" :key="`characteristics-${entry.id}`" class="char-item">
+              <span>{{ entry.label }}</span>
+              <strong>{{ entry.value }}</strong>
+            </div>
+          </div>
+          <button class="secondary" @click="characteristicsModalOpen = false">Fermer</button>
         </article>
       </div>
 
@@ -3458,7 +3583,7 @@ onBeforeUnmount(() => {
             <h3>Objets</h3>
             <ul class="loot-items">
               <li v-for="item in lootModal.items" :key="`loot-item-${item.id}`">
-                <img class="item-icon" :src="item.icon || itemIcon(item)" alt="loot" />
+                <img class="item-icon" :src="itemIcon(item)" alt="loot" />
                 <div class="item-main">
                   <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
                   <p>{{ inventoryTypeLabel(item) }}</p>
@@ -3491,44 +3616,62 @@ onBeforeUnmount(() => {
 
       <div v-if="npcOpen && currentNpc" class="overlay-meta" @click="npcOpen = false">
         <article class="meta-modal npc-modal" @click.stop>
-          <header class="npc-head">
-            <img :src="currentNpc.portrait" alt="portrait npc" />
-            <div>
-              <h2>{{ currentNpc.name }}</h2>
-              <p>{{ currentNpc.dialogue }}</p>
-            </div>
+          <header class="npc-head" :class="{ 'npc-head-scene': npcDialogueSceneEnabled }">
+            <template v-if="npcDialogueSceneEnabled">
+              <div class="npc-scene-sprites">
+                <div class="npc-scene-unit">
+                  <small>Toi</small>
+                  <div class="animated-avatar npc-scene-avatar">
+                    <img class="animated-avatar-strip" :src="playerIdleSprite" alt="joueur"
+                      :style="animatedSpriteStripStyle(playerIdleSprite, 4, 1)" />
+                  </div>
+                </div>
+                <div class="npc-scene-unit">
+                  <small>{{ currentNpc.name }}</small>
+                  <div class="animated-avatar npc-scene-avatar npc-scene-avatar-right">
+                    <img class="animated-avatar-strip" :src="npcIdleSprite" alt="npc"
+                      :style="animatedSpriteStripStyle(npcIdleSprite, 4, 1)" />
+                  </div>
+                </div>
+              </div>
+              <div class="npc-scene-dialogue">
+                <h2>{{ currentNpc.name }}</h2>
+                <p class="npc-dialogue-flow">{{ npcDialogueText }}</p>
+              </div>
+            </template>
+            <template v-else>
+              <img :src="currentNpc.portrait" alt="portrait npc" />
+              <div>
+                <h2>{{ currentNpc.name }}</h2>
+                <p>{{ currentNpc.dialogue }}</p>
+              </div>
+            </template>
           </header>
           <div class="npc-actions">
             <button v-if="currentNpc.role === 'lore'" @click="npcAction('lore')">Donne moi un indice</button>
             <button v-if="currentNpc.role === 'healer'" @click="npcAction('heal')">Soin complet (55 or)</button>
             <template v-if="currentNpc.role === 'merchant'">
-              <button
-                v-for="shop in merchantShopEntries"
-                :key="shop.id"
-                :disabled="shopItemDisabled(shop)"
-                @click="npcAction('buy', shop.id)"
-              >
+              <button v-for="shop in merchantShopEntries" :key="shop.id" :disabled="shopItemDisabled(shop)"
+                @click="npcAction('buy', shop.id)">
                 Acheter {{ shop.name }} ({{ shop.price }} or)
                 <small>{{ shop.description }}</small>
                 <small>{{ shopStockLabel(shop) }}</small>
               </button>
             </template>
             <template v-if="currentNpc.role === 'craft'">
-              <button
-                v-for="recipe in RECIPES"
-                :key="recipe.id"
-                :disabled="!canCraftRecipe(recipe)"
-                @click="npcAction('craft', recipe.id)"
-              >
+              <button v-for="recipe in RECIPES" :key="recipe.id" :disabled="!canCraftRecipe(recipe)"
+                @click="npcAction('craft', recipe.id)">
                 Forger {{ recipe.name }} ({{ RARITIES[recipe.rarity].label }})
                 <small>{{ recipe.description }}</small>
-                <small v-for="cost in recipeRequirementEntries(recipe)" :key="`cost-${recipe.id}-${cost.material}`" :class="{ warning: !cost.enough }">
+                <small v-for="cost in recipeRequirementEntries(recipe)" :key="`cost-${recipe.id}-${cost.material}`"
+                  :class="{ warning: !cost.enough }">
                   {{ cost.label }}: {{ cost.owned }}/{{ cost.needed }}
                 </small>
               </button>
             </template>
             <template v-if="currentNpc.role === 'respec'">
-              <button :disabled="passiveResetRemaining <= 0 || run.player.gold < PASSIVE_RESET_RULES.cost" @click="npcAction('respec')">
+              <button :disabled="passiveResetRemaining <= 0 || run.player.gold < PASSIVE_RESET_RULES.cost"
+                @click="npcAction('respec')">
                 Reinitialiser les talents ({{ PASSIVE_RESET_RULES.cost }} or)
                 <small>Limite: {{ PASSIVE_RESET_RULES.limit }} fois par partie</small>
                 <small>Restant: {{ passiveResetRemaining }}</small>
@@ -3563,7 +3706,8 @@ onBeforeUnmount(() => {
             <p>Points disponibles: {{ run.player.passivePoints }}</p>
             <p>Reinitialisation possible: {{ passiveResetRemaining }} / {{ PASSIVE_RESET_RULES.limit }}</p>
             <p v-if="currentClass?.innatePassive">
-              Passif de base actif: <strong>{{ currentClass.innatePassive.name }}</strong> - {{ currentClass.innatePassive.description }}
+              Passif de base actif: <strong>{{ currentClass.innatePassive.name }}</strong> - {{
+                currentClass.innatePassive.description }}
             </p>
           </header>
           <div v-if="passiveBranches.length" class="passive-branches">
@@ -3571,15 +3715,10 @@ onBeforeUnmount(() => {
               <h3>{{ branch.name }}</h3>
               <p>{{ branch.description }}</p>
               <div class="passive-chain">
-                <article
-                  v-for="passive in branch.passives"
-                  :key="passive.id"
-                  class="passive-node"
-                  :class="{
-                    unlocked: run.player.unlockedPassives.includes(passive.id),
-                    major: passive.isMajor,
-                  }"
-                >
+                <article v-for="passive in branch.passives" :key="passive.id" class="passive-node" :class="{
+                  unlocked: run.player.unlockedPassives.includes(passive.id),
+                  major: passive.isMajor,
+                }">
                   <strong>{{ passive.name }}</strong>
                   <ul v-if="passive.effectLines?.length" class="passive-list passive-list-effects">
                     <li v-for="(line, lineIndex) in passive.effectLines" :key="`${passive.id}-effect-${lineIndex}`">
@@ -3615,11 +3754,7 @@ onBeforeUnmount(() => {
           </header>
           <p>{{ riddleModal.question }}</p>
           <div class="riddle-options">
-            <button
-              v-for="option in riddleModal.options"
-              :key="option.id"
-              @click="answerRiddle(option.id)"
-            >
+            <button v-for="option in riddleModal.options" :key="option.id" @click="answerRiddle(option.id)">
               {{ option.text }}
             </button>
           </div>
@@ -3743,13 +3878,27 @@ onBeforeUnmount(() => {
   margin: 10px 0;
 }
 
-.class-preview img {
-  width: 62px;
-  height: 62px;
-  object-fit: cover;
-  image-rendering: pixelated;
+.animated-avatar {
   border: 1px solid rgba(255, 203, 115, 0.45);
   border-radius: 10px;
+  overflow: hidden;
+  background: rgba(8, 18, 25, 0.9);
+  image-rendering: pixelated;
+}
+
+.animated-avatar-strip {
+  display: block;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.class-preview-avatar {
+  width: 66px;
+  height: 66px;
+}
+
+.class-preview-avatar .animated-avatar-strip {
+  width: 400%;
 }
 
 .innate-passive {
@@ -3842,6 +3991,20 @@ button.danger {
   align-content: center;
   gap: 6px 10px;
   font-size: 0.92rem;
+}
+
+.hud-stat-pv,
+.hud-stat-gold {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hud-stat-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  vertical-align: middle;
 }
 
 .hud-actions {
@@ -3998,24 +4161,8 @@ button.danger {
   pointer-events: none;
   width: calc((100% - (var(--grid-pad) * 2) - ((var(--grid-cols) - 1) * var(--grid-gap))) / var(--grid-cols));
   height: calc((100% - (var(--grid-pad) * 2) - ((var(--grid-rows) - 1) * var(--grid-gap))) / var(--grid-rows));
-  left: calc(
-    var(--grid-pad) +
-      (
-        (
-            (100% - (var(--grid-pad) * 2) - ((var(--grid-cols) - 1) * var(--grid-gap))) / var(--grid-cols) +
-              var(--grid-gap)
-          ) * var(--player-x)
-      )
-  );
-  top: calc(
-    var(--grid-pad) +
-      (
-        (
-            (100% - (var(--grid-pad) * 2) - ((var(--grid-rows) - 1) * var(--grid-gap))) / var(--grid-rows) +
-              var(--grid-gap)
-          ) * var(--player-y)
-      )
-  );
+  left: calc(var(--grid-pad) + (((100% - (var(--grid-pad) * 2) - ((var(--grid-cols) - 1) * var(--grid-gap))) / var(--grid-cols) + var(--grid-gap)) * var(--player-x)));
+  top: calc(var(--grid-pad) + (((100% - (var(--grid-pad) * 2) - ((var(--grid-rows) - 1) * var(--grid-gap))) / var(--grid-rows) + var(--grid-gap)) * var(--player-y)));
   transition: left 190ms linear, top 190ms linear;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
   animation: map-player-idle 1.7s ease-in-out infinite;
@@ -4028,6 +4175,16 @@ button.danger {
 .player-sprite {
   width: 100%;
   height: 100%;
+  transform-origin: center center;
+}
+
+.map-player-token .player-sprite {
+  transform: scale(1.24);
+}
+
+.map-player-token.druid .player-sprite,
+.map-player-token.warrior .player-sprite {
+  transform: scale(1.48);
 }
 
 .tile-symbol {
@@ -4109,6 +4266,33 @@ button.danger {
   margin-top: 6px;
 }
 
+.legend-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: rgba(220, 207, 175, 0.9);
+}
+
+.legend-keys span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-keys kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  border-radius: 4px;
+  border: 1px solid rgba(252, 208, 135, 0.4);
+  background: rgba(12, 22, 28, 0.8);
+  color: #e8dcc8;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+}
+
 .legend-secret {
   color: #b996ff;
 }
@@ -4152,12 +4336,87 @@ button.danger {
   gap: 9px;
 }
 
-.npc-head img {
+.npc-head>img {
   width: 52px;
   height: 52px;
   border-radius: 9px;
   object-fit: cover;
   image-rendering: pixelated;
+}
+
+.characteristics-modal {
+  width: min(90vw, 560px);
+}
+
+.characteristics-hero {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+
+.characteristics-avatar {
+  width: 72px;
+  height: 72px;
+}
+
+.characteristics-avatar .animated-avatar-strip {
+  width: 400%;
+}
+
+.npc-head-scene {
+  display: grid;
+  gap: 8px;
+}
+
+.npc-scene-sprites {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.npc-scene-unit {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  border: 1px solid rgba(244, 207, 142, 0.22);
+  border-radius: 8px;
+  padding: 6px;
+  background: rgba(8, 17, 24, 0.7);
+}
+
+.npc-scene-unit small {
+  color: #d5c39f;
+}
+
+.npc-scene-avatar {
+  width: 74px;
+  height: 74px;
+}
+
+.npc-scene-avatar .animated-avatar-strip {
+  width: 400%;
+}
+
+.npc-scene-avatar-right {
+  transform: scaleX(-1);
+}
+
+.npc-scene-dialogue {
+  border: 1px solid rgba(245, 208, 142, 0.24);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(9, 21, 28, 0.72);
+}
+
+.npc-scene-dialogue h2 {
+  margin: 0 0 6px;
+}
+
+.npc-dialogue-flow {
+  margin: 0;
+  min-height: 1.6em;
+  animation: npc-flow 280ms ease-out;
 }
 
 .npc-actions {
@@ -4494,7 +4753,7 @@ button.danger {
   z-index: 0;
 }
 
-.battle-stage > * {
+.battle-stage>* {
   position: relative;
   z-index: 1;
 }
@@ -4774,20 +5033,24 @@ button.danger {
 }
 
 @keyframes pulse-turn {
+
   0%,
   100% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.03);
   }
 }
 
 @keyframes battler-idle {
+
   0%,
   100% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-4px);
   }
@@ -4797,9 +5060,11 @@ button.danger {
   0% {
     transform: translateX(0);
   }
+
   40% {
     transform: translateX(38px);
   }
+
   100% {
     transform: translateX(0);
   }
@@ -4809,9 +5074,11 @@ button.danger {
   0% {
     transform: translateX(0);
   }
+
   40% {
     transform: translateX(-38px);
   }
+
   100% {
     transform: translateX(0);
   }
@@ -4822,10 +5089,12 @@ button.danger {
     transform: scale(1);
     filter: saturate(1);
   }
+
   50% {
     transform: scale(1.05);
     filter: saturate(1.2) brightness(1.2);
   }
+
   100% {
     transform: scale(1);
     filter: saturate(1);
@@ -4838,11 +5107,13 @@ button.danger {
     transform: scale(0.6);
     box-shadow: 0 0 0 rgba(141, 215, 255, 0.2);
   }
+
   40% {
     opacity: 0.8;
     transform: scale(1);
     box-shadow: 0 0 28px rgba(141, 215, 255, 0.55);
   }
+
   100% {
     opacity: 0;
     transform: scale(1.2);
@@ -4854,15 +5125,19 @@ button.danger {
   0% {
     transform: translateX(0);
   }
+
   25% {
     transform: translateX(-8px);
   }
+
   50% {
     transform: translateX(7px);
   }
+
   75% {
     transform: translateX(-5px);
   }
+
   100% {
     transform: translateX(0);
   }
@@ -4874,11 +5149,13 @@ button.danger {
     transform: translateY(0) rotate(0deg);
     filter: saturate(1);
   }
+
   65% {
     opacity: 0.45;
     transform: translateY(18px) rotate(4deg);
     filter: saturate(0.55);
   }
+
   100% {
     opacity: 0;
     transform: translateY(38px) rotate(8deg);
@@ -4891,9 +5168,11 @@ button.danger {
     transform: translate(-50%, -50%) scale(0.75);
     opacity: 0;
   }
+
   10% {
     opacity: 1;
   }
+
   100% {
     transform: translate(210%, -95%) scale(1.08);
     opacity: 0;
@@ -4905,9 +5184,11 @@ button.danger {
     transform: translate(-50%, -50%) scale(0.75);
     opacity: 0;
   }
+
   10% {
     opacity: 1;
   }
+
   100% {
     transform: translate(-210%, -95%) scale(1.08);
     opacity: 0;
@@ -4919,9 +5200,11 @@ button.danger {
     transform: translate(-50%, -50%) scale(0.4);
     opacity: 0;
   }
+
   35% {
     opacity: 0.95;
   }
+
   100% {
     transform: translate(-50%, -50%) scale(1.15);
     opacity: 0;
@@ -4933,9 +5216,11 @@ button.danger {
     transform: translateY(0);
     opacity: 0;
   }
+
   14% {
     opacity: 1;
   }
+
   100% {
     transform: translateY(-34px);
     opacity: 0;
@@ -5268,6 +5553,18 @@ button.danger {
   margin-bottom: 8px;
 }
 
+@keyframes npc-flow {
+  from {
+    opacity: 0.6;
+    transform: translateX(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .levelup-modal {
   text-align: center;
 }
@@ -5295,20 +5592,24 @@ button.danger {
 }
 
 @keyframes map-player-idle {
+
   0%,
   100% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-1px);
   }
 }
 
 @keyframes map-player-walk {
+
   0%,
   100% {
     transform: translateY(0);
   }
+
   50% {
     transform: translateY(-2px);
   }
