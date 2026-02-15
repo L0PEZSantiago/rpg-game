@@ -31,11 +31,13 @@ import {
   equipItem,
   fleeCombat,
   getFleeChance,
+  getEnemyMoveOptions,
   getNpcRiddle,
   harvestNearby,
   healAtNpc,
   hydrateRun,
   isTileDiscovered,
+  moveEnemyTo,
   nearbyChest,
   nearbyNpc,
   nearbyResource,
@@ -110,6 +112,10 @@ const mapPlayerVisual = reactive({
 })
 const mapPlayerFrame = ref(0)
 const mapPlayerFrameTimer = ref(null)
+const mapEnemyVisuals = reactive({})
+const mapEnemyFrame = reactive({})
+const mapEnemyMoveTimer = ref(null)
+const mapEnemyInterval = ref(null)
 const npcDialogueText = ref('')
 const npcDialogueTimer = ref(null)
 
@@ -1755,6 +1761,62 @@ watch(
   },
 )
 
+function syncMapEnemyVisuals() {
+  const state = activeMapState.value
+  if (!run.value || !state?.enemies) {
+    return
+  }
+  for (const enemy of state.enemies) {
+    if (!enemy.alive) {
+      continue
+    }
+    const key = enemy.id
+    if (!mapEnemyVisuals[key]) {
+      mapEnemyVisuals[key] = {
+        x: enemy.x,
+        y: enemy.y,
+        visualX: enemy.x,
+        visualY: enemy.y,
+        walking: false,
+        facing: 'down',
+      }
+      mapEnemyFrame[key] = 0
+    } else if (!mapEnemyVisuals[key].walking) {
+      mapEnemyVisuals[key].x = enemy.x
+      mapEnemyVisuals[key].y = enemy.y
+      mapEnemyVisuals[key].visualX = enemy.x
+      mapEnemyVisuals[key].visualY = enemy.y
+    }
+  }
+  for (const key of Object.keys(mapEnemyVisuals)) {
+    const exists = state.enemies.some((e) => e.alive && e.id === key)
+    if (!exists) {
+      delete mapEnemyVisuals[key]
+      delete mapEnemyFrame[key]
+    }
+  }
+}
+
+watch(
+  () => [run.value?.world?.currentMapId, activeMapState.value?.enemies],
+  () => {
+    syncMapEnemyVisuals()
+  },
+  { immediate: true, deep: true },
+)
+
+watch(
+  () => run.value,
+  (r) => {
+    if (r && !r.combat) {
+      startMapEnemyMovementInterval()
+    } else if (!r) {
+      stopMapEnemyMovementInterval()
+    }
+  },
+  { immediate: true },
+)
+
 watch(
   () => mapPlayerVisual.walking,
   () => {
@@ -1927,6 +1989,127 @@ const mapPlayerStripStyle = computed(() => {
   }
 })
 
+const mapEnemyTokens = computed(() => {
+  const state = activeMapState.value
+  if (!run.value || !state?.enemies) {
+    return []
+  }
+  const mapId = run.value.world.currentMapId
+  return state.enemies
+    .filter(
+      (e) =>
+        e.alive &&
+        mapEnemyVisuals[e.id] &&
+        isTileDiscovered(run.value, mapId, e.x, e.y),
+    )
+    .map((e) => ({
+      id: e.id,
+      templateId: e.templateId,
+      asset: ENEMY_TEMPLATES[e.templateId]?.asset ?? '',
+      ...mapEnemyVisuals[e.id],
+    }))
+})
+
+function mapEnemyTokenStyle(token) {
+  return {
+    '--enemy-x': token.visualX,
+    '--enemy-y': token.visualY,
+  }
+}
+
+function mapEnemyStripStyle(token) {
+  const frames = 4
+  const frame = token.walking
+    ? (mapEnemyFrame[token.id] ?? 0) % frames
+    : Math.floor(mapAnimTick.value / 2) % frames
+  return {
+    width: `${frames * 100}%`,
+    transform: `translateX(-${frame * (100 / frames)}%)`,
+  }
+}
+
+function animateEnemyMove(enemy, nx, ny) {
+  const key = enemy.id
+  const vis = mapEnemyVisuals[key]
+  if (!vis || vis.walking) {
+    return
+  }
+  const fromX = enemy.x
+  const fromY = enemy.y
+  vis.walking = true
+  vis.fromX = fromX
+  vis.fromY = fromY
+  vis.toX = nx
+  vis.toY = ny
+  const start = performance.now()
+  const duration = 220
+
+  function tick(now) {
+    const elapsed = now - start
+    const t = Math.min(1, elapsed / duration)
+    const ease = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
+    vis.visualX = fromX + (nx - fromX) * ease
+    vis.visualY = fromY + (ny - fromY) * ease
+    if (t < 1) {
+      mapEnemyFrame[key] = Math.floor((elapsed / 50) % 4)
+      requestAnimationFrame(tick)
+    } else {
+      moveEnemyTo(run.value, enemy, nx, ny)
+      vis.x = nx
+      vis.y = ny
+      vis.visualX = nx
+      vis.visualY = ny
+      vis.walking = false
+      delete vis.fromX
+      delete vis.fromY
+      delete vis.toX
+      delete vis.toY
+      if (mapEnemyMoveTimer.value) {
+        clearTimeout(mapEnemyMoveTimer.value)
+        mapEnemyMoveTimer.value = null
+      }
+    }
+  }
+  requestAnimationFrame(tick)
+}
+
+function tickEnemyRandomMove() {
+  if (!run.value || run.value.combat || run.value.gameOver) {
+    return
+  }
+  const state = activeMapState.value
+  if (!state?.enemies?.length) {
+    return
+  }
+  const alive = state.enemies.filter((e) => e.alive)
+  if (!alive.length) {
+    return
+  }
+  const enemy = alive[Math.floor(Math.random() * alive.length)]
+  const options = getEnemyMoveOptions(run.value, enemy)
+  if (options.length === 0) {
+    return
+  }
+  const choice = options[Math.floor(Math.random() * options.length)]
+  animateEnemyMove(enemy, choice.nx, choice.ny)
+}
+
+function startMapEnemyMovementInterval() {
+  if (mapEnemyInterval.value) {
+    return
+  }
+  mapEnemyInterval.value = window.setInterval(() => {
+    tickEnemyRandomMove()
+  }, 3200)
+}
+
+function stopMapEnemyMovementInterval() {
+  if (mapEnemyInterval.value) {
+    clearInterval(mapEnemyInterval.value)
+    mapEnemyInterval.value = null
+  }
+}
+
 const uiSpriteFrames = reactive({})
 
 function uiSpriteFrameCount(source, fallbackFrames = 4) {
@@ -1966,11 +2149,7 @@ function buildMapCellSprite(cell) {
     return null
   }
   if (cell.enemy) {
-    return {
-      src: ENEMY_TEMPLATES[cell.enemy.templateId]?.asset ?? '',
-      frames: 4,
-      className: 'entity-enemy',
-    }
+    return null
   }
   if (cell.npc) {
     return {
@@ -3014,6 +3193,7 @@ onBeforeUnmount(() => {
     infoTimer.value = null
   }
   stopMapPlayerMotion()
+  stopMapEnemyMovementInterval()
   if (mapAnimTimer.value) {
     window.clearInterval(mapAnimTimer.value)
     mapAnimTimer.value = null
@@ -3159,6 +3339,13 @@ onBeforeUnmount(() => {
                 <span v-else class="tile-symbol">{{ cellLabel(cell) }}</span>
               </button>
             </div>
+            <template v-for="token in mapEnemyTokens" :key="token.id">
+              <div class="map-enemy-token" :class="{ walking: token.walking }" :style="mapEnemyTokenStyle(token)">
+                <div class="tile-sprite enemy-sprite">
+                  <img class="tile-sprite-strip" :src="token.asset" alt="" :style="mapEnemyStripStyle(token)" />
+                </div>
+              </div>
+            </template>
             <div class="map-player-token" :class="{
               walking: mapPlayerVisual.walking,
               druid: run.player.classId === 'druid',
@@ -3208,9 +3395,9 @@ onBeforeUnmount(() => {
                     {{ run.player.equipment.weapon.name }}
                   </strong>
                   <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0
-                    }}</p>
+                  }}</p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{ bonus
-                    }}</p>
+                  }}</p>
                   <button @click="unequipAction('weapon')">Retirer</button>
                 </div>
               </div>
@@ -3228,7 +3415,7 @@ onBeforeUnmount(() => {
                   <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0 }}
                   </p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus
-                    }}</p>
+                  }}</p>
                   <button @click="unequipAction('armor')">Retirer</button>
                 </div>
               </div>
@@ -3244,9 +3431,9 @@ onBeforeUnmount(() => {
                     {{ run.player.equipment.trinket.name }}
                   </strong>
                   <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ?? 0
-                    }}</p>
+                  }}</p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.trinket)" :key="bonus" class="item-affix">{{ bonus
-                    }}</p>
+                  }}</p>
                   <button @click="unequipAction('trinket')">Retirer</button>
                 </div>
               </div>
@@ -3292,25 +3479,18 @@ onBeforeUnmount(() => {
         </article>
       </div>
       <div v-if="activeCombatView && run" class="overlay-combat">
-        <div
-          v-if="combatIntroActive && run.combat"
-          class="combat-intro-overlay"
-          @click="closeCombatIntro"
-        >
+        <div v-if="combatIntroActive && run.combat" class="combat-intro-overlay" @click="closeCombatIntro">
           <article class="combat-intro-modal">
             <p class="combat-intro-text">Un <strong>{{ run.combat.enemyName }}</strong> sauvage apparaît !</p>
             <div class="combat-intro-sprite-box">
-              <img
-                class="combat-intro-sprite-img"
-                :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')"
-                alt=""
-                :style="battleSpriteStripStyle('enemy')"
-              />
+              <img class="combat-intro-sprite-img" :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')"
+                alt="" :style="battleSpriteStripStyle('enemy')" />
             </div>
             <p class="combat-intro-skip">Cliquer ou attendre pour continuer</p>
           </article>
         </div>
-        <article v-show="!combatIntroActive" class="combat-modal" :class="{ 'combat-modal-outro': Boolean(combatOutro) }">
+        <article v-show="!combatIntroActive" class="combat-modal"
+          :class="{ 'combat-modal-outro': Boolean(combatOutro) }">
           <header class="combat-modal-head">
             <div class="combat-head-main">
               <h2>
@@ -3467,7 +3647,7 @@ onBeforeUnmount(() => {
                     <div class="battle-ap-spotlight enemy">
                       <img src="/assets/Icons/dagger.png" alt="" />
                       <p class="battle-ap-label">PA : {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap
-                        }}</p>
+                      }}</p>
                     </div>
                   </div>
 
@@ -3557,7 +3737,8 @@ onBeforeUnmount(() => {
                         Utiliser
                       </button>
                       <button @click="sellAction(item.id)">
-                        Vendre {{ itemSellPrice(item) }} <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />
+                        Vendre {{ itemSellPrice(item) }} <img src="/assets/Icons/gold_coin.png" alt=""
+                          class="gold-btn-icon" />
                       </button>
                     </div>
                   </div>
@@ -3650,7 +3831,8 @@ onBeforeUnmount(() => {
                   <div class="row-actions">
                     <button v-if="item.kind === 'equipment'" @click="equipLootItem(item.id)">Equiper</button>
                     <button class="secondary" @click="sellLootItem(item.id)">
-                      Vendre pour {{ itemSellPrice(item) }}<img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />
+                      Vendre pour {{ itemSellPrice(item) }}<img src="/assets/Icons/gold_coin.png" alt=""
+                        class="gold-btn-icon" />
                     </button>
                   </div>
                 </div>
@@ -3711,14 +3893,15 @@ onBeforeUnmount(() => {
             <button v-if="currentNpc.role === 'lore'" @click="npcAction('lore')">Donne moi un indice</button>
             <button v-if="currentNpc.role === 'healer'" @click="npcAction('heal')">
               <span class="no-wrap-line">
-                Soin complet 55 <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon"/>
+                Soin complet 55 <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />
               </span>
             </button>
             <template v-if="currentNpc.role === 'merchant'">
               <button v-for="shop in merchantShopEntries" :key="shop.id" :disabled="shopItemDisabled(shop)"
                 @click="npcAction('buy', shop.id)">
                 <span class="no-wrap-line">
-                  Acheter {{ shop.name }} ({{ shop.price }} <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />)
+                  Acheter {{ shop.name }} ({{ shop.price }} <img src="/assets/Icons/gold_coin.png" alt=""
+                    class="gold-btn-icon" />)
                 </span>
                 <small>{{ shop.description }}</small>
                 <small>{{ shopStockLabel(shop) }}</small>
@@ -3739,7 +3922,8 @@ onBeforeUnmount(() => {
               <button :disabled="passiveResetRemaining <= 0 || run.player.gold < PASSIVE_RESET_RULES.cost"
                 @click="npcAction('respec')">
                 <span class="no-wrap-line">
-                  Reinitialiser les talents ({{ PASSIVE_RESET_RULES.cost }} <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />)
+                  Reinitialiser les talents ({{ PASSIVE_RESET_RULES.cost }} <img src="/assets/Icons/gold_coin.png"
+                    alt="" class="gold-btn-icon" />)
                 </span>
                 <small>Limite: {{ PASSIVE_RESET_RULES.limit }} fois par partie</small>
                 <small>Restant: {{ passiveResetRemaining }}</small>
@@ -3751,63 +3935,96 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="skillsModalOpen" class="overlay-meta" @click="skillsModalOpen = false">
-        <article class="meta-modal" @click.stop>
-          <header>
-            <h2>Competences - {{ currentClass?.name }}</h2>
+        <article class="meta-modal skills-modal" @click.stop>
+          <header class="skills-modal-header">
+            <h2>Compétences – {{ currentClass?.name }}</h2>
+            <p class="skills-modal-subtitle">Compétences de classe disponibles au combat</p>
           </header>
-          <ul>
-            <li v-for="skill in skillCatalog" :key="skill.id">
-              <strong>{{ skill.name }}</strong>
-              <p>{{ skill.description }}</p>
-              <p>Niveau {{ skill.unlockLevel }} | PA {{ skill.apCost }} | Mana {{ effectiveSkillManaCost(skill) }}</p>
-              <p>Recharge {{ skill.cooldown }} tour(s)</p>
-            </li>
-          </ul>
+          <div class="skills-catalog">
+            <article
+              v-for="skill in skillCatalog"
+              :key="skill.id"
+              class="skill-card"
+              :class="{ 'skill-card-unlocked': unlockedPlayerSkills.some((s) => s.id === skill.id) }"
+            >
+              <div class="skill-card-head">
+                <strong class="skill-card-name">{{ skill.name }}</strong>
+                <span v-if="unlockedPlayerSkills.some((s) => s.id === skill.id)" class="skill-badge skill-badge-unlocked">Débloquée</span>
+                <span v-else class="skill-badge skill-badge-locked">Niv. {{ skill.unlockLevel }}</span>
+              </div>
+              <p class="skill-card-desc">{{ skill.description }}</p>
+              <div class="skill-card-stats">
+                <span class="skill-stat">PA {{ skill.apCost }}</span>
+                <span class="skill-stat">Mana {{ effectiveSkillManaCost(skill) }}</span>
+                <span class="skill-stat">Recharge {{ skill.cooldown }} tour(s)</span>
+                <span class="skill-stat">Déblocage niv. {{ skill.unlockLevel }}</span>
+              </div>
+            </article>
+          </div>
           <button class="secondary modal-close-btn" @click="skillsModalOpen = false">Fermer</button>
         </article>
       </div>
 
       <div v-if="passivesModalOpen" class="overlay-meta" @click="passivesModalOpen = false">
         <article class="meta-modal passive-tree-modal" @click.stop>
-          <header>
-            <h2>Arbre passif - {{ currentClass?.name }}</h2>
-            <p>Points disponibles: {{ run.player.passivePoints }}</p>
-            <p>Reinitialisation possible: {{ passiveResetRemaining }} / {{ PASSIVE_RESET_RULES.limit }}</p>
-            <p v-if="currentClass?.innatePassive">
-              Passif de base actif: <strong>{{ currentClass.innatePassive.name }}</strong> - {{
-                currentClass.innatePassive.description }}
+          <header class="passive-tree-header">
+            <h2>Arbre passif – {{ currentClass?.name }}</h2>
+            <div class="passive-tree-info">
+              <span>Points disponibles: <strong>{{ run.player.passivePoints }}</strong></span>
+              <span>Réinit. possible: <strong>{{ passiveResetRemaining }}</strong> / {{ PASSIVE_RESET_RULES.limit }}</span>
+            </div>
+            <p v-if="currentClass?.innatePassive" class="passive-innate-line">
+              Passif de base: <strong>{{ currentClass.innatePassive.name }}</strong> – {{ currentClass.innatePassive.description }}
             </p>
           </header>
           <div v-if="passiveBranches.length" class="passive-branches">
             <section v-for="branch in passiveBranches" :key="branch.id" class="passive-branch">
-              <h3>{{ branch.name }}</h3>
-              <p>{{ branch.description }}</p>
+              <h3 class="passive-branch-title">{{ branch.name }}</h3>
+              <p class="passive-branch-desc">{{ branch.description }}</p>
               <div class="passive-chain">
                 <article v-for="passive in branch.passives" :key="passive.id" class="passive-node" :class="{
                   unlocked: run.player.unlockedPassives.includes(passive.id),
                   major: passive.isMajor,
                 }">
-                  <strong>{{ passive.name }}</strong>
+                  <strong class="passive-node-name">{{ passive.name }}</strong>
                   <ul v-if="passive.effectLines?.length" class="passive-list passive-list-effects">
                     <li v-for="(line, lineIndex) in passive.effectLines" :key="`${passive.id}-effect-${lineIndex}`">
                       {{ line }}
                     </li>
                   </ul>
                   <p v-else class="passive-node-summary">{{ passive.description }}</p>
-                  <small v-if="passive.requires">Prerequis: {{ passive.requiresName ?? passive.requires }}</small>
-                  <button :disabled="!passiveCanUnlock(passive)" @click="unlockPassiveAction(passive.id)">
-                    {{ run.player.unlockedPassives.includes(passive.id) ? 'Debloque' : 'Debloquer' }}
+                  <small v-if="passive.requires" class="passive-node-req">Préreq.: {{ passive.requiresName ?? passive.requires }}</small>
+                  <button
+                    type="button"
+                    class="passive-unlock-btn"
+                    :class="{
+                      'passive-btn-available': passiveCanUnlock(passive) && !run.player.unlockedPassives.includes(passive.id),
+                      'passive-btn-unlocked': run.player.unlockedPassives.includes(passive.id),
+                    }"
+                    :disabled="!passiveCanUnlock(passive)"
+                    @click="unlockPassiveAction(passive.id)"
+                  >
+                    {{ run.player.unlockedPassives.includes(passive.id) ? 'Débloqué' : 'Débloquer' }}
                   </button>
                 </article>
               </div>
             </section>
           </div>
-          <ul v-else>
+          <ul v-else class="passive-fallback-list">
             <li v-for="passive in passiveCatalog" :key="passive.id">
               <strong>{{ passive.name }}</strong>
               <p>{{ passive.description }}</p>
-              <button :disabled="!passiveCanUnlock(passive)" @click="unlockPassiveAction(passive.id)">
-                {{ run.player.unlockedPassives.includes(passive.id) ? 'Debloque' : 'Debloquer' }}
+              <button
+                type="button"
+                class="passive-unlock-btn"
+                :class="{
+                  'passive-btn-available': passiveCanUnlock(passive) && !run.player.unlockedPassives.includes(passive.id),
+                  'passive-btn-unlocked': run.player.unlockedPassives.includes(passive.id),
+                }"
+                :disabled="!passiveCanUnlock(passive)"
+                @click="unlockPassiveAction(passive.id)"
+              >
+                {{ run.player.unlockedPassives.includes(passive.id) ? 'Débloqué' : 'Débloquer' }}
               </button>
             </li>
           </ul>
@@ -4247,6 +4464,53 @@ button.danger {
   filter: brightness(1.12);
 }
 
+.map-enemy-token {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  width: calc((100% - (var(--grid-pad) * 2) - ((var(--grid-cols) - 1) * var(--grid-gap))) / var(--grid-cols));
+  height: calc((100% - (var(--grid-pad) * 2) - ((var(--grid-rows) - 1) * var(--grid-gap))) / var(--grid-rows));
+  left: calc(var(--grid-pad) + (((100% - (var(--grid-pad) * 2) - ((var(--grid-cols) - 1) * var(--grid-gap))) / var(--grid-cols) + var(--grid-gap)) * var(--enemy-x)));
+  top: calc(var(--grid-pad) + (((100% - (var(--grid-pad) * 2) - ((var(--grid-rows) - 1) * var(--grid-gap))) / var(--grid-rows) + var(--grid-gap)) * var(--enemy-y)));
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+  animation: map-enemy-idle 1.6s ease-in-out infinite;
+}
+
+.map-enemy-token.walking {
+  animation: map-enemy-walk 280ms ease-in-out infinite;
+}
+
+.map-enemy-token .enemy-sprite {
+  width: 100%;
+  height: 100%;
+  transform-origin: center center;
+  transform: scale(1.1);
+}
+
+@keyframes map-enemy-idle {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes map-enemy-walk {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
 .map-player-token {
   position: absolute;
   z-index: 6;
@@ -4271,13 +4535,9 @@ button.danger {
 }
 
 .map-player-token .player-sprite {
-  transform: scale(1.24);
+  transform: scale(1.8);
 }
 
-.map-player-token.druid .player-sprite,
-.map-player-token.warrior .player-sprite {
-  transform: scale(1.48);
-}
 
 .tile-symbol {
   font-weight: 700;
@@ -4290,7 +4550,8 @@ button.danger {
 }
 
 .tile-btn.water {
-  background: rgba(19, 68, 96, 0.97);
+  /* même couleur que les murs (#) : bloquant visuel unifié */
+  background: rgba(74, 52, 37, 0.98);
 }
 
 .tile-btn.player {
@@ -4699,8 +4960,15 @@ button.danger {
 }
 
 @keyframes combat-intro-modal-in {
-  from { opacity: 0; transform: scale(0.92); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .combat-intro-text {
@@ -4723,8 +4991,15 @@ button.danger {
 }
 
 @keyframes combat-intro-sprite-in {
-  from { opacity: 0; transform: scale(0.3); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .combat-intro-sprite-img {
@@ -5611,49 +5886,108 @@ button.danger {
   color: #ffb8a5;
 }
 
+/* ----- Arbre passif: design lisible, couleurs jeu, bouton Débloquer ----- */
 .passive-tree-modal {
   width: min(95vw, 1200px);
+  max-height: 90vh;
+  overflow: auto;
+  background: linear-gradient(150deg, rgba(13, 30, 38, 0.98), rgba(51, 20, 15, 0.96));
+  border: 1px solid rgba(247, 204, 133, 0.4);
+  border-radius: 12px;
+  color: rgba(240, 230, 218, 0.95);
+}
+
+.passive-tree-header {
+  border-bottom: 1px solid rgba(247, 204, 133, 0.35);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.passive-tree-header h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+  color: rgba(247, 204, 133, 1);
+}
+
+.passive-tree-info {
+  display: flex;
+  gap: 1.25rem;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.passive-tree-info strong {
+  color: rgba(255, 208, 122, 1);
+}
+
+.passive-innate-line {
+  margin: 0;
+  font-size: 0.88rem;
+  opacity: 0.92;
 }
 
 .passive-branches {
-  margin: 10px 0;
+  margin: 12px 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 14px;
 }
 
 .passive-branch {
-  border: 1px solid rgba(240, 198, 130, 0.24);
+  border: 1px solid rgba(247, 204, 133, 0.28);
   border-radius: 10px;
-  padding: 8px;
-  background: rgba(8, 16, 22, 0.72);
+  padding: 10px 12px;
+  background: rgba(13, 30, 38, 0.5);
 }
 
+.passive-branch-title,
 .passive-branch h3 {
-  margin: 0;
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  color: rgba(247, 204, 133, 0.95);
 }
 
-.passive-branch p {
-  margin: 4px 0 8px;
+.passive-branch-desc,
+.passive-branch > p {
+  margin: 0 0 0.75rem;
   font-size: 0.82rem;
+  opacity: 0.88;
+  line-height: 1.35;
 }
 
 .passive-chain {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .passive-node {
-  border: 1px solid rgba(238, 198, 130, 0.2);
+  border: 1px solid rgba(238, 198, 130, 0.35);
   border-radius: 9px;
-  padding: 8px;
-  background: rgba(11, 22, 29, 0.8);
+  padding: 10px 12px;
+  background: rgba(11, 22, 29, 0.75);
   position: relative;
+}
+
+.passive-node-name,
+.passive-node strong {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: rgba(247, 204, 133, 0.98);
 }
 
 .passive-node-summary {
   margin: 4px 0 6px;
   color: rgba(229, 236, 245, 0.95);
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.passive-node-req {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  opacity: 0.78;
+  color: rgba(200, 190, 180, 0.9);
 }
 
 .passive-list {
@@ -5686,10 +6020,10 @@ button.danger {
   content: '';
   position: absolute;
   left: 50%;
-  bottom: -8px;
+  bottom: -10px;
   width: 2px;
-  height: 8px;
-  background: rgba(236, 194, 126, 0.36);
+  height: 10px;
+  background: rgba(236, 194, 126, 0.3);
 }
 
 .passive-node:last-child::after {
@@ -5697,13 +6031,205 @@ button.danger {
 }
 
 .passive-node.unlocked {
-  border-color: rgba(129, 219, 255, 0.62);
-  box-shadow: 0 0 0 1px rgba(129, 219, 255, 0.24);
+  border-color: rgba(129, 219, 255, 0.5);
+  box-shadow: 0 0 0 1px rgba(129, 219, 255, 0.2);
+  background: rgba(129, 219, 255, 0.06);
 }
 
 .passive-node.major {
-  border-color: rgba(255, 208, 122, 0.72);
+  border-color: rgba(255, 208, 122, 0.5);
   background: linear-gradient(132deg, rgba(35, 60, 88, 0.78), rgba(70, 38, 17, 0.85));
+}
+
+/* Bouton Débloquer: pleine largeur, centré, espacé */
+.passive-unlock-btn {
+  display: block;
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 6px;
+  border: 1px solid rgba(247, 204, 133, 0.5);
+  background: rgba(247, 204, 133, 0.12);
+  color: rgba(247, 204, 133, 1);
+  transition: opacity 0.2s, filter 0.2s, box-shadow 0.25s;
+}
+
+/* Cliquable: brillance or qui prend de l'ampleur puis redescend (style Aethermoor) */
+.passive-unlock-btn.passive-btn-available {
+  background: linear-gradient(135deg, rgba(247, 204, 133, 0.2), rgba(236, 194, 126, 0.15));
+  border-color: rgba(247, 204, 133, 0.6);
+  color: rgba(255, 230, 180, 1);
+  animation: passive-btn-shine 3s ease-in-out infinite;
+}
+
+.passive-unlock-btn.passive-btn-available:hover {
+  background: linear-gradient(135deg, rgba(247, 204, 133, 0.28), rgba(236, 194, 126, 0.22));
+  border-color: rgba(247, 204, 133, 0.8);
+}
+
+@keyframes passive-btn-shine {
+  /* Début / fin : lueur douce, proche du bouton */
+  0%, 100% {
+    box-shadow:
+      0 0 8px rgba(255, 215, 120, 0.2),
+      0 0 16px rgba(255, 200, 100, 0.12),
+      0 2px 6px rgba(180, 140, 80, 0.15);
+  }
+  /* Montée : la brillance prend de l'ampleur */
+  35% {
+    box-shadow:
+      0 0 14px rgba(255, 220, 130, 0.35),
+      0 0 28px rgba(255, 205, 110, 0.22),
+      0 0 42px rgba(255, 190, 90, 0.12),
+      0 2px 12px rgba(200, 160, 90, 0.25);
+  }
+  /* Pic : dispersion max, halo doré qui s'étale */
+  50% {
+    box-shadow:
+      0 0 20px rgba(255, 225, 140, 0.45),
+      0 0 40px rgba(255, 210, 120, 0.28),
+      0 0 60px rgba(255, 195, 100, 0.15),
+      0 2px 16px rgba(210, 170, 100, 0.3);
+  }
+  /* Redescente */
+  65% {
+    box-shadow:
+      0 0 14px rgba(255, 220, 130, 0.35),
+      0 0 28px rgba(255, 205, 110, 0.22),
+      0 0 42px rgba(255, 190, 90, 0.12),
+      0 2px 12px rgba(200, 160, 90, 0.25);
+  }
+}
+
+/* Déjà débloqué ou désactivé: grisé, opacité réduite */
+.passive-unlock-btn.passive-btn-unlocked,
+.passive-unlock-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+  border-color: rgba(160, 155, 150, 0.4);
+  background: rgba(80, 75, 70, 0.25);
+  color: rgba(180, 175, 170, 0.9);
+  box-shadow: none;
+  animation: none;
+}
+
+.passive-unlock-btn:disabled:hover {
+  opacity: 0.55;
+}
+
+.passive-fallback-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.passive-fallback-list li {
+  margin-bottom: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(247, 204, 133, 0.2);
+}
+
+/* ----- Modal Compétences (refonte: couleurs jeu, cartes lisibles) ----- */
+.skills-modal {
+  width: min(92vw, 780px);
+  max-height: 90vh;
+  overflow: auto;
+  background: linear-gradient(150deg, rgba(13, 30, 38, 0.98), rgba(51, 20, 15, 0.96));
+  border: 1px solid rgba(247, 204, 133, 0.4);
+  border-radius: 12px;
+  color: rgba(240, 230, 218, 0.95);
+}
+
+.skills-modal-header {
+  border-bottom: 1px solid rgba(247, 204, 133, 0.35);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.skills-modal-header h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.25rem;
+  color: rgba(247, 204, 133, 1);
+}
+
+.skills-modal-subtitle {
+  margin: 0;
+  font-size: 0.88rem;
+  opacity: 0.88;
+}
+
+.skills-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.skill-card {
+  border: 1px solid rgba(238, 198, 130, 0.3);
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  background: rgba(11, 22, 29, 0.7);
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.skill-card-unlocked {
+  border-color: rgba(129, 219, 255, 0.4);
+  background: rgba(129, 219, 255, 0.06);
+}
+
+.skill-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.skill-card-name {
+  color: rgba(247, 204, 133, 0.98);
+  font-size: 1rem;
+}
+
+.skill-badge {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.skill-badge-unlocked {
+  background: rgba(129, 219, 255, 0.2);
+  color: rgba(160, 230, 255, 1);
+  border: 1px solid rgba(129, 219, 255, 0.4);
+}
+
+.skill-badge-locked {
+  background: rgba(80, 75, 70, 0.4);
+  color: rgba(180, 175, 170, 0.9);
+  border: 1px solid rgba(140, 135, 130, 0.35);
+}
+
+.skill-card-desc {
+  margin: 0 0 0.5rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  opacity: 0.92;
+}
+
+.skill-card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  font-size: 0.8rem;
+  color: rgba(255, 208, 122, 0.9);
+}
+
+.skill-stat {
+  white-space: nowrap;
 }
 
 .riddle-feedback-success {

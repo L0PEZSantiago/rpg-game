@@ -934,6 +934,51 @@ export function enemyAtPosition(run, x, y, mapId = run.world.currentMapId) {
   return ensureMapState(run, mapId).enemies.find((enemy) => enemy.alive && enemy.x === x && enemy.y === y) ?? null
 }
 
+export function isCellFreeForEnemy(run, mapId, x, y, excludeEnemyId = null) {
+  const map = currentMapById(mapId)
+  const mapState = ensureMapState(run, mapId)
+  if (x < 0 || y < 0 || x >= map.width || y >= map.height) {
+    return false
+  }
+  if (!mapIsWalkable(map, x, y, mapState.tiles)) {
+    return false
+  }
+  const px = run.world.playerPosition.x
+  const py = run.world.playerPosition.y
+  if (px === x && py === y) {
+    return false
+  }
+  const other = mapState.enemies.find(
+    (e) => e.alive && e.x === x && e.y === y && (excludeEnemyId == null || e.id !== excludeEnemyId),
+  )
+  return other == null
+}
+
+export function getEnemyMoveOptions(run, enemy) {
+  const mapId = run.world.currentMapId
+  const ex = enemy.x
+  const ey = enemy.y
+  const options = []
+  for (const [dx, dy] of [
+    [0, -1],
+    [0, 1],
+    [-1, 0],
+    [1, 0],
+  ]) {
+    const nx = ex + dx
+    const ny = ey + dy
+    if (isCellFreeForEnemy(run, mapId, nx, ny, enemy.id)) {
+      options.push({ nx, ny })
+    }
+  }
+  return options
+}
+
+export function moveEnemyTo(run, enemy, nx, ny) {
+  enemy.x = nx
+  enemy.y = ny
+}
+
 function chestAtPosition(run, x, y, mapId = run.world.currentMapId) {
   return ensureMapState(run, mapId).chests.find((chest) => !chest.opened && chest.x === x && chest.y === y) ?? null
 }
@@ -1570,8 +1615,8 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
   if (!ignoreAvoidance) {
     const dodgeChance = clamp(
       (targetStats.dodgeChance ?? 0) +
-        effectAmount(targetEffects, 'buff', 'dodgeChance') -
-        effectAmount(targetEffects, 'debuff', 'dodgeChance'),
+      effectAmount(targetEffects, 'buff', 'dodgeChance') -
+      effectAmount(targetEffects, 'debuff', 'dodgeChance'),
       0,
       0.72,
     )
@@ -1581,8 +1626,8 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
 
     const parryChance = clamp(
       (targetStats.parryChance ?? 0) +
-        effectAmount(targetEffects, 'buff', 'parryChance') -
-        effectAmount(targetEffects, 'debuff', 'parryChance'),
+      effectAmount(targetEffects, 'buff', 'parryChance') -
+      effectAmount(targetEffects, 'debuff', 'parryChance'),
       0,
       0.62,
     )
@@ -1789,7 +1834,7 @@ function startTurn(run) {
 
     const apPenalty = Math.floor(
       effectAmount(battle.playerEffects, 'debuff', 'enemyApPenalty') +
-        effectAmount(battle.playerEffects, 'debuff', 'enemyMpPenalty'),
+      effectAmount(battle.playerEffects, 'debuff', 'enemyMpPenalty'),
     )
     if (apPenalty > 0) {
       battle.playerAp = Math.max(0, battle.playerAp - apPenalty)
@@ -1822,7 +1867,7 @@ function startTurn(run) {
 
   const enemyApPenalty = Math.floor(
     effectAmount(battle.enemyEffects, 'debuff', 'enemyApPenalty') +
-      effectAmount(battle.enemyEffects, 'debuff', 'enemyMpPenalty'),
+    effectAmount(battle.enemyEffects, 'debuff', 'enemyMpPenalty'),
   )
   if (enemyApPenalty > 0) {
     battle.enemyAp = Math.max(0, battle.enemyAp - enemyApPenalty)
@@ -1898,57 +1943,57 @@ function applySkill(run, side, skill) {
   const attacker =
     side === 'player'
       ? {
-          ...playerStats,
-          attack: Math.floor(playerStats.attack * statMultiplier(playerBuffAtk, playerDebuffAtk)),
-          defense: Math.floor(playerStats.defense * statMultiplier(playerBuffDef, playerDebuffDef)),
-          critChance: clamp(playerStats.critChance + playerBuffCrit - playerDebuffCrit, 0, 0.9),
-          critDamage: clamp(playerStats.critDamage + playerBuffCritDamage - playerDebuffCritDamage, 0.2, 1.5),
-          dodgeChance: playerStats.dodgeChance,
-          parryChance: playerStats.parryChance,
-          statusChance: playerStats.statusChance,
-          statusResist: playerStats.statusResist,
-        }
+        ...playerStats,
+        attack: Math.floor(playerStats.attack * statMultiplier(playerBuffAtk, playerDebuffAtk)),
+        defense: Math.floor(playerStats.defense * statMultiplier(playerBuffDef, playerDebuffDef)),
+        critChance: clamp(playerStats.critChance + playerBuffCrit - playerDebuffCrit, 0, 0.9),
+        critDamage: clamp(playerStats.critDamage + playerBuffCritDamage - playerDebuffCritDamage, 0.2, 1.5),
+        dodgeChance: playerStats.dodgeChance,
+        parryChance: playerStats.parryChance,
+        statusChance: playerStats.statusChance,
+        statusResist: playerStats.statusResist,
+      }
       : {
-          ...battle.enemyStats,
-          attack: Math.floor(battle.enemyStats.attack * statMultiplier(enemyBuffAtk, enemyDebuffAtk)),
-          defense: Math.floor(battle.enemyStats.defense * statMultiplier(enemyBuffDef, enemyDebuffDef)),
-          critChance: clamp((battle.enemyStats.critChance ?? 0.08) + enemyBuffCrit - enemyDebuffCrit, 0, 0.9),
-          critDamage: clamp(
-            (battle.enemyStats.critDamage ?? 0.42) + enemyBuffCritDamage - enemyDebuffCritDamage,
-            0.2,
-            1.5,
-          ),
-          dodgeChance: battle.enemyStats.dodgeChance ?? 0.03,
-          parryChance: battle.enemyStats.parryChance ?? 0.03,
-          statusChance: battle.enemyStats.toppleChance ?? 0.06,
-          statusResist: battle.enemyStats.statusResist ?? 0.06,
-        }
+        ...battle.enemyStats,
+        attack: Math.floor(battle.enemyStats.attack * statMultiplier(enemyBuffAtk, enemyDebuffAtk)),
+        defense: Math.floor(battle.enemyStats.defense * statMultiplier(enemyBuffDef, enemyDebuffDef)),
+        critChance: clamp((battle.enemyStats.critChance ?? 0.08) + enemyBuffCrit - enemyDebuffCrit, 0, 0.9),
+        critDamage: clamp(
+          (battle.enemyStats.critDamage ?? 0.42) + enemyBuffCritDamage - enemyDebuffCritDamage,
+          0.2,
+          1.5,
+        ),
+        dodgeChance: battle.enemyStats.dodgeChance ?? 0.03,
+        parryChance: battle.enemyStats.parryChance ?? 0.03,
+        statusChance: battle.enemyStats.toppleChance ?? 0.06,
+        statusResist: battle.enemyStats.statusResist ?? 0.06,
+      }
 
   const defender =
     side === 'player'
       ? {
-          ...battle.enemyStats,
-          defense: Math.floor(battle.enemyStats.defense * statMultiplier(enemyBuffDef, enemyDebuffDef)),
-          critChance: battle.enemyStats.critChance ?? 0.08,
-          critDamage: battle.enemyStats.critDamage ?? 0.42,
-          dodgeChance: battle.enemyStats.dodgeChance ?? 0.03,
-          parryChance: battle.enemyStats.parryChance ?? 0.03,
-          statusResist: battle.enemyStats.statusResist ?? 0.06,
-        }
+        ...battle.enemyStats,
+        defense: Math.floor(battle.enemyStats.defense * statMultiplier(enemyBuffDef, enemyDebuffDef)),
+        critChance: battle.enemyStats.critChance ?? 0.08,
+        critDamage: battle.enemyStats.critDamage ?? 0.42,
+        dodgeChance: battle.enemyStats.dodgeChance ?? 0.03,
+        parryChance: battle.enemyStats.parryChance ?? 0.03,
+        statusResist: battle.enemyStats.statusResist ?? 0.06,
+      }
       : {
-          ...playerStats,
-          defense: Math.floor(playerStats.defense * statMultiplier(playerBuffDef, playerDebuffDef)),
-          critChance: playerStats.critChance,
-          critDamage: playerStats.critDamage,
-          dodgeChance: playerStats.dodgeChance,
-          parryChance: playerStats.parryChance,
-          statusResist: playerStats.statusResist,
-        }
+        ...playerStats,
+        defense: Math.floor(playerStats.defense * statMultiplier(playerBuffDef, playerDebuffDef)),
+        critChance: playerStats.critChance,
+        critDamage: playerStats.critDamage,
+        dodgeChance: playerStats.dodgeChance,
+        parryChance: playerStats.parryChance,
+        statusResist: playerStats.statusResist,
+      }
 
   const bonusPercent =
     side === 'player'
       ? playerStats.damagePercent +
-        (battle.enemyIsBoss ? playerStats.bossDamagePercent : 0)
+      (battle.enemyIsBoss ? playerStats.bossDamagePercent : 0)
       : 0
 
   const actorName = side === 'player' ? run.player.name : battle.enemyName
@@ -2101,7 +2146,7 @@ function applySkill(run, side, skill) {
     const maxHp = side === 'player' ? playerStats.maxHp : battle.enemyStats.maxHp
     const rawHeal = Math.floor(
       (attacker.attack * (skill.healRatio ?? 0.7) + attacker.maxHp * 0.05) *
-        (1 + (side === 'player' ? playerStats.healingDonePercent : 0)),
+      (1 + (side === 'player' ? playerStats.healingDonePercent : 0)),
     )
     if (side === 'player') {
       const healed = Math.floor(rawHeal * (1 + playerStats.healingTakenPercent))
@@ -2236,40 +2281,40 @@ function normalAttackResult(run, side) {
   const attacker =
     side === 'player'
       ? {
-          attack: playerStats.attack,
-          defense: playerStats.defense,
-          critChance: playerStats.critChance,
-          critDamage: playerStats.critDamage,
-          toppleChance: playerStats.toppleChance,
-          statusChance: playerStats.statusChance,
-          lifeStealPercent: playerStats.lifeStealPercent,
-          maxHp: playerStats.maxHp,
-        }
+        attack: playerStats.attack,
+        defense: playerStats.defense,
+        critChance: playerStats.critChance,
+        critDamage: playerStats.critDamage,
+        toppleChance: playerStats.toppleChance,
+        statusChance: playerStats.statusChance,
+        lifeStealPercent: playerStats.lifeStealPercent,
+        maxHp: playerStats.maxHp,
+      }
       : {
-          attack: battle.enemyStats.attack,
-          defense: battle.enemyStats.defense,
-          critChance: battle.enemyStats.critChance ?? 0.06,
-          critDamage: battle.enemyStats.critDamage ?? 0.42,
-          toppleChance: battle.enemyStats.toppleChance ?? 0.08,
-          statusChance: battle.enemyStats.toppleChance ?? 0.08,
-          lifeStealPercent: battle.enemyStats.lifeStealPercent ?? 0,
-          maxHp: battle.enemyStats.maxHp,
-        }
+        attack: battle.enemyStats.attack,
+        defense: battle.enemyStats.defense,
+        critChance: battle.enemyStats.critChance ?? 0.06,
+        critDamage: battle.enemyStats.critDamage ?? 0.42,
+        toppleChance: battle.enemyStats.toppleChance ?? 0.08,
+        statusChance: battle.enemyStats.toppleChance ?? 0.08,
+        lifeStealPercent: battle.enemyStats.lifeStealPercent ?? 0,
+        maxHp: battle.enemyStats.maxHp,
+      }
 
   const defender =
     side === 'player'
       ? {
-          defense: battle.enemyStats.defense,
-          dodgeChance: battle.enemyStats.dodgeChance ?? 0.03,
-          parryChance: battle.enemyStats.parryChance ?? 0.03,
-          statusResist: battle.enemyStats.statusResist ?? 0.05,
-        }
+        defense: battle.enemyStats.defense,
+        dodgeChance: battle.enemyStats.dodgeChance ?? 0.03,
+        parryChance: battle.enemyStats.parryChance ?? 0.03,
+        statusResist: battle.enemyStats.statusResist ?? 0.05,
+      }
       : {
-          defense: playerStats.defense,
-          dodgeChance: playerStats.dodgeChance,
-          parryChance: playerStats.parryChance,
-          statusResist: playerStats.statusResist,
-        }
+        defense: playerStats.defense,
+        dodgeChance: playerStats.dodgeChance,
+        parryChance: playerStats.parryChance,
+        statusResist: playerStats.statusResist,
+      }
 
   const attackerEffects = side === 'player' ? battle.playerEffects : battle.enemyEffects
   const disorientMissChance = consumeNextAttackMissChance(attackerEffects)
