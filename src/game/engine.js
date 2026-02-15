@@ -934,6 +934,19 @@ export function enemyAtPosition(run, x, y, mapId = run.world.currentMapId) {
   return ensureMapState(run, mapId).enemies.find((enemy) => enemy.alive && enemy.x === x && enemy.y === y) ?? null
 }
 
+/** Retourne un ennemi vivant adjacent à la position (x, y), ou null. Utilisé pour engager le combat en s’approchant. */
+export function enemyAdjacentToPosition(run, x, y, mapId = run.world.currentMapId) {
+  const mapState = ensureMapState(run, mapId)
+  return (
+    mapState.enemies.find((enemy) => {
+      if (!enemy.alive) return false
+      const dx = Math.abs(enemy.x - x)
+      const dy = Math.abs(enemy.y - y)
+      return dx + dy === 1
+    }) ?? null
+  )
+}
+
 export function isCellFreeForEnemy(run, mapId, x, y, excludeEnemyId = null) {
   const map = currentMapById(mapId)
   const mapState = ensureMapState(run, mapId)
@@ -948,29 +961,65 @@ export function isCellFreeForEnemy(run, mapId, x, y, excludeEnemyId = null) {
   if (px === x && py === y) {
     return false
   }
+  const hasNpc = (mapState.npcs ?? []).some((npc) => npc.x === x && npc.y === y)
+  if (hasNpc) {
+    return false
+  }
   const other = mapState.enemies.find(
     (e) => e.alive && e.x === x && e.y === y && (excludeEnemyId == null || e.id !== excludeEnemyId),
   )
   return other == null
 }
 
+/** Déplacements possibles : 1 case (8 directions dont diagonales) et 2 cases (chemin dégagé). */
 export function getEnemyMoveOptions(run, enemy) {
   const mapId = run.world.currentMapId
   const ex = enemy.x
   const ey = enemy.y
   const options = []
-  for (const [dx, dy] of [
-    [0, -1],
-    [0, 1],
-    [-1, 0],
-    [1, 0],
-  ]) {
-    const nx = ex + dx
-    const ny = ey + dy
+
+  const add = (nx, ny) => {
     if (isCellFreeForEnemy(run, mapId, nx, ny, enemy.id)) {
       options.push({ nx, ny })
     }
   }
+
+  const oneStep = [
+    [0, -1],
+    [0, 1],
+    [-1, 0],
+    [1, 0],
+    [-1, -1],
+    [-1, 1],
+    [1, -1],
+    [1, 1],
+  ]
+  for (const [dx, dy] of oneStep) {
+    add(ex + dx, ey + dy)
+  }
+
+  const twoStepOrtho = [
+    [0, -2, 0, -1],
+    [0, 2, 0, 1],
+    [-2, 0, -1, 0],
+    [2, 0, 1, 0],
+  ]
+  for (const [dx2, dy2, midDx, midDy] of twoStepOrtho) {
+    if (!isCellFreeForEnemy(run, mapId, ex + midDx, ey + midDy, enemy.id)) continue
+    add(ex + dx2, ey + dy2)
+  }
+
+  const twoStepDiag = [
+    [-2, -2, -1, -1],
+    [-2, 2, -1, 1],
+    [2, -2, 1, -1],
+    [2, 2, 1, 1],
+  ]
+  for (const [dx2, dy2, midDx, midDy] of twoStepDiag) {
+    if (!isCellFreeForEnemy(run, mapId, ex + midDx, ey + midDy, enemy.id)) continue
+    add(ex + dx2, ey + dy2)
+  }
+
   return options
 }
 
@@ -1550,6 +1599,11 @@ export function attemptMove(run, dx, dy, options = {}) {
   const enemy = enemyAtPosition(run, nx, ny)
   if (enemy) {
     startCombat(run, enemy)
+    return { ok: true, combat: true }
+  }
+  const adjacentEnemy = enemyAdjacentToPosition(run, nx, ny, map.id)
+  if (adjacentEnemy) {
+    startCombat(run, adjacentEnemy)
     return { ok: true, combat: true }
   }
 

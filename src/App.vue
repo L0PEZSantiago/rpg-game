@@ -50,6 +50,7 @@ import {
   runEnemyTurn,
   sellItem,
   sellValueForItem,
+  startCombat,
   usePortalAtPosition,
   unequipItem,
   unlockPassive,
@@ -2068,6 +2069,12 @@ function animateEnemyMove(enemy, nx, ny) {
         clearTimeout(mapEnemyMoveTimer.value)
         mapEnemyMoveTimer.value = null
       }
+      const px = run.value.world.playerPosition.x
+      const py = run.value.world.playerPosition.y
+      const dist = Math.abs(nx - px) + Math.abs(ny - py)
+      if (dist === 1) {
+        startCombat(run.value, enemy)
+      }
     }
   }
   requestAnimationFrame(tick)
@@ -2244,6 +2251,17 @@ const mapCells = computed(() => {
         mapAnimTick.value - fx.startTick <= 8
       const chestFxFrame = hasChestFx ? Math.max(0, Math.min(7, mapAnimTick.value - fx.startTick)) : null
 
+      const inAgro =
+        discovered &&
+        tile === '.' &&
+        mapState.enemies.some((e) => {
+          if (!e.alive) return false
+          if (!isTileDiscovered(run.value, map.id, e.x, e.y)) return false
+          const adx = Math.abs(x - e.x)
+          const ady = Math.abs(y - e.y)
+          return adx + ady === 1
+        })
+
       const cell = {
         id: toKey(x, y),
         x,
@@ -2259,6 +2277,7 @@ const mapCells = computed(() => {
         hasBackPortal,
         chestFxFrame,
         player: px === x && py === y,
+        inAgro,
       }
       cell.sprite = buildMapCellSprite(cell)
       rows.push(cell)
@@ -2363,6 +2382,7 @@ function cellClass(cell) {
     wall: cell.tile === '#',
     water: cell.tile === '~',
     floor: cell.tile === '.',
+    agro: cell.inAgro,
     player: cell.player,
     enemy: Boolean(cell.enemy),
     npc: Boolean(cell.npc),
@@ -3319,8 +3339,6 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <p v-if="infoMessage" class="info-msg">{{ infoMessage }}</p>
-
       <div class="columns">
         <article class="card world-card">
           <div class="world-header">
@@ -3356,6 +3374,8 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
+
+          <p v-if="infoMessage" class="info-msg">{{ infoMessage }}</p>
 
           <div class="legend">
             <span class="legend-secret">Portail Violet = Salle secrete</span>
@@ -4552,6 +4572,20 @@ button.danger {
 .tile-btn.water {
   /* même couleur que les murs (#) : bloquant visuel unifié */
   background: rgba(74, 52, 37, 0.98);
+}
+
+/* Portée d’agro : cases adjacentes aux ennemis (combat au passage) */
+.tile-btn.agro {
+  position: relative;
+  box-shadow: inset 0 0 0 1.8px rgba(214, 5, 5, 0.25);
+}
+.tile-btn.agro::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(ellipse 60% 60% at 50% 50%, rgba(180, 90, 70, 0.08), transparent 70%);
+  pointer-events: none;
 }
 
 .tile-btn.player {
