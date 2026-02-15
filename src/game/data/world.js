@@ -550,15 +550,6 @@ export const MAPS = {
     },
     npcs: [
       {
-        id: 'npc_bard',
-        name: 'Luthe le Barde borgne',
-        role: 'merchant',
-        x: 2,
-        y: 9,
-        portrait: ROGUE_ASSET,
-        dialogue: 'Derniere ligne droite. Fais le plein avant les grands halls.',
-      },
-      {
         id: 'npc_smith_prime',
         name: 'Maitre Baldur',
         role: 'craft',
@@ -892,15 +883,6 @@ export const MAPS = {
       targetMapId: 'shattered_sanctum',
     },
     npcs: [
-      {
-        id: 'npc_archivist',
-        name: 'Seline l Archiviste',
-        role: 'merchant',
-        x: 2,
-        y: 2,
-        portrait: WIZZARD_ASSET,
-        dialogue: 'Je troque des potions tactiques contre de l\'or. Elles sauvent des runs.',
-      },
       {
         id: 'npc_warder',
         name: 'Vark le Gardien',

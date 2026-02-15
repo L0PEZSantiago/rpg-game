@@ -238,6 +238,7 @@ const INVENTORY_GROUP_DEFS = [
   { id: 'consumable', label: 'Consommables', icon: '/assets/Icons/potion.png' },
   { id: 'other', label: 'Divers', icon: '/assets/Icons/backpack.png' },
 ]
+const AZERTY_SKILL_KEYS = ['&', 'é', '"', "'", '(']
 const COMBAT_CONSUMABLE_GROUP_DEFS = [
   { id: 'regen', label: 'Regeneration', icon: '/assets/Icons/potion.png' },
   { id: 'buff', label: 'Buff', icon: '/assets/Icons/skills.png' },
@@ -250,7 +251,7 @@ const INVENTORY_TOOLTIP_GAP = 16
 const INVENTORY_TOOLTIP_PAD = 10
 
 function consumableGroupIdFromEffect(effect) {
-  if (effect === 'heal_80' || effect === 'mana_60' || effect === 'heal_45_mana_35') {
+  if (effect === 'heal_50' || effect === 'heal_80' || effect === 'mana_60' || effect === 'heal_45_mana_35') {
     return 'regen'
   }
   if (effect === 'buff_resistance' || effect === 'buff_damage' || effect === 'buff_crit') {
@@ -373,9 +374,10 @@ function inventoryDetail(item) {
   return ''
 }
 
-function consumableDescription(effect) {
-  if (effect === 'heal_80') {
-    return 'Rend 80 PV.'
+function consumableDescription(effect, item = null) {
+  if (effect === 'heal_50' || effect === 'heal_80') {
+    const amount = item?.rarity === 'common' ? 50 : 80
+    return `Rend ${amount} PV.`
   }
   if (effect === 'mana_60') {
     return 'Rend 60 mana.'
@@ -402,11 +404,12 @@ function itemDescription(item) {
   if (!item) {
     return ''
   }
+  if (item.kind === 'consumable') {
+    const fromEffect = consumableDescription(item.effect, item)
+    if (fromEffect) return fromEffect
+  }
   if (item.description) {
     return item.description
-  }
-  if (item.kind === 'consumable') {
-    return consumableDescription(item.effect)
   }
   if (item.kind === 'equipment') {
     const bonuses = []
@@ -455,7 +458,7 @@ function consumableDisableReason(item) {
     }
   }
 
-  if (item.effect === 'heal_80' && run.value.player.hp >= maxHp) {
+  if ((item.effect === 'heal_50' || item.effect === 'heal_80') && run.value.player.hp >= maxHp) {
     return 'PV déjà au maximum.'
   }
   if (item.effect === 'mana_60' && run.value.player.mana >= maxMana) {
@@ -921,6 +924,7 @@ function openPendingLootModal() {
 }
 
 function closeLootModal() {
+  hideInventoryItemTooltip()
   lootModal.value = null
 }
 
@@ -2295,7 +2299,7 @@ function itemIcon(item) {
     if (item.effect === 'mana_60') {
       return '/assets/Icons/mana_potion.png'
     }
-    if (item.effect === 'heal_80' || item.effect === 'heal_45_mana_35') {
+    if (item.effect === 'heal_50' || item.effect === 'heal_80' || item.effect === 'heal_45_mana_35') {
       return '/assets/Icons/life_potion.png'
     }
     return '/assets/Icons/potion.png'
@@ -3126,6 +3130,26 @@ function keyHandler(event) {
     }
     return
   }
+  if (key === 'i') {
+    event.preventDefault()
+    inventoryModalOpen.value = !inventoryModalOpen.value
+    return
+  }
+  if (key === 'b') {
+    event.preventDefault()
+    characteristicsModalOpen.value = !characteristicsModalOpen.value
+    return
+  }
+  if (key === 'k') {
+    event.preventDefault()
+    skillsModalOpen.value = !skillsModalOpen.value
+    return
+  }
+  if (key === 'p') {
+    event.preventDefault()
+    passivesModalOpen.value = !passivesModalOpen.value
+    return
+  }
   if (!run.value.combat) {
     if (key === 'arrowup' || key === 'z') {
       event.preventDefault()
@@ -3159,7 +3183,7 @@ function keyHandler(event) {
     return
   }
 
-  if (key === 'x') {
+  if (key === 'a') {
     useNormalAttack()
   }
   if (key === 'v') {
@@ -3169,9 +3193,15 @@ function keyHandler(event) {
     event.preventDefault()
     endTurnAction()
   }
-  if (['1', '2', '3', '4', '5'].includes(key)) {
-    const skill = unlockedPlayerSkills.value[Number.parseInt(key, 10) - 1]
+  const skillIndexByKey = {
+    '1': 0, '2': 1, '3': 2, '4': 3, '5': 4,
+    '&': 0, 'é': 1, '"': 2, "'": 3, '(': 4,
+  }
+  const skillIndex = skillIndexByKey[key]
+  if (skillIndex != null) {
+    const skill = unlockedPlayerSkills.value[skillIndex]
     if (skill) {
+      event.preventDefault()
       useSkillAction(skill.id)
     }
   }
@@ -3388,6 +3418,12 @@ onBeforeUnmount(() => {
             <span><kbd>Q</kbd> Gauche</span>
             <span><kbd>D</kbd> Droite</span>
           </div>
+          <div class="legend-keys legend-keys-modals">
+            <span><kbd>I</kbd> Inventaire</span>
+            <span><kbd>K</kbd> Competences</span>
+            <span><kbd>P</kbd> Passifs</span>
+            <span><kbd>B</kbd> Caracteristiques</span>
+          </div>
 
           <div class="controls">
             <button @click="openNpcPanel">Interagir PNJ (E)</button>
@@ -3415,9 +3451,9 @@ onBeforeUnmount(() => {
                     {{ run.player.equipment.weapon.name }}
                   </strong>
                   <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0
-                  }}</p>
+                    }}</p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{ bonus
-                  }}</p>
+                    }}</p>
                   <button @click="unequipAction('weapon')">Retirer</button>
                 </div>
               </div>
@@ -3435,7 +3471,7 @@ onBeforeUnmount(() => {
                   <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0 }}
                   </p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus
-                  }}</p>
+                    }}</p>
                   <button @click="unequipAction('armor')">Retirer</button>
                 </div>
               </div>
@@ -3451,9 +3487,9 @@ onBeforeUnmount(() => {
                     {{ run.player.equipment.trinket.name }}
                   </strong>
                   <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ?? 0
-                  }}</p>
+                    }}</p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.trinket)" :key="bonus" class="item-affix">{{ bonus
-                  }}</p>
+                    }}</p>
                   <button @click="unequipAction('trinket')">Retirer</button>
                 </div>
               </div>
@@ -3501,7 +3537,7 @@ onBeforeUnmount(() => {
       <div v-if="activeCombatView && run" class="overlay-combat">
         <div v-if="combatIntroActive && run.combat" class="combat-intro-overlay" @click="closeCombatIntro">
           <article class="combat-intro-modal">
-            <p class="combat-intro-text">Un <strong>{{ run.combat.enemyName }}</strong> sauvage apparaît !</p>
+            <p class="combat-intro-text">Un <strong>{{ run.combat.enemyName }}</strong> apparaît !</p>
             <div class="combat-intro-sprite-box">
               <img class="combat-intro-sprite-img" :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')"
                 alt="" :style="battleSpriteStripStyle('enemy')" />
@@ -3532,7 +3568,7 @@ onBeforeUnmount(() => {
                 </h3>
                 <div class="combat-actions-row">
                   <button :disabled="!normalAttackReady()" @click="useNormalAttack">
-                    Attaque normale (2 PA)
+                    Attaque normale (2 PA) (A)<kbd></kbd>
                   </button>
                   <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%)
                     (V)</button>
@@ -3549,7 +3585,7 @@ onBeforeUnmount(() => {
                 <div class="skills-grid">
                   <button v-for="(skill, index) in unlockedPlayerSkills" :key="skill.id" :disabled="!skillReady(skill)"
                     @click="useSkillAction(skill.id)">
-                    {{ index + 1 }}. {{ skill.name }}
+                    {{ index + 1 }}. {{ skill.name }} <kbd></kbd>
                     <small>
                       {{ skill.description }}
                       | PA {{ skill.apCost }} mana {{ effectiveSkillManaCost(skill) }}
@@ -3576,10 +3612,15 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="potions-grid">
                   <button v-for="item in combatActiveConsumableGroup?.items ?? []" :key="item.id"
-                    :disabled="!canUseConsumable(item)" :title="consumableDisableReason(item)"
+                    class="potions-grid-btn" :disabled="!canUseConsumable(item)" :title="consumableDisableReason(item)"
                     @click="consumeItem(item.id)" @mouseenter="markInventoryItemSeen(item.id)">
-                    <span>{{ item.name }} x{{ item.quantity }}</span>
-                    <small>{{ consumableGroupLabel(item.effect) }} | Cout: 2 PA</small>
+                    <img class="potions-grid-icon" :src="itemIcon(item)" alt="" />
+                    <span class="potions-grid-body">
+                      <span class="potions-grid-name" :style="{ color: rarityColor(item.rarity) }">{{ item.name }} x{{
+                        item.quantity }}</span>
+                      <span class="consumable-effect">{{ consumableDescription(item.effect, item) }}</span>
+                    </span>
+                    <span class="potions-grid-cost">2 PA</span>
                   </button>
                   <p v-if="!(combatActiveConsumableGroup?.items.length ?? 0)">Aucun objet dans cet onglet.</p>
                 </div>
@@ -3667,7 +3708,7 @@ onBeforeUnmount(() => {
                     <div class="battle-ap-spotlight enemy">
                       <img src="/assets/Icons/dagger.png" alt="" />
                       <p class="battle-ap-label">PA : {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap
-                      }}</p>
+                        }}</p>
                     </div>
                   </div>
 
@@ -3819,34 +3860,38 @@ onBeforeUnmount(() => {
 
       <div v-if="lootModal" class="overlay-meta" @click="closeLootModal">
         <article class="meta-modal loot-modal" @click.stop>
-          <header class="inventory-modal-head">
-            <h2>
-              <img src="/assets/Icons/backpack.png" alt="" />
+          <header class="loot-modal-header">
+            <h2 class="loot-modal-title">
+              <img src="/assets/Icons/backpack.png" alt="" class="loot-modal-title-icon" />
               Butin récupéré
             </h2>
-            <p>{{ lootModal.enemyName }}</p>
+            <p class="loot-modal-source">{{ lootModal.enemyName }}</p>
           </header>
           <div class="loot-summary">
-            <p>+{{ lootModal.xp }} XP</p>
-            <p>+{{ lootModal.gold }} or</p>
+            <span class="loot-badge">+{{ lootModal.xp }} XP</span>
+            <span class="loot-badge">+{{ lootModal.gold }} or</span>
           </div>
-          <section v-if="lootModal.materials?.length">
-            <h3>Materiaux</h3>
-            <ul>
+          <section v-if="lootModal.materials?.length" class="loot-section">
+            <h3 class="loot-section-title">Materiaux</h3>
+            <ul class="loot-materials-list">
               <li v-for="entry in lootModal.materials" :key="`loot-material-${entry.material}`">
                 {{ MATERIAL_LABELS[entry.material] ?? entry.material }} x{{ entry.quantity }}
               </li>
             </ul>
           </section>
-          <section v-if="lootModal.items?.length">
-            <h3>Objets</h3>
+          <section v-if="lootModal.items?.length" class="loot-section">
+            <h3 class="loot-section-title">Objets</h3>
             <ul class="loot-items">
-              <li v-for="item in lootModal.items" :key="`loot-item-${item.id}`">
+              <li v-for="item in lootModal.items" :key="`loot-item-${item.id}`"
+                @mouseenter="showInventoryItemTooltip(item, $event)"
+                @mouseleave="hideInventoryItemTooltip()"
+                @mousemove="moveInventoryItemTooltip($event)">
                 <img class="item-icon" :src="itemIcon(item)" alt="loot" />
                 <div class="item-main">
                   <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
                   <p>{{ inventoryTypeLabel(item) }}</p>
                   <p v-if="itemDescription(item)">{{ itemDescription(item) }}</p>
+                  <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
                   <p class="inventory-price">Prix de vente: {{ itemSellPrice(item) }} or</p>
                   <div class="row-actions">
                     <button v-if="item.kind === 'equipment'" @click="equipLootItem(item.id)">Equiper</button>
@@ -3858,8 +3903,28 @@ onBeforeUnmount(() => {
                 </div>
               </li>
             </ul>
+            <div v-if="lootModal && inventoryTooltip.visible && hoveredInventoryItem?.kind === 'equipment'"
+              class="item-compare-tooltip floating" :style="inventoryTooltipStyle">
+              <p class="compare-title">Comparaison equipement</p>
+              <p class="compare-equipped-name">{{ equippedComparisonLabel(hoveredInventoryItem) }}</p>
+              <div class="compare-head">
+                <span>Stat</span>
+                <span>Objet</span>
+                <span>Equipe</span>
+                <span>Delta</span>
+              </div>
+              <div v-for="row in equipmentCompareRows(hoveredInventoryItem)"
+                :key="`loot-cmp-${hoveredInventoryItem.id}-${row.id}`" class="compare-row">
+                <span>{{ row.label }}</span>
+                <span>{{ row.candidate }}</span>
+                <span>{{ row.equipped }}</span>
+                <strong :class="statDeltaClass(row.delta)">{{ statDeltaLabel(row.delta) }}</strong>
+              </div>
+            </div>
           </section>
-          <button class="primary" @click="closeLootModal">Continuer</button>
+          <div class="loot-modal-actions">
+            <button class="primary loot-continue-btn" @click="closeLootModal">Continuer</button>
+          </div>
         </article>
       </div>
 
@@ -3961,15 +4026,12 @@ onBeforeUnmount(() => {
             <p class="skills-modal-subtitle">Compétences de classe disponibles au combat</p>
           </header>
           <div class="skills-catalog">
-            <article
-              v-for="skill in skillCatalog"
-              :key="skill.id"
-              class="skill-card"
-              :class="{ 'skill-card-unlocked': unlockedPlayerSkills.some((s) => s.id === skill.id) }"
-            >
+            <article v-for="skill in skillCatalog" :key="skill.id" class="skill-card"
+              :class="{ 'skill-card-unlocked': unlockedPlayerSkills.some((s) => s.id === skill.id) }">
               <div class="skill-card-head">
                 <strong class="skill-card-name">{{ skill.name }}</strong>
-                <span v-if="unlockedPlayerSkills.some((s) => s.id === skill.id)" class="skill-badge skill-badge-unlocked">Débloquée</span>
+                <span v-if="unlockedPlayerSkills.some((s) => s.id === skill.id)"
+                  class="skill-badge skill-badge-unlocked">Débloquée</span>
                 <span v-else class="skill-badge skill-badge-locked">Niv. {{ skill.unlockLevel }}</span>
               </div>
               <p class="skill-card-desc">{{ skill.description }}</p>
@@ -3991,10 +4053,12 @@ onBeforeUnmount(() => {
             <h2>Arbre passif – {{ currentClass?.name }}</h2>
             <div class="passive-tree-info">
               <span>Points disponibles: <strong>{{ run.player.passivePoints }}</strong></span>
-              <span>Réinit. possible: <strong>{{ passiveResetRemaining }}</strong> / {{ PASSIVE_RESET_RULES.limit }}</span>
+              <span>Réinit. possible: <strong>{{ passiveResetRemaining }}</strong> / {{ PASSIVE_RESET_RULES.limit
+                }}</span>
             </div>
             <p v-if="currentClass?.innatePassive" class="passive-innate-line">
-              Passif de base: <strong>{{ currentClass.innatePassive.name }}</strong> – {{ currentClass.innatePassive.description }}
+              Passif de base: <strong>{{ currentClass.innatePassive.name }}</strong> – {{
+                currentClass.innatePassive.description }}
             </p>
           </header>
           <div v-if="passiveBranches.length" class="passive-branches">
@@ -4013,17 +4077,13 @@ onBeforeUnmount(() => {
                     </li>
                   </ul>
                   <p v-else class="passive-node-summary">{{ passive.description }}</p>
-                  <small v-if="passive.requires" class="passive-node-req">Préreq.: {{ passive.requiresName ?? passive.requires }}</small>
-                  <button
-                    type="button"
-                    class="passive-unlock-btn"
-                    :class="{
-                      'passive-btn-available': passiveCanUnlock(passive) && !run.player.unlockedPassives.includes(passive.id),
-                      'passive-btn-unlocked': run.player.unlockedPassives.includes(passive.id),
-                    }"
-                    :disabled="!passiveCanUnlock(passive)"
-                    @click="unlockPassiveAction(passive.id)"
-                  >
+                  <small v-if="passive.requires" class="passive-node-req">Préreq.: {{ passive.requiresName ??
+                    passive.requires
+                    }}</small>
+                  <button type="button" class="passive-unlock-btn" :class="{
+                    'passive-btn-available': passiveCanUnlock(passive) && !run.player.unlockedPassives.includes(passive.id),
+                    'passive-btn-unlocked': run.player.unlockedPassives.includes(passive.id),
+                  }" :disabled="!passiveCanUnlock(passive)" @click="unlockPassiveAction(passive.id)">
                     {{ run.player.unlockedPassives.includes(passive.id) ? 'Débloqué' : 'Débloquer' }}
                   </button>
                 </article>
@@ -4034,16 +4094,10 @@ onBeforeUnmount(() => {
             <li v-for="passive in passiveCatalog" :key="passive.id">
               <strong>{{ passive.name }}</strong>
               <p>{{ passive.description }}</p>
-              <button
-                type="button"
-                class="passive-unlock-btn"
-                :class="{
-                  'passive-btn-available': passiveCanUnlock(passive) && !run.player.unlockedPassives.includes(passive.id),
-                  'passive-btn-unlocked': run.player.unlockedPassives.includes(passive.id),
-                }"
-                :disabled="!passiveCanUnlock(passive)"
-                @click="unlockPassiveAction(passive.id)"
-              >
+              <button type="button" class="passive-unlock-btn" :class="{
+                'passive-btn-available': passiveCanUnlock(passive) && !run.player.unlockedPassives.includes(passive.id),
+                'passive-btn-unlocked': run.player.unlockedPassives.includes(passive.id),
+              }" :disabled="!passiveCanUnlock(passive)" @click="unlockPassiveAction(passive.id)">
                 {{ run.player.unlockedPassives.includes(passive.id) ? 'Débloqué' : 'Débloquer' }}
               </button>
             </li>
@@ -4297,7 +4351,6 @@ button.danger {
   padding: 12px;
   border-radius: 14px;
   background: linear-gradient(150deg, rgba(8, 24, 31, 0.9), rgba(66, 28, 17, 0.88));
-  position: sticky;
   top: 10px;
   z-index: 14;
 }
@@ -4394,6 +4447,19 @@ button.danger {
   image-rendering: pixelated;
 }
 
+@keyframes new-badge-blink {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.15);
+    filter: brightness(1.4);
+  }
+}
+
 .new-badge {
   display: inline-flex;
   align-items: center;
@@ -4408,6 +4474,7 @@ button.danger {
   font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.02em;
+  animation: new-badge-blink 1.2s ease-in-out infinite;
 }
 
 .columns {
@@ -4579,6 +4646,7 @@ button.danger {
   position: relative;
   box-shadow: inset 0 0 0 1.8px rgba(214, 5, 5, 0.25);
 }
+
 .tile-btn.agro::after {
   content: '';
   position: absolute;
@@ -4660,6 +4728,10 @@ button.danger {
   margin-top: 6px;
   font-size: 0.8rem;
   color: rgba(220, 207, 175, 0.9);
+}
+
+.legend-keys-modals {
+  margin-top: 4px;
 }
 
 .legend-keys span {
@@ -5150,7 +5222,49 @@ button.danger {
 .skills-grid,
 .potions-grid {
   display: grid;
-  gap: 6px;
+  gap: 4px;
+}
+
+.potions-grid-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  min-height: 0;
+  text-align: left;
+}
+
+.potions-grid-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  image-rendering: pixelated;
+  object-fit: contain;
+}
+
+.potions-grid-body {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  flex: 1;
+}
+
+.potions-grid-name {
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.potions-grid .consumable-effect {
+  font-size: 0.82rem;
+  opacity: 0.92;
+  line-height: 1.2;
+}
+
+.potions-grid-cost {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 0.8rem;
+  opacity: 0.9;
 }
 
 .skills-grid button {
@@ -5188,15 +5302,6 @@ button.danger {
   background: linear-gradient(136deg, rgba(26, 106, 128, 0.92), rgba(26, 65, 94, 0.92));
 }
 
-.potions-grid button {
-  display: grid;
-  gap: 2px;
-}
-
-.potions-grid button small {
-  font-size: 0.7rem;
-  opacity: 0.82;
-}
 
 .battle-stage {
   position: relative;
@@ -5836,6 +5941,7 @@ button.danger {
   border-radius: 999px;
   background: #ff8f7a;
   box-shadow: 0 0 8px rgba(255, 143, 122, 0.7);
+  animation: new-badge-blink 1.2s ease-in-out infinite;
 }
 
 .inventory-group h3 {
@@ -5871,31 +5977,108 @@ button.danger {
   color: #ffd08f;
 }
 
+/* ----- Butin récupéré: refonte ----- */
 .loot-modal {
-  width: min(88vw, 560px);
+  width: min(88vw, 520px);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
-.portal-confirm-modal {
-  width: min(90vw, 460px);
+.loot-modal-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(247, 204, 133, 0.28);
+}
+
+.loot-modal-title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.15rem;
+  color: rgba(247, 204, 133, 1);
+}
+
+.loot-modal-title-icon {
+  width: 22px;
+  height: 22px;
+  image-rendering: pixelated;
+}
+
+.loot-modal-source {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.9;
+  color: rgba(220, 210, 195, 0.95);
 }
 
 .loot-summary {
   display: flex;
-  gap: 10px;
+  gap: 0.5rem;
   flex-wrap: wrap;
-  margin: 8px 0;
 }
 
-.loot-summary p {
-  margin: 0;
-  border: 1px solid rgba(245, 206, 144, 0.3);
+.loot-badge {
+  display: inline-block;
+  border: 1px solid rgba(245, 206, 144, 0.35);
   border-radius: 999px;
-  padding: 4px 10px;
-  background: rgba(16, 35, 44, 0.55);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.9rem;
+  background: rgba(16, 35, 44, 0.6);
+  color: rgba(255, 248, 235, 0.95);
+}
+
+.loot-section {
+  margin: 0;
+}
+
+.loot-section-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: rgba(247, 204, 133, 0.9);
+}
+
+.loot-materials-list {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  list-style: none;
+  border-radius: 8px;
+  background: rgba(12, 28, 36, 0.5);
+  border: 1px solid rgba(247, 204, 133, 0.2);
+}
+
+.loot-materials-list li {
+  padding: 0.2rem 0;
+  font-size: 0.88rem;
 }
 
 .loot-items {
-  margin-top: 8px;
+  margin: 0.5rem 0 0;
+}
+
+.loot-modal-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(247, 204, 133, 0.2);
+}
+
+.loot-continue-btn {
+  min-width: 200px;
+  padding: 0.65rem 1.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.portal-confirm-modal {
+  width: min(90vw, 460px);
 }
 
 .npc-actions button {
@@ -5982,7 +6165,7 @@ button.danger {
 }
 
 .passive-branch-desc,
-.passive-branch > p {
+.passive-branch>p {
   margin: 0 0 0.75rem;
   font-size: 0.82rem;
   opacity: 0.88;
@@ -6106,13 +6289,16 @@ button.danger {
 }
 
 @keyframes passive-btn-shine {
+
   /* Début / fin : lueur douce, proche du bouton */
-  0%, 100% {
+  0%,
+  100% {
     box-shadow:
       0 0 8px rgba(255, 215, 120, 0.2),
       0 0 16px rgba(255, 200, 100, 0.12),
       0 2px 6px rgba(180, 140, 80, 0.15);
   }
+
   /* Montée : la brillance prend de l'ampleur */
   35% {
     box-shadow:
@@ -6121,6 +6307,7 @@ button.danger {
       0 0 42px rgba(255, 190, 90, 0.12),
       0 2px 12px rgba(200, 160, 90, 0.25);
   }
+
   /* Pic : dispersion max, halo doré qui s'étale */
   50% {
     box-shadow:
@@ -6129,6 +6316,7 @@ button.danger {
       0 0 60px rgba(255, 195, 100, 0.15),
       0 2px 16px rgba(210, 170, 100, 0.3);
   }
+
   /* Redescente */
   65% {
     box-shadow:

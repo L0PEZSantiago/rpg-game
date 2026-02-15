@@ -39,7 +39,7 @@ const RAW_CLASS_DEFINITIONS = [
     baseStats: {
       maxHp: 92,
       maxMana: 162,
-      attack: 15,
+      attack: 11,
       defense: 8,
       speed: 10,
       critChance: 0.12,
@@ -56,7 +56,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 10,
         cooldown: 1,
         effect: 'damage',
-        power: 1.2,
+        power: 1.65,
       },
       {
         id: 'mage_nova',
@@ -67,7 +67,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 16,
         cooldown: 2,
         effect: 'damage',
-        power: 1.45,
+        power: 2.2,
         armorPen: 0.28,
       },
       {
@@ -104,7 +104,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 28,
         cooldown: 4,
         effect: 'damage',
-        power: 2.15,
+        power: 2.75,
       },
     ],
     passives: [
@@ -149,7 +149,7 @@ const RAW_CLASS_DEFINITIONS = [
     baseStats: {
       maxHp: 116,
       maxMana: 134,
-      attack: 13,
+      attack: 11,
       defense: 11,
       speed: 8,
       critChance: 0.08,
@@ -164,9 +164,9 @@ const RAW_CLASS_DEFINITIONS = [
         description: 'Inflige des degats de nature continus.',
         apCost: 3,
         manaCost: 9,
-        cooldown: 1,
+        cooldown: 0,
         effect: 'damage',
-        power: 1.08,
+        power: 1.65,
       },
       {
         id: 'druid_regrowth',
@@ -215,7 +215,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 21,
         cooldown: 4,
         effect: 'damage',
-        power: 2,
+        power: 2.75,
       },
     ],
     passives: [
@@ -257,7 +257,7 @@ const RAW_CLASS_DEFINITIONS = [
     baseStats: {
       maxHp: 97,
       maxMana: 108,
-      attack: 17,
+      attack: 13,
       defense: 8,
       speed: 14,
       critChance: 0.2,
@@ -274,20 +274,18 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 6,
         cooldown: 1,
         effect: 'damage',
-        power: 1.32,
+        power: 1.65,
       },
       {
         id: 'assassin_fade',
         name: 'Pas de fadeur',
         unlockLevel: 2,
-        description: 'Gagne +2 PA et esquive un coup.',
+        description: 'Gagne +2 PA.',
         apCost: 0,
         manaCost: 10,
         cooldown: 3,
         effect: 'buff',
-        buffType: 'dodge',
-        buffValue: 1,
-        buffTurns: 1,
+        buffType: 'apOnly',
         restoreAp: 2,
       },
       {
@@ -313,7 +311,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 14,
         cooldown: 2,
         effect: 'damage',
-        power: 1.55,
+        power: 2.2,
       },
       {
         id: 'assassin_execution',
@@ -324,7 +322,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 20,
         cooldown: 4,
         effect: 'execute',
-        power: 1.6,
+        power: 2.75,
         executeBonus: 0.65,
       },
     ],
@@ -377,7 +375,7 @@ const RAW_CLASS_DEFINITIONS = [
     baseStats: {
       maxHp: 138,
       maxMana: 88,
-      attack: 16,
+      attack: 12,
       defense: 15,
       speed: 7,
       critChance: 0.07,
@@ -394,7 +392,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 4,
         cooldown: 1,
         effect: 'damage',
-        power: 1.28,
+        power: 1.65,
       },
       {
         id: 'warrior_bulwark',
@@ -441,7 +439,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 18,
         cooldown: 4,
         effect: 'damage',
-        power: 2.3,
+        power: 3.3,
       },
     ],
     passives: [
@@ -486,7 +484,7 @@ const RAW_CLASS_DEFINITIONS = [
     baseStats: {
       maxHp: 102,
       maxMana: 114,
-      attack: 16,
+      attack: 12,
       defense: 9,
       speed: 12,
       critChance: 0.16,
@@ -503,7 +501,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 8,
         cooldown: 1,
         effect: 'damage',
-        power: 1.25,
+        power: 1.65,
       },
       {
         id: 'archer_pin',
@@ -528,7 +526,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 15,
         cooldown: 3,
         effect: 'damage',
-        power: 1.9,
+        power: 2.75,
       },
       {
         id: 'archer_camouflage',
@@ -552,7 +550,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 22,
         cooldown: 4,
         effect: 'damage',
-        power: 2.25,
+        power: 3.3,
       },
     ],
     passives: [
@@ -604,7 +602,7 @@ const RAW_CLASS_DEFINITIONS = [
     baseStats: {
       maxHp: 104,
       maxMana: 156,
-      attack: 14,
+      attack: 10,
       defense: 9,
       speed: 9,
       critChance: 0.1,
@@ -621,7 +619,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 9,
         cooldown: 0,
         effect: 'damage',
-        power: 1.15,
+        power: 1.65,
       },
       {
         id: 'necro_drain',
@@ -632,7 +630,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 12,
         cooldown: 2,
         effect: 'lifesteal',
-        power: 1.28,
+        power: 2.2,
         stealRatio: 0.45,
       },
       {
@@ -671,7 +669,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 26,
         cooldown: 4,
         effect: 'damage',
-        power: 2.22,
+        power: 3.3,
       },
     ],
     passives: [
@@ -716,7 +714,7 @@ const RAW_CLASS_DEFINITIONS = [
     baseStats: {
       maxHp: 108,
       maxMana: 132,
-      attack: 13,
+      attack: 10,
       defense: 10,
       speed: 11,
       critChance: 0.1,
@@ -725,26 +723,27 @@ const RAW_CLASS_DEFINITIONS = [
     },
     skills: [
       {
+        id: 'bard_harmony',
+        name: 'Vive harmonie',
+        unlockLevel: 1,
+        description: 'Inflige des dégâts et vous soigne.',
+        apCost: 3,
+        manaCost: 12,
+        cooldown: 2,
+        effect: 'heal_and_damage',
+        power: 1.5,
+        healRatio: 0.5,
+      },
+      {
         id: 'bard_note_sharp',
         name: 'Note acérée',
-        unlockLevel: 1,
+        unlockLevel: 2,
         description: 'Dégâts sonore direct.',
         apCost: 3,
         manaCost: 8,
         cooldown: 0,
         effect: 'damage',
-        power: 1.1,
-      },
-      {
-        id: 'bard_harmony',
-        name: 'Vive harmonie',
-        unlockLevel: 2,
-        description: 'Vous soigne une partie de votre vie.',
-        apCost: 3,
-        manaCost: 12,
-        cooldown: 2,
-        effect: 'heal',
-        healRatio: 0.66,
+        power: 1.65,
       },
       {
         id: 'bard_march',
@@ -782,7 +781,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 24,
         cooldown: 4,
         effect: 'damage',
-        power: 2.18,
+        power: 3.3,
       },
     ],
     passives: [
@@ -844,8 +843,8 @@ const CLASS_INNATE_PASSIVES = {
   druid: {
     id: 'innate_life_cycle',
     name: 'Cycle vital',
-    description: '+8% soins lancés et +5% résistance aux états.',
-    bonuses: { healingDonePercent: 0.08, statusResistFlat: 0.05 },
+    description: '+5 régen PV/tour et +5% résistance aux états.',
+    bonuses: { lifeRegenFlat: 5, statusResistFlat: 0.05 },
   },
   assassin: {
     id: 'innate_shadow_edge',
@@ -874,8 +873,8 @@ const CLASS_INNATE_PASSIVES = {
   bard: {
     id: 'innate_battle_rhythm',
     name: 'Rythme de bataille',
-    description: '+3 mana/tour et +5% chance d\'état.',
-    bonuses: { manaRegenFlat: 3, statusChanceFlat: 0.05 },
+    description: '+3 mana/tour et +10% efficacité des soins.',
+    bonuses: { manaRegenFlat: 3, healingDonePercent: 0.1 },
   },
 }
 

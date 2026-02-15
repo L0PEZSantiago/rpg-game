@@ -161,14 +161,14 @@ export const CONSUMABLES_SHOP = [
   {
     id: 'shop_potion',
     name: 'Potion majeure de sante',
-    price: 54,
+    price: 60,
     effect: 'heal_80',
-    description: 'Rend 80 PV.',
+    description: 'Rend 50 PV.',
   },
   {
     id: 'shop_mana',
     name: 'Elixir de mana',
-    price: 48,
+    price: 50,
     effect: 'mana_60',
     description: 'Rend 60 mana.',
   },
@@ -198,7 +198,7 @@ export const CONSUMABLES_SHOP = [
   {
     id: 'shop_recovery_kit',
     name: 'Kit de recuperation',
-    price: 70,
+    price: 100,
     effect: 'heal_45_mana_35',
     description: 'Rend 45 PV et 35 mana.',
   },

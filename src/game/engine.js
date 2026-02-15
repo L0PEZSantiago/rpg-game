@@ -29,18 +29,19 @@ const PASSIVE_LIFESTEAL_MAX_RATIO = 0.3
 const PASSIVE_LIFESTEAL_EFFECTIVENESS = 0.55
 const PASSIVE_LIFESTEAL_HIT_CAP_MAX_HP_RATIO = 0.12
 const NON_BOSS_EQUIPMENT_DROP_CHANCE = 0.6
-const MYTHIC_RATE_REDUCTION = 0.95
+/** Poids mythique boss : avec biais mythic (+4), (w+4)/(84+w) ≤ 0.10 => max 10% */
+const BOSS_MYTHIC_WEIGHT = 4.9
 const CHEST_MYTHIC_CHANCE = 0.05
-const SELL_PRICE_FACTOR = 0.22
+const SELL_PRICE_FACTOR = 0.12 // 12% du prix d'achat, pour changer la valeur de vente des objets
 const SELL_RARITY_MULTIPLIER = {
   common: 1,
-  uncommon: 1.08,
-  rare: 1.18,
-  epic: 1.3,
-  legendary: 1.45,
-  mythic: 1.65,
+  uncommon: 1.05,
+  rare: 1.1,
+  epic: 1.15,
+  legendary: 1.2,
+  mythic: 1.3,
 }
-const ENEMY_GOLD_REWARD_FACTOR = 0.72
+const ENEMY_GOLD_REWARD_FACTOR = 0.12 // 0.72 / 6
 const CRAFT_COST_MULTIPLIER = 1.4
 const PASSIVE_RESET_COST = 200
 const PASSIVE_RESET_LIMIT = 1
@@ -457,8 +458,8 @@ function createStarterInventory(selectedClass) {
     {
       id: uid('consumable'),
       kind: 'consumable',
-      name: 'Potion majeure',
-      effect: 'heal_80',
+      name: 'Potion de soin',
+      effect: 'heal_50',
       quantity: 2,
       rarity: 'common',
       value: 24,
@@ -1157,7 +1158,7 @@ function rarityWeights(isBoss) {
       { value: 'rare', weight: 20 },
       { value: 'epic', weight: 16 },
       { value: 'legendary', weight: 16 },
-      { value: 'mythic', weight: 8 * MYTHIC_RATE_REDUCTION },
+      { value: 'mythic', weight: BOSS_MYTHIC_WEIGHT },
     ]
   }
   return [
@@ -1474,15 +1475,7 @@ function resolveEnemyDeath(run, enemyRef) {
       material: entry.material,
       quantity: entry.quantity,
     })),
-    items: loots.map((item) => ({
-      id: item.id,
-      name: item.name,
-      rarity: item.rarity,
-      kind: item.kind,
-      slot: item.slot ?? null,
-      quantity: item.quantity ?? 1,
-      icon: item.icon ?? '',
-    })),
+    items: loots.map((item) => ({ ...item })),
   }
 
   const lootLine = loots.length
@@ -1909,9 +1902,6 @@ function startTurn(run) {
       }
     }
 
-    if (stats.lifeRegenFlat > 0) {
-      run.player.hp = clamp(run.player.hp + stats.lifeRegenFlat, 0, stats.maxHp)
-    }
     run.player.mana = clamp(run.player.mana + Math.max(4, stats.manaRegenFlat), 0, stats.maxMana)
     return
   }
@@ -2210,6 +2200,42 @@ function applySkill(run, side, skill) {
       battle.enemyHp = clamp(battle.enemyHp + rawHeal, 0, maxHp)
       text += ` ${battle.enemyName} récupère ${rawHeal} PV.`
     }
+  } else if (skill.effect === 'heal_and_damage') {
+    const effectivePower = skillPowerByAp(side, skill, attacker)
+    const rolled = computeDamage(attacker, defender, effectivePower, bonusPercent, skill.armorPen ?? 0)
+    const currentHp = side === 'player' ? battle.enemyHp : run.player.hp
+    const targetEffects = side === 'player' ? battle.enemyEffects : battle.playerEffects
+    const result = takeDamage(currentHp, targetEffects, rolled.damage, defender)
+    if (side === 'player') {
+      battle.enemyHp = result.hp
+    } else {
+      run.player.hp = result.hp
+    }
+    const lifeStealHealed = !result.dodged ? applyPassiveLifeSteal(run, battle, side, attacker, result.damage) : 0
+    if (rolled.crit && !result.dodged) {
+      text += ' Critique.'
+    }
+    if (result.dodged) {
+      text += ` ${targetName} esquive.`
+    } else {
+      text += ` ${targetName} subit ${result.damage} degats.`
+    }
+    if (lifeStealHealed > 0) {
+      text += ` Vol de vie: +${lifeStealHealed} PV.`
+    }
+    const maxHp = side === 'player' ? playerStats.maxHp : battle.enemyStats.maxHp
+    const rawHeal = Math.floor(
+      (attacker.attack * (skill.healRatio ?? 0.5) + attacker.maxHp * 0.05) *
+      (1 + (side === 'player' ? playerStats.healingDonePercent : 0)),
+    )
+    if (side === 'player') {
+      const healed = Math.floor(rawHeal * (1 + playerStats.healingTakenPercent))
+      run.player.hp = clamp(run.player.hp + healed, 0, maxHp)
+      text += ` ${run.player.name} récupère ${healed} PV.`
+    } else {
+      battle.enemyHp = clamp(battle.enemyHp + rawHeal, 0, maxHp)
+      text += ` ${battle.enemyName} récupère ${rawHeal} PV.`
+    }
   } else if (skill.effect === 'lifesteal') {
     const power = skillPowerByAp(side, skill, attacker)
     const damage = computeDamage(attacker, defender, power, bonusPercent)
@@ -2246,7 +2272,7 @@ function applySkill(run, side, skill) {
         value: skill.buffValue ?? 1,
         turns: skill.buffTurns ?? 1,
       })
-    } else {
+    } else if (buffType !== 'apOnly') {
       effects.push({
         id: uid('buff'),
         type: 'buff',
@@ -2256,7 +2282,9 @@ function applySkill(run, side, skill) {
       })
     }
     restoredAp = Math.max(0, Math.floor(skill.restoreAp ?? 0))
-    text += ` Buff ${buffType === 'dodge' ? 'esquive' : buffType} actif.`
+    if (buffType !== 'apOnly') {
+      text += ` Buff ${buffType === 'dodge' ? 'esquive' : buffType} actif.`
+    }
     if (restoredAp > 0) {
       text += ` +${restoredAp} PA.`
     }
@@ -2702,6 +2730,15 @@ export function endPlayerTurn(run) {
   if (!run.combat || run.combat.actor !== 'player') {
     return
   }
+  const stats = derivedStats(run)
+  if (stats.lifeRegenFlat > 0) {
+    const before = run.player.hp
+    run.player.hp = clamp(run.player.hp + stats.lifeRegenFlat, 0, stats.maxHp)
+    const gained = run.player.hp - before
+    if (gained > 0) {
+      appendLog(run, `Régénération: +${gained} PV.`)
+    }
+  }
   endTurn(run)
 }
 
@@ -2769,7 +2806,7 @@ function consumableUsageBlockReason(run, effect) {
     return 'Il faut 2 PA pour utiliser un consommable.'
   }
 
-  if (effect === 'heal_80' && run.player.hp >= stats.maxHp) {
+  if ((effect === 'heal_50' || effect === 'heal_80') && run.player.hp >= stats.maxHp) {
     return 'PV déjà au maximum.'
   }
   if (effect === 'mana_60' && run.player.mana >= stats.maxMana) {
@@ -2782,11 +2819,17 @@ function consumableUsageBlockReason(run, effect) {
   return ''
 }
 
-function applyConsumable(run, effect) {
+function healAmountForPotion(effect, itemRarity) {
+  if (effect !== 'heal_50' && effect !== 'heal_80') return 0
+  return itemRarity === 'common' ? 50 : 80
+}
+
+function applyConsumable(run, effect, itemRarity = null) {
   const stats = derivedStats(run)
-  if (effect === 'heal_80') {
-    run.player.hp = clamp(run.player.hp + 80, 0, stats.maxHp)
-    appendLog(run, 'Potion utilisée: +80 PV.')
+  if (effect === 'heal_50' || effect === 'heal_80') {
+    const amount = healAmountForPotion(effect, itemRarity)
+    run.player.hp = clamp(run.player.hp + amount, 0, stats.maxHp)
+    appendLog(run, `Potion utilisée: +${amount} PV.`)
     return true
   }
   if (effect === 'mana_60') {
@@ -2859,7 +2902,7 @@ export function useConsumable(run, itemId) {
     return { ok: false, reason: blockReason }
   }
 
-  if (!applyConsumable(run, item.effect)) {
+  if (!applyConsumable(run, item.effect, item.rarity)) {
     return { ok: false, reason: 'Effet non gere.' }
   }
 
@@ -2892,11 +2935,12 @@ export function buyConsumable(run, shopId) {
   if ((entry.stock ?? 0) > 0) {
     run.world.shopStock[entry.id] = Math.max(0, (run.world.shopStock[entry.id] ?? entry.stock) - 1)
   }
+  const isHealPotion = entry.effect === 'heal_80'
   addInventoryItem(run, {
     id: uid('consumable'),
     kind: 'consumable',
     name: entry.name,
-    effect: entry.effect,
+    effect: isHealPotion ? 'heal_50' : entry.effect,
     quantity: 1,
     rarity: 'common',
     value: entry.price,
