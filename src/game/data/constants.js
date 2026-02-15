@@ -1,4 +1,4 @@
-export const MAIN_LORE = `Aelys Nox est le dernier Cartographe du Voile. Son ordre a disparu quand le Coeur d'Onyx a ete fracture en sept eclats. Depuis, chaque region est recouverte d'une brume vivante qui devore memoires et royaumes. Aelys porte une marque qui revele les zones oubliees mais attire aussi les seigneurs du Neant. Son serment: reunir les eclats, fermer les failles, et decider si le monde merite encore d'etre sauve.`
+export const MAIN_LORE = `Aelys Nox est le dernier Cartographe du Voile. Son ordre a disparu quand le Cœur d'Onyx a été fracturé en sept éclats. Depuis, chaque région est recouverte d'une brume vivante qui dévore mémoires et royaumes. Aelys porte une marque qui révèle les zones oubliées mais attire aussi les seigneurs du Neant. Son serment: réunir les éclats, fermer les failles, et décider si le monde mérite encore d'être sauvé.`
 
 export const DIFFICULTY_CONFIG = {
   normal: {

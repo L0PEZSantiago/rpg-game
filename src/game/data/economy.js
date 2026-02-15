@@ -95,7 +95,7 @@ export const RECIPES = [
     result: {
       kind: 'equipment',
       slot: 'armor',
-      baseName: 'Armure d ecorce',
+      baseName: 'Armure d\'écorce',
       attack: 1,
       defense: 7,
       value: 180,
@@ -220,14 +220,14 @@ export const RARITY_BONUS_RULES = {
 
 export const EQUIPMENT_BONUS_POOL = [
   { id: 'bonus_hp', label: 'PV max', key: 'maxHpFlat', min: 16, max: 42, weight: 14 },
-  { id: 'bonus_attack', label: 'Degats', key: 'attackFlat', min: 2, max: 7, weight: 11 },
+  { id: 'bonus_attack', label: 'Dégâts', key: 'attackFlat', min: 2, max: 7, weight: 11 },
   { id: 'bonus_defense', label: 'Armure', key: 'defenseFlat', min: 2, max: 6, weight: 12 },
   { id: 'bonus_crit', label: 'Chance crit', key: 'critChanceFlat', min: 0.02, max: 0.07, weight: 9, percent: true },
-  { id: 'bonus_crit_damage', label: 'Degats crit', key: 'critDamageFlat', min: 0.05, max: 0.15, weight: 9, percent: true },
+  { id: 'bonus_crit_damage', label: 'Dégâts crit', key: 'critDamageFlat', min: 0.05, max: 0.15, weight: 9, percent: true },
   { id: 'bonus_dodge', label: 'Chance esquive', key: 'dodgeChanceFlat', min: 0.02, max: 0.08, weight: 10, percent: true },
   { id: 'bonus_parry', label: 'Chance parade', key: 'parryChanceFlat', min: 0.02, max: 0.08, weight: 9, percent: true },
   { id: 'bonus_status', label: 'Chance desorienter', key: 'statusChanceFlat', min: 0.03, max: 0.1, weight: 8, percent: true },
-  { id: 'bonus_resist', label: 'Resistance etats', key: 'statusResistFlat', min: 0.03, max: 0.12, weight: 8, percent: true },
+  { id: 'bonus_resist', label: 'Résistance états', key: 'statusResistFlat', min: 0.03, max: 0.12, weight: 8, percent: true },
   { id: 'bonus_regen', label: 'Regen PV/tour', key: 'lifeRegenFlat', min: 2, max: 7, weight: 7 },
   { id: 'bonus_mana_regen', label: 'Regen mana/tour', key: 'manaRegenFlat', min: 3, max: 9, weight: 7 },
 ]

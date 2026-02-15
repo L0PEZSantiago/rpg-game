@@ -143,7 +143,7 @@ const RAW_CLASS_DEFINITIONS = [
     id: 'druid',
     name: 'Druide',
     fantasy: 'Gardien du cycle sauvage',
-    intro: 'La foret parle en lui, les ruines tremblent.',
+    intro: 'La forêt parle en lui, les ruines tremblent.',
     portrait: PLAYER_ASSET,
     weapon: '/assets/Weapons/Wood/Wood.png',
     baseStats: {
@@ -588,7 +588,7 @@ const RAW_CLASS_DEFINITIONS = [
         id: 'predator_mark',
         tier: 4,
         name: 'Marque du prédateur',
-        description: '+15% Degats globaux.',
+        description: '+15% Dégâts globaux.',
         requires: 'critical_draw',
         bonuses: { damagePercent: 0.15 },
       },
@@ -862,7 +862,7 @@ const CLASS_INNATE_PASSIVES = {
   archer: {
     id: 'innate_hunter_instinct',
     name: 'Instinct du chasseur',
-    description: '+5% esquive et +8% Degats.',
+    description: '+5% esquive et +8% Dégâts.',
     bonuses: { dodgeChanceFlat: 0.05, damagePercent: 0.08 },
   },
   necromancer: {
@@ -967,7 +967,7 @@ const TREE_EFFECT_LABELS = {
   speedPct: 'Vitesse',
   critChancePct: 'Chance critique',
   magicCritChancePct: 'Chance critique magique',
-  critDamagePct: 'Degats critiques',
+  critDamagePct: 'Dégâts critiques',
   dodgeChancePct: 'Esquive',
   dodgeChanceVsPhysicalPct: 'Esquive vs physique',
   dodgeChanceConditionalPct: 'Esquive conditionnelle',
@@ -984,21 +984,21 @@ const TREE_EFFECT_LABELS = {
   healFromDamagePct: 'Soin sur degats',
   manaCostReductionPct: 'Reduction cout mana',
   cooldownReductionPct: 'Reduction cooldown',
-  damagePct: 'Degats',
-  skillDamagePct: 'Degats de competence',
-  basicAttackDamagePct: 'Degats attaque de base',
-  singleTargetDamagePct: 'Degats monocible',
-  singleTargetSkillDamagePct: 'Degats monocible de competence',
-  weaponDamagePct: 'Degats d arme',
-  damageIn1v1Pct: 'Degats en duel',
-  damageAfterSkillPct: 'Degats apres competence',
-  damageAfterCritPct: 'Degats apres critique',
-  damageAfterBeingHitPct: 'Degats apres avoir ete touche',
-  damageWhenActFirstPct: 'Degats en initiative',
-  damageWhileBuffedPct: 'Degats sous buff',
-  damageVsDebuffedPct: 'Degats sur cible affaiblie',
-  damageVsCursedPct: 'Degats sur cible maudite',
-  magicDamagePct: 'Degats magiques',
+  damagePct: 'Dégâts',
+  skillDamagePct: 'Dégâts de competence',
+  basicAttackDamagePct: 'Dégâts attaque de base',
+  singleTargetDamagePct: 'Dégâts monocible',
+  singleTargetSkillDamagePct: 'Dégâts monocible de competence',
+  weaponDamagePct: 'Dégâts d\'arme',
+  damageIn1v1Pct: 'Dégâts en duel',
+  damageAfterSkillPct: 'Dégâts apres competence',
+  damageAfterCritPct: 'Dégâts apres critique',
+  damageAfterBeingHitPct: 'Dégâts après avoir été touché',
+  damageWhenActFirstPct: 'Dégâts en initiative',
+  damageWhileBuffedPct: 'Dégâts sous buff',
+  damageVsDebuffedPct: 'Dégâts sur cible affaiblie',
+  damageVsCursedPct: 'Dégâts sur cible maudite',
+  magicDamagePct: 'Dégâts magiques',
   magicPenPct: 'Penetration magique',
   armorPenPct: 'Penetration armure',
   spellPowerPct: 'Puissance magique',
@@ -1013,20 +1013,20 @@ const TREE_EFFECT_LABELS = {
   positiveEffectivenessPct: 'Efficacite des effets positifs',
   effectivenessPct: 'Efficacite globale',
   shieldStrengthPct: 'Force des boucliers',
-  damageVsBossPct: 'Degats contre boss',
-  firstTurnDamagePct: 'Degats tour 1',
-  damageVsHighHpPct: 'Degats contre cible haute vie',
-  damageWhenHighHpPct: 'Degats avec PV eleves',
-  damageVsFullHpPct: 'Degats contre cible pleine vie',
-  damageWhenManaAbovePct: 'Degats avec mana eleve',
-  damageWhenBelowHpPct: 'Degats avec PV bas',
-  damageWhenLowHpPct: 'Degats avec PV bas',
-  damageVsLowHpPct: 'Degats contre cible basse vie',
-  damageScalingPerTurnPct: 'Degats par tour',
+  damageVsBossPct: 'Dégâts contre boss',
+  firstTurnDamagePct: 'Dégâts tour 1',
+  damageVsHighHpPct: 'Dégâts contre cible haute vie',
+  damageWhenHighHpPct: 'Dégâts avec PV élevés',
+  damageVsFullHpPct: 'Dégâts contre cible pleine vie',
+  damageWhenManaAbovePct: 'Dégâts avec mana élevé',
+  damageWhenBelowHpPct: 'Dégâts avec PV bas',
+  damageWhenLowHpPct: 'Dégâts avec PV bas',
+  damageVsLowHpPct: 'Dégâts contre cible basse vie',
+  damageScalingPerTurnPct: 'Dégâts par tour',
   damageReductionAfterDodgePct: 'Reduction apres esquive',
   damageReductionAfterSpellPct: 'Reduction apres sort',
   damageTakenReductionPct: 'Reduction de degats',
-  damageTakenReductionWhenHighHpPct: 'Reduction avec PV eleves',
+  damageTakenReductionWhenHighHpPct: 'Reduction avec PV élevés',
   physicalDamageTakenReductionPct: 'Reduction physique',
   physicalResistPct: 'Resistance physique',
   magicResistPct: 'Resistance magique',
@@ -1165,7 +1165,7 @@ function effectSuffix(key, effect) {
       return ` (si mana >= ${Math.round(effect.value ?? 50)}%)`
     }
     if (effect.condition === 'advantage_state') {
-      return ' (si la cible est deja sous un etat)'
+      return ' (si la cible est déjà sous un état)'
     }
   }
   if (key === 'dodgeChanceScalingPct') {
@@ -1387,7 +1387,7 @@ function summarizeBonusesLines(bonuses) {
     lines.push(`Critique +${formatPct(bonuses.critChanceFlat)}%`)
   }
   if (bonuses.critDamageFlat) {
-    lines.push(`Degats critiques +${formatPct(bonuses.critDamageFlat)}%`)
+    lines.push(`Dégâts critiques +${formatPct(bonuses.critDamageFlat)}%`)
   }
   if (bonuses.dodgeChanceFlat) {
     lines.push(`Esquive +${formatPct(bonuses.dodgeChanceFlat)}%`)
@@ -1396,22 +1396,22 @@ function summarizeBonusesLines(bonuses) {
     lines.push(`Parade +${formatPct(bonuses.parryChanceFlat)}%`)
   }
   if (bonuses.statusResistFlat) {
-    lines.push(`Resistance aux etats +${formatPct(bonuses.statusResistFlat)}%`)
+    lines.push(`Resistance aux états +${formatPct(bonuses.statusResistFlat)}%`)
   }
   if (bonuses.damagePercent) {
-    lines.push(`Degats +${formatPct(bonuses.damagePercent)}%`)
+    lines.push(`Dégâts +${formatPct(bonuses.damagePercent)}%`)
   }
   if (bonuses.bossDamagePercent) {
-    lines.push(`Degats boss +${formatPct(bonuses.bossDamagePercent)}%`)
+    lines.push(`Dégâts boss +${formatPct(bonuses.bossDamagePercent)}%`)
   }
   if (bonuses.highHpDamagePercent) {
-    lines.push(`Degats (haute vie) +${formatPct(bonuses.highHpDamagePercent)}%`)
+    lines.push(`Dégâts (haute vie) +${formatPct(bonuses.highHpDamagePercent)}%`)
   }
   if (bonuses.lowHpDamagePercent) {
-    lines.push(`Degats (basse vie) +${formatPct(bonuses.lowHpDamagePercent)}%`)
+    lines.push(`Dégâts (basse vie) +${formatPct(bonuses.lowHpDamagePercent)}%`)
   }
   if (bonuses.highManaDamagePercent) {
-    lines.push(`Degats (mana eleve) +${formatPct(bonuses.highManaDamagePercent)}%`)
+    lines.push(`Dégâts (mana élevé) +${formatPct(bonuses.highManaDamagePercent)}%`)
   }
   if (bonuses.manaRegenFlat) {
     lines.push(`Regen mana +${bonuses.manaRegenFlat}`)

@@ -32,6 +32,15 @@ const NON_BOSS_EQUIPMENT_DROP_CHANCE = 0.6
 const MYTHIC_RATE_REDUCTION = 0.95
 const CHEST_MYTHIC_CHANCE = 0.05
 const SELL_PRICE_FACTOR = 0.22
+const SELL_RARITY_MULTIPLIER = {
+  common: 1,
+  uncommon: 1.08,
+  rare: 1.18,
+  epic: 1.3,
+  legendary: 1.45,
+  mythic: 1.65,
+}
+const ENEMY_GOLD_REWARD_FACTOR = 0.72
 const CRAFT_COST_MULTIPLIER = 1.4
 const PASSIVE_RESET_COST = 200
 const PASSIVE_RESET_LIMIT = 1
@@ -83,7 +92,7 @@ const STARTER_WEAPON_BY_CLASS = {
     defense: 1,
   },
   necromancer: {
-    name: 'Baton d os',
+    name: 'Baton d\'os',
     icon: '/assets/Weapons/Bone/Bone.png',
     weaponType: 'staff',
     attack: 4,
@@ -837,7 +846,7 @@ export function unlockPassive(run, passiveId) {
     return { ok: false, reason: 'Passif inconnu.' }
   }
   if (run.player.unlockedPassives.includes(passive.id)) {
-    return { ok: false, reason: 'Passif deja debloque.' }
+    return { ok: false, reason: 'Passif déjà débloqué.' }
   }
   if (passive.requires && !run.player.unlockedPassives.includes(passive.requires)) {
     return { ok: false, reason: 'Prerequis manquant.' }
@@ -855,15 +864,15 @@ export function unlockPassive(run, passiveId) {
 export function resetPassiveTree(run) {
   const resetCount = run.player.passiveResetsUsed ?? 0
   if (resetCount >= PASSIVE_RESET_LIMIT) {
-    return { ok: false, reason: 'La reinitialisation des talents est deja utilisee pour cette partie.' }
+    return { ok: false, reason: 'La réinitialisation des talents est déjà utilisee pour cette partie.' }
   }
   if (run.player.gold < PASSIVE_RESET_COST) {
-    return { ok: false, reason: `Il faut ${PASSIVE_RESET_COST} or pour reinitialiser les talents.` }
+    return { ok: false, reason: `Il faut ${PASSIVE_RESET_COST} or pour réinitialiser les talents.` }
   }
 
   const unlocked = run.player.unlockedPassives ?? []
   if (!unlocked.length) {
-    return { ok: false, reason: 'Aucun passif a reinitialiser.' }
+    return { ok: false, reason: 'Aucun passif à réinitialiser.' }
   }
 
   run.player.gold -= PASSIVE_RESET_COST
@@ -873,7 +882,7 @@ export function resetPassiveTree(run) {
   syncVitals(run, false)
   appendLog(
     run,
-    `Talents reinitialises (${unlocked.length} points rendus) pour ${PASSIVE_RESET_COST} or. Reinitialisation unique consommee.`,
+    `Talents réinitialisés (${unlocked.length} points rendus) pour ${PASSIVE_RESET_COST} or. Réinitialisation unique consommée.`,
   )
   return {
     ok: true,
@@ -1016,7 +1025,7 @@ export function unequipItem(run, slot) {
 export function harvestNearby(run) {
   const resource = nearbyResource(run)
   if (!resource) {
-    return { ok: false, reason: 'Aucune ressource a proximite.' }
+    return { ok: false, reason: 'Aucune ressource à proximité.' }
   }
 
   const table = RESOURCE_TABLE[resource.type]
@@ -1240,7 +1249,7 @@ function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null,
 export function openNearbyChest(run) {
   const chest = nearbyChest(run)
   if (!chest) {
-    return { ok: false, reason: 'Aucun coffre a proximite.' }
+    return { ok: false, reason: 'Aucun coffre à proximité.' }
   }
 
   chest.opened = true
@@ -1346,7 +1355,7 @@ function resolveEnemyDeath(run, enemyRef) {
   const template = enemyById(enemy.templateId)
   const difficulty = difficultyFor(run)
   const xp = Math.floor((template?.xpReward ?? 50) * difficulty.xpMultiplier)
-  const gold = Math.floor((template?.goldReward ?? 20) * difficulty.lootMultiplier)
+  const gold = Math.max(1, Math.floor((template?.goldReward ?? 20) * difficulty.lootMultiplier * ENEMY_GOLD_REWARD_FACTOR))
 
   run.player.gold += gold
   grantXp(run, xp)
@@ -1393,7 +1402,7 @@ function resolveEnemyDeath(run, enemyRef) {
     const secretPortal = mapState.secretPortal
     if (secretPortal && !mapState.secretPortalRevealed && chance(secretPortal.revealChance)) {
       mapState.secretPortalRevealed = true
-      appendLog(run, `Un signal secret apparait vers (${secretPortal.x},${secretPortal.y}).`)
+      appendLog(run, `Un signal secret apparaît vers (${secretPortal.x},${secretPortal.y}).`)
     }
   }
 }
@@ -1402,7 +1411,7 @@ function transitionToMap(run, targetMapId) {
   if (targetMapId === 'ending') {
     run.victory = true
     run.gameOver = true
-    appendLog(run, `Victoire: ${run.player.name} referme la faille d onyx.`)
+    appendLog(run, `Victoire: ${run.player.name} referme la faille d\'onyx.`)
     return { ok: true, ending: true }
   }
 
@@ -1514,7 +1523,7 @@ export function attemptMove(run, dx, dy, options = {}) {
 
   const chest = chestAtPosition(run, nx, ny)
   if (chest) {
-    appendLog(run, 'Un coffre ancien est a proximite. Ouvre-le pour recuperer son contenu.')
+    appendLog(run, 'Un coffre ancien est à proximité. Ouvre-le pour récupèrer son contenu.')
   }
 
   return { ok: true }
@@ -1659,7 +1668,7 @@ function ailmentLabel(kind) {
 
 function statusLabel(kind) {
   if (kind === 'disorient') {
-    return 'desorientation'
+    return 'désorientation'
   }
   if (kind === 'topple') {
     return 'renversement'
@@ -1964,7 +1973,7 @@ function applySkill(run, side, skill) {
         battle.enemyMana = clamp((battle.enemyMana ?? battle.enemyStats.maxMana) - manaCost, 0, battle.enemyStats.maxMana)
         battle.enemyCooldowns[skill.id] = cooldownValue
       }
-      appendLog(run, `${actorName} rate son coup a cause de la desorientation.`)
+      appendLog(run, `${actorName} rate son coup à cause de la désorientation.`)
       return { ok: true, finished: false }
     }
   }
@@ -2047,7 +2056,7 @@ function applySkill(run, side, skill) {
         : 0
       canApplyAilment = !impactResult.dodged
       text += impactResult.dodged
-        ? ` ${targetName} esquive l impact.`
+        ? ` ${targetName} esquive l\'impact.`
         : ` ${targetName} subit ${impactResult.damage} degats initiaux.`
       if (lifeStealHealed > 0) {
         text += ` Vol de vie: +${lifeStealHealed} PV.`
@@ -2097,10 +2106,10 @@ function applySkill(run, side, skill) {
     if (side === 'player') {
       const healed = Math.floor(rawHeal * (1 + playerStats.healingTakenPercent))
       run.player.hp = clamp(run.player.hp + healed, 0, maxHp)
-      text += ` ${run.player.name} recupere ${healed} PV.`
+      text += ` ${run.player.name} récupère ${healed} PV.`
     } else {
       battle.enemyHp = clamp(battle.enemyHp + rawHeal, 0, maxHp)
-      text += ` ${battle.enemyName} recupere ${rawHeal} PV.`
+      text += ` ${battle.enemyName} récupère ${rawHeal} PV.`
     }
   } else if (skill.effect === 'lifesteal') {
     const power = skillPowerByAp(side, skill, attacker)
@@ -2267,10 +2276,10 @@ function normalAttackResult(run, side) {
   if (disorientMissChance > 0 && chance(disorientMissChance)) {
     if (side === 'player') {
       battle.playerAp = Math.max(0, battle.playerAp - playerStats.normalAttackCost)
-      appendLog(run, `${run.player.name} rate son attaque normale a cause de la desorientation.`)
+      appendLog(run, `${run.player.name} rate son attaque normale à cause de la désorientation.`)
     } else {
       battle.enemyAp = Math.max(0, battle.enemyAp - COMBAT_NORMAL_ATTACK_COST)
-      appendLog(run, `${battle.enemyName} rate son attaque a cause de la desorientation.`)
+      appendLog(run, `${battle.enemyName} rate son attaque à cause de la désorientation.`)
     }
     return { ok: true, finished: false }
   }
@@ -2318,7 +2327,7 @@ function normalAttackResult(run, side) {
       text += 'Critique ennemi. '
     }
     if (result.dodged) {
-      text += `Tu esquives l attaque normale de ${battle.enemyName}.`
+      text += `Tu esquives l\'attaque normale de ${battle.enemyName}.`
     } else if (result.parried) {
       text += `Tu pares une partie du coup (${result.damage}).`
     } else {
@@ -2467,7 +2476,7 @@ function skillCanBeUsed(side, skill, ap, mana, cooldowns, stats = null) {
 export function playerUseSkill(run, skillId) {
   const battle = run.combat
   if (!battle || battle.actor !== 'player') {
-    return { ok: false, reason: 'Ce n est pas ton tour.' }
+    return { ok: false, reason: 'Ce n\'est pas ton tour.' }
   }
 
   const skill = unlockedSkills(run).find((entry) => entry.id === skillId)
@@ -2486,7 +2495,7 @@ export function playerUseSkill(run, skillId) {
 export function playerNormalAttack(run) {
   const battle = run.combat
   if (!battle || battle.actor !== 'player') {
-    return { ok: false, reason: 'Ce n est pas ton tour.' }
+    return { ok: false, reason: 'Ce n\'est pas ton tour.' }
   }
 
   const stats = derivedStats(run)
@@ -2501,9 +2510,9 @@ export function playerMoveCombat(run, direction) {
   void direction
   const battle = run.combat
   if (!battle || battle.actor !== 'player') {
-    return { ok: false, reason: 'Ce n est pas ton tour.' }
+    return { ok: false, reason: 'Ce n\'est pas ton tour.' }
   }
-  return { ok: false, reason: 'Cette action n est plus disponible.' }
+  return { ok: false, reason: 'Cette action n\'est plus disponible.' }
 }
 
 function bestEnemySkill(run) {
@@ -2518,7 +2527,23 @@ function bestEnemySkill(run) {
   if (!usable.length) {
     return null
   }
-  return usable.sort((a, b) => (b.power ?? 0.2) - (a.power ?? 0.2))[0]
+  const hpRatio = battle.enemyHp / Math.max(1, battle.enemyStats.maxHp)
+  const scored = usable.map((skill) => {
+    let score = skill.power ?? 0.2
+    if (skill.effect === 'heal') {
+      // Avoid wasting heal at high HP and prioritize it when boss is low.
+      if (hpRatio >= 0.92) {
+        score = -999
+      } else {
+        const missingHpRatio = 1 - hpRatio
+        score = 0.35 + (skill.healRatio ?? 0.65) * 1.2 + missingHpRatio * 3.2
+      }
+    }
+    return { skill, score }
+  })
+
+  scored.sort((a, b) => b.score - a.score)
+  return scored[0]?.skill ?? null
 }
 
 function enemyCanNormalAttack(run) {
@@ -2646,13 +2671,13 @@ function consumableUsageBlockReason(run, effect) {
   }
 
   if (effect === 'heal_80' && run.player.hp >= stats.maxHp) {
-    return 'PV deja au maximum.'
+    return 'PV déjà au maximum.'
   }
   if (effect === 'mana_60' && run.player.mana >= stats.maxMana) {
-    return 'Mana deja au maximum.'
+    return 'Mana déjà au maximum.'
   }
   if (effect === 'heal_45_mana_35' && run.player.hp >= stats.maxHp && run.player.mana >= stats.maxMana) {
-    return 'PV et mana deja au maximum.'
+    return 'PV et mana déjà au maximum.'
   }
 
   return ''
@@ -2662,7 +2687,7 @@ function applyConsumable(run, effect) {
   const stats = derivedStats(run)
   if (effect === 'heal_80') {
     run.player.hp = clamp(run.player.hp + 80, 0, stats.maxHp)
-    appendLog(run, 'Potion utilisee: +80 PV.')
+    appendLog(run, 'Potion utilisée: +80 PV.')
     return true
   }
   if (effect === 'mana_60') {
@@ -2799,7 +2824,9 @@ export function sellItem(run, itemId) {
 }
 
 export function sellValueForItem(item) {
-  return Math.max(1, Math.floor((item?.value ?? 12) * SELL_PRICE_FACTOR))
+  const rarity = item?.rarity ?? 'common'
+  const rarityMult = SELL_RARITY_MULTIPLIER[rarity] ?? 1
+  return Math.max(1, Math.floor((item?.value ?? 12) * SELL_PRICE_FACTOR * rarityMult))
 }
 
 function recipeById(recipeId) {
@@ -2905,12 +2932,16 @@ export function craftItem(run, recipeId) {
 
 export function healAtNpc(run) {
   const price = 55
+  const stats = derivedStats(run)
+  if (run.player.hp >= stats.maxHp) {
+    return { ok: false, reason: "Tu n'as pas besoin de soins." }
+  }
   if (run.player.gold < price) {
     return { ok: false, reason: 'Or insuffisant.' }
   }
   run.player.gold -= price
   syncVitals(run, true)
-  appendLog(run, `Soin complet recu pour ${price} or.`)
+  appendLog(run, `Soin complet reçu pour ${price} or.`)
   return { ok: true }
 }
 
@@ -2976,17 +3007,17 @@ export function answerNpcRiddle(run, npcId, optionId) {
   const npc = npcOnCurrentMap(run, npcId)
   const riddle = activeNpcRiddle(run, npc)
   if (!riddle) {
-    return { ok: false, reason: 'Aucune enigme pour ce PNJ.' }
+    return { ok: false, reason: 'Aucune énigme pour ce PNJ.' }
   }
 
   const mapState = currentMapState(run)
   const wasPortalRevealed = Boolean(mapState.secretPortalRevealed)
   const key = riddleAttemptKey(npc.id, riddle.id)
   if (mapState.solvedRiddles.includes(key)) {
-    return { ok: false, reason: 'Enigme deja resolue.' }
+    return { ok: false, reason: 'Enigme déjà resolue.' }
   }
   if (mapState.failedRiddles.includes(key)) {
-    return { ok: false, reason: 'Tentative deja utilisee sur cette enigme.' }
+    return { ok: false, reason: 'Tentative déjà utilisee sur cette énigme.' }
   }
 
   const correct = optionId === riddle.correctOptionId

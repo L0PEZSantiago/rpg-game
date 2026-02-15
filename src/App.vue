@@ -449,13 +449,13 @@ function consumableDisableReason(item) {
   }
 
   if (item.effect === 'heal_80' && run.value.player.hp >= maxHp) {
-    return 'PV deja au maximum.'
+    return 'PV déjà au maximum.'
   }
   if (item.effect === 'mana_60' && run.value.player.mana >= maxMana) {
-    return 'Mana deja au maximum.'
+    return 'Mana déjà au maximum.'
   }
   if (item.effect === 'heal_45_mana_35' && run.value.player.hp >= maxHp && run.value.player.mana >= maxMana) {
-    return 'PV et mana deja au maximum.'
+    return 'PV et mana déjà au maximum.'
   }
   return ''
 }
@@ -807,6 +807,8 @@ const combatPopups = reactive({
   enemy: [],
 })
 const combatOutro = ref(null)
+const combatIntroActive = ref(false)
+let combatIntroTimer = null
 const lastCombatTopLog = ref('')
 const lastPlayerDeaths = ref(0)
 let combatPopupSeed = 0
@@ -1199,6 +1201,19 @@ function battleSpriteStripStyle(side) {
   }
 }
 
+function closeCombatIntro() {
+  if (!combatIntroActive.value) {
+    return
+  }
+  combatIntroActive.value = false
+  if (combatIntroTimer) {
+    window.clearTimeout(combatIntroTimer)
+    combatIntroTimer = null
+  }
+  processNewCombatLogs()
+  scheduleEnemyTurn()
+}
+
 function stopMusicTrack(trackRef, resetPosition = false) {
   const track = trackRef.value
   if (!track) {
@@ -1238,14 +1253,23 @@ function syncBackgroundMusic() {
   startMusicTrack(worldMusic, BACKGROUND_MUSIC.world, 0.16)
 }
 
-function playCombatSound(pool, volume = 0.22) {
+const COMBAT_SOUND_COOLDOWN_MS = 180
+let lastCombatSoundAt = 0
+
+function playCombatSound(pool, volume = 0.18) {
+  const now = Date.now()
+  if (now - lastCombatSoundAt < COMBAT_SOUND_COOLDOWN_MS) {
+    return
+  }
+  lastCombatSoundAt = now
+
   const source = randomFrom(pool)
-  if (!source) {
+  if (!source || typeof source !== 'string') {
     return
   }
   try {
     const sound = new Audio(source)
-    sound.volume = volume
+    sound.volume = Math.min(0.25, Math.max(0, volume))
     void sound.play().catch(() => { })
   } catch {
     // Ignore sound failures (autoplay, format or permissions).
@@ -1468,7 +1492,7 @@ function processCombatLogEntry(entry, delayMs = 0) {
 }
 
 function processNewCombatLogs() {
-  if (!run.value) {
+  if (!run.value || combatIntroActive.value) {
     lastCombatTopLog.value = ''
     return
   }
@@ -1547,6 +1571,7 @@ watch(
   () => run.value?.combat,
   (battle, previousBattle) => {
     if (!battle) {
+      closeCombatIntro()
       if (previousBattle) {
         const currentDeaths = run.value?.player?.deaths ?? lastPlayerDeaths.value
         const playerDefeat = currentDeaths > lastPlayerDeaths.value
@@ -1571,6 +1596,9 @@ watch(
     resetCombatVisuals(false)
     lastCombatTopLog.value = run.value?.eventLog?.[0] ?? ''
     lastPlayerDeaths.value = run.value?.player?.deaths ?? 0
+    combatIntroActive.value = true
+    if (combatIntroTimer) window.clearTimeout(combatIntroTimer)
+    combatIntroTimer = window.setTimeout(closeCombatIntro, 2800)
   },
 )
 
@@ -1585,14 +1613,18 @@ watch(
 
     if (enemyHp < previousEnemyHp) {
       pushCombatPopup('enemy', previousEnemyHp - enemyHp, 'damage')
-      triggerHit('enemy')
+      if (enemyHp > 0) {
+        triggerHit('enemy')
+      }
     } else if (enemyHp > previousEnemyHp) {
       pushCombatPopup('enemy', enemyHp - previousEnemyHp, 'heal')
     }
 
     if (playerHp < previousPlayerHp) {
       pushCombatPopup('player', previousPlayerHp - playerHp, 'damage')
-      triggerHit('player')
+      if (playerHp > 0) {
+        triggerHit('player')
+      }
     } else if (playerHp > previousPlayerHp) {
       pushCombatPopup('player', playerHp - previousPlayerHp, 'heal')
     }
@@ -2135,7 +2167,7 @@ function combatLogClasses(entry) {
     'log-damage': text.includes('degats') || text.includes('frappe:') || text.includes('subit'),
     'log-received': text.includes('te blesse') || text.includes('frappe:') || text.includes('tu es renverse'),
     'log-crit': text.includes('critique'),
-    'log-heal': text.includes('recupere') || text.includes('vole') || text.includes('potion'),
+    'log-heal': text.includes('récupère') || text.includes('vole') || text.includes('potion'),
     'log-status':
       text.includes('debuff') ||
       text.includes('ralentissement') ||
@@ -2235,7 +2267,7 @@ function persistRun() {
 }
 
 function scheduleEnemyTurn() {
-  if (!run.value?.combat || run.value.combat.actor !== 'enemy') {
+  if (!run.value?.combat || run.value.combat.actor !== 'enemy' || combatIntroActive.value) {
     return
   }
   if (enemyTimer.value) {
@@ -2379,7 +2411,7 @@ function portalModalFromPrompt(prompt) {
 
   if (prompt.type === 'back') {
     const returnTargetId = prompt.targetMapId === 'return' ? run.value?.world?.returnMapId : prompt.targetMapId
-    const targetName = MAPS[returnTargetId]?.name ?? 'la salle precedente'
+    const targetName = MAPS[returnTargetId]?.name ?? 'la salle précédente'
     return {
       title: 'Portail de retour',
       text: `Retourner vers ${targetName} ?`,
@@ -2502,7 +2534,7 @@ function openNpcPanel() {
   }
   const npc = nearbyNpc(run.value)
   if (!npc) {
-    setInfo('Aucun PNJ a proximite.')
+    setInfo('Aucun PNJ à proximité.')
     return
   }
   npcOpen.value = true
@@ -2549,11 +2581,11 @@ function openRiddle(npc) {
     return
   }
   if (riddle.solved) {
-    setInfo('Enigme deja resolue.')
+    setInfo('Énigme déjà résolue.')
     return
   }
   if (riddle.failed) {
-    setInfo('Tentative deja utilisee pour cette enigme.')
+    setInfo('Tentative déjà utilisée pour cette énigme.')
     return
   }
   riddleModal.value = {
@@ -2597,7 +2629,7 @@ function npcAction(action, payload = null) {
     const riddle = getNpcRiddle(run.value, currentNpc.value.id)
     if (riddle && !riddle.solved) {
       openRiddle(currentNpc.value)
-      setInfo('Ce PNJ propose une enigme.')
+      setInfo('Ce PNJ propose une énigme.')
     } else {
       appendLog(run.value, currentNpc.value.dialogue)
       if (activeMapState.value?.secretPortal && !activeMapState.value?.secretPortalRevealed) {
@@ -2609,8 +2641,16 @@ function npcAction(action, payload = null) {
 
   if (action === 'heal') {
     const result = healAtNpc(run.value)
+    const healDialogue = result.ok ? 'Te voila remis sur pied.' : result.reason
+    if (npcDialogueSceneEnabled.value) {
+      startNpcDialogueAnimation(healDialogue)
+    } else {
+      stopNpcDialogueAnimation()
+      npcDialogueText.value = healDialogue
+    }
     if (!result.ok) {
-      setInfo(result.reason)
+    } else {
+      playUiSound(UI_SOUND_BANK.drinkPotion, 0.28)
     }
   }
 
@@ -2640,7 +2680,7 @@ function npcAction(action, payload = null) {
     if (!result.ok) {
       setInfo(result.reason)
     } else {
-      setInfo(`Talents reinitialises (${result.refunded} points recuperes).`)
+      setInfo(`Talents réinitialisés (${result.refunded} points récupérés).`)
       playUiSound(UI_SOUND_BANK.uiConfirm, 0.26)
     }
   }
@@ -2957,6 +2997,10 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', keyHandler)
+  if (combatIntroTimer) {
+    window.clearTimeout(combatIntroTimer)
+    combatIntroTimer = null
+  }
   clearCombatFxTimers()
   stopAllSpriteTickers()
   stopMusicTrack(worldMusic, true)
@@ -3115,15 +3159,11 @@ onBeforeUnmount(() => {
                 <span v-else class="tile-symbol">{{ cellLabel(cell) }}</span>
               </button>
             </div>
-            <div
-              class="map-player-token"
-              :class="{
-                walking: mapPlayerVisual.walking,
-                druid: run.player.classId === 'druid',
-                warrior: run.player.classId === 'warrior',
-              }"
-              :style="mapPlayerStyle"
-            >
+            <div class="map-player-token" :class="{
+              walking: mapPlayerVisual.walking,
+              druid: run.player.classId === 'druid',
+              warrior: run.player.classId === 'warrior',
+            }" :style="mapPlayerStyle">
               <div class="tile-sprite player-sprite">
                 <img class="tile-sprite-strip" :src="mapPlayerSpriteSource" alt="joueur" :style="mapPlayerStripStyle" />
               </div>
@@ -3133,7 +3173,7 @@ onBeforeUnmount(() => {
           <div class="legend">
             <span class="legend-secret">Portail Violet = Salle secrete</span>
             <span class="legend-exit">Portail Bleu = Nouvelle zone</span>
-            <span class="legend-return">Portail Rose = Salle precedente</span>
+            <span class="legend-return">Portail Rose = Salle précédente</span>
           </div>
           <div class="legend-keys">
             <span><kbd>Z</kbd> Haut</span>
@@ -3252,7 +3292,25 @@ onBeforeUnmount(() => {
         </article>
       </div>
       <div v-if="activeCombatView && run" class="overlay-combat">
-        <article class="combat-modal" :class="{ 'combat-modal-outro': Boolean(combatOutro) }">
+        <div
+          v-if="combatIntroActive && run.combat"
+          class="combat-intro-overlay"
+          @click="closeCombatIntro"
+        >
+          <article class="combat-intro-modal">
+            <p class="combat-intro-text">Un <strong>{{ run.combat.enemyName }}</strong> sauvage apparaît !</p>
+            <div class="combat-intro-sprite-box">
+              <img
+                class="combat-intro-sprite-img"
+                :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')"
+                alt=""
+                :style="battleSpriteStripStyle('enemy')"
+              />
+            </div>
+            <p class="combat-intro-skip">Cliquer ou attendre pour continuer</p>
+          </article>
+        </div>
+        <article v-show="!combatIntroActive" class="combat-modal" :class="{ 'combat-modal-outro': Boolean(combatOutro) }">
           <header class="combat-modal-head">
             <div class="combat-head-main">
               <h2>
@@ -3278,12 +3336,8 @@ onBeforeUnmount(() => {
                   </button>
                   <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%)
                     (V)</button>
-                  <button
-                    :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
-                    :disabled="run.combat.actor !== 'player'"
-                    type="button"
-                    @click.prevent="endTurnAction"
-                  >
+                  <button :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }" :disabled="run.combat.actor !== 'player'"
+                    type="button" @click.prevent="endTurnAction">
                     Terminer le tour (Espace)
                   </button>
                 </div>
@@ -3299,7 +3353,10 @@ onBeforeUnmount(() => {
                     <small>
                       {{ skill.description }}
                       | PA {{ skill.apCost }} mana {{ effectiveSkillManaCost(skill) }}
-                      | CD {{ run.combat.playerCooldowns[skill.id] ?? 0 }}
+                      | Recharge {{ skill.cooldown }} tour(s)
+                      <span v-if="(run.combat.playerCooldowns[skill.id] ?? 0) > 0">
+                        (disponible dans {{ run.combat.playerCooldowns[skill.id] }})
+                      </span>
                     </small>
                   </button>
                 </div>
@@ -3322,7 +3379,7 @@ onBeforeUnmount(() => {
                     :disabled="!canUseConsumable(item)" :title="consumableDisableReason(item)"
                     @click="consumeItem(item.id)" @mouseenter="markInventoryItemSeen(item.id)">
                     <span>{{ item.name }} x{{ item.quantity }}</span>
-                    <small>{{ consumableGroupLabel(item.effect) }}</small>
+                    <small>{{ consumableGroupLabel(item.effect) }} | Cout: 2 PA</small>
                   </button>
                   <p v-if="!(combatActiveConsumableGroup?.items.length ?? 0)">Aucun objet dans cet onglet.</p>
                 </div>
@@ -3340,9 +3397,9 @@ onBeforeUnmount(() => {
                   <span>{{ combatTurnLabel }}</span>
                 </div>
 
-                <div v-if="combatOutro" class="battle-outro-tag" :class="combatOutro.result">
+                <!-- <div v-if="combatOutro" class="battle-outro-tag" :class="combatOutro.result">
                   {{ combatOutro.result === 'victory' ? 'Victoire' : 'Defaite' }}
-                </div>
+                </div> -->
 
                 <div v-if="combatProjectile.active" :key="`projectile-${combatProjectile.tick}`"
                   class="battle-projectile" :class="`from-${combatProjectile.from}`"></div>
@@ -3366,7 +3423,7 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <div class="battle-ap-spotlight">
-                      <img src="/assets/1x1/delapouite/attack-gauge.svg" alt="" />
+                      <img src="/assets/Icons/dagger.png" alt="" />
                       <p class="battle-ap-label">PA : {{ activeCombatView.playerAp }} / {{ stats.ap }}</p>
                     </div>
                   </div>
@@ -3408,7 +3465,7 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <div class="battle-ap-spotlight enemy">
-                      <img src="/assets/1x1/delapouite/attack-gauge.svg" alt="" />
+                      <img src="/assets/Icons/dagger.png" alt="" />
                       <p class="battle-ap-label">PA : {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap
                         }}</p>
                     </div>
@@ -3492,7 +3549,6 @@ onBeforeUnmount(() => {
                     <p class="inventory-type">{{ inventoryTypeLabel(item) }}</p>
                     <p v-if="item.kind === 'consumable'" class="inventory-qty">Quantite: {{ item.quantity ?? 0 }}</p>
                     <p v-if="itemDescription(item)">{{ itemDescription(item) }}</p>
-                    <p class="inventory-price">Prix de vente: {{ itemSellPrice(item) }} or</p>
                     <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
                     <div class="row-actions">
                       <button v-if="item.kind === 'equipment'" @click="equipAction(item.id)">Equiper</button>
@@ -3500,7 +3556,9 @@ onBeforeUnmount(() => {
                         :title="consumableDisableReason(item)" @click="consumeItem(item.id)">
                         Utiliser
                       </button>
-                      <button @click="sellAction(item.id)">Vendre</button>
+                      <button @click="sellAction(item.id)">
+                        Vendre {{ itemSellPrice(item) }} <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />
+                      </button>
                     </div>
                   </div>
                 </li>
@@ -3526,7 +3584,7 @@ onBeforeUnmount(() => {
             </section>
           </div>
           <p v-else>Inventaire vide.</p>
-          <button class="secondary" @click="inventoryModalOpen = false">Fermer</button>
+          <button class="secondary modal-close-btn" @click="inventoryModalOpen = false">Fermer</button>
         </article>
       </div>
 
@@ -3554,7 +3612,7 @@ onBeforeUnmount(() => {
               <strong>{{ entry.value }}</strong>
             </div>
           </div>
-          <button class="secondary" @click="characteristicsModalOpen = false">Fermer</button>
+          <button class="secondary modal-close-btn" @click="characteristicsModalOpen = false">Fermer</button>
         </article>
       </div>
 
@@ -3563,7 +3621,7 @@ onBeforeUnmount(() => {
           <header class="inventory-modal-head">
             <h2>
               <img src="/assets/Icons/backpack.png" alt="" />
-              Butin recupere
+              Butin récupéré
             </h2>
             <p>{{ lootModal.enemyName }}</p>
           </header>
@@ -3591,7 +3649,9 @@ onBeforeUnmount(() => {
                   <p class="inventory-price">Prix de vente: {{ itemSellPrice(item) }} or</p>
                   <div class="row-actions">
                     <button v-if="item.kind === 'equipment'" @click="equipLootItem(item.id)">Equiper</button>
-                    <button class="secondary" @click="sellLootItem(item.id)">Vendre l objet</button>
+                    <button class="secondary" @click="sellLootItem(item.id)">
+                      Vendre pour {{ itemSellPrice(item) }}<img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />
+                    </button>
                   </div>
                 </div>
               </li>
@@ -3620,7 +3680,7 @@ onBeforeUnmount(() => {
             <template v-if="npcDialogueSceneEnabled">
               <div class="npc-scene-sprites">
                 <div class="npc-scene-unit">
-                  <small>Toi</small>
+                  <small>{{ run.player.name }}</small>
                   <div class="animated-avatar npc-scene-avatar">
                     <img class="animated-avatar-strip" :src="playerIdleSprite" alt="joueur"
                       :style="animatedSpriteStripStyle(playerIdleSprite, 4, 1)" />
@@ -3643,17 +3703,23 @@ onBeforeUnmount(() => {
               <img :src="currentNpc.portrait" alt="portrait npc" />
               <div>
                 <h2>{{ currentNpc.name }}</h2>
-                <p>{{ currentNpc.dialogue }}</p>
+                <p>{{ npcDialogueText || currentNpc.dialogue }}</p>
               </div>
             </template>
           </header>
           <div class="npc-actions">
             <button v-if="currentNpc.role === 'lore'" @click="npcAction('lore')">Donne moi un indice</button>
-            <button v-if="currentNpc.role === 'healer'" @click="npcAction('heal')">Soin complet (55 or)</button>
+            <button v-if="currentNpc.role === 'healer'" @click="npcAction('heal')">
+              <span class="no-wrap-line">
+                Soin complet 55 <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon"/>
+              </span>
+            </button>
             <template v-if="currentNpc.role === 'merchant'">
               <button v-for="shop in merchantShopEntries" :key="shop.id" :disabled="shopItemDisabled(shop)"
                 @click="npcAction('buy', shop.id)">
-                Acheter {{ shop.name }} ({{ shop.price }} or)
+                <span class="no-wrap-line">
+                  Acheter {{ shop.name }} ({{ shop.price }} <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />)
+                </span>
                 <small>{{ shop.description }}</small>
                 <small>{{ shopStockLabel(shop) }}</small>
               </button>
@@ -3672,12 +3738,14 @@ onBeforeUnmount(() => {
             <template v-if="currentNpc.role === 'respec'">
               <button :disabled="passiveResetRemaining <= 0 || run.player.gold < PASSIVE_RESET_RULES.cost"
                 @click="npcAction('respec')">
-                Reinitialiser les talents ({{ PASSIVE_RESET_RULES.cost }} or)
+                <span class="no-wrap-line">
+                  Reinitialiser les talents ({{ PASSIVE_RESET_RULES.cost }} <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />)
+                </span>
                 <small>Limite: {{ PASSIVE_RESET_RULES.limit }} fois par partie</small>
                 <small>Restant: {{ passiveResetRemaining }}</small>
               </button>
             </template>
-            <button class="secondary" @click="npcOpen = false">Fermer</button>
+            <button class="secondary modal-close-btn" @click="npcOpen = false">Fermer</button>
           </div>
         </article>
       </div>
@@ -3692,10 +3760,10 @@ onBeforeUnmount(() => {
               <strong>{{ skill.name }}</strong>
               <p>{{ skill.description }}</p>
               <p>Niveau {{ skill.unlockLevel }} | PA {{ skill.apCost }} | Mana {{ effectiveSkillManaCost(skill) }}</p>
-              <p>CD {{ skill.cooldown }}</p>
+              <p>Recharge {{ skill.cooldown }} tour(s)</p>
             </li>
           </ul>
-          <button class="secondary" @click="skillsModalOpen = false">Fermer</button>
+          <button class="secondary modal-close-btn" @click="skillsModalOpen = false">Fermer</button>
         </article>
       </div>
 
@@ -3743,7 +3811,7 @@ onBeforeUnmount(() => {
               </button>
             </li>
           </ul>
-          <button class="secondary" @click="passivesModalOpen = false">Fermer</button>
+          <button class="secondary modal-close-btn" @click="passivesModalOpen = false">Fermer</button>
         </article>
       </div>
 
@@ -3758,7 +3826,7 @@ onBeforeUnmount(() => {
               {{ option.text }}
             </button>
           </div>
-          <button class="secondary" @click="riddleModal = null">Fermer</button>
+          <button class="secondary modal-close-btn" @click="riddleModal = null">Fermer</button>
         </article>
       </div>
 
@@ -3768,8 +3836,8 @@ onBeforeUnmount(() => {
             <h2>{{ riddleFeedbackModal.title }}</h2>
           </header>
           <p>{{ riddleFeedbackModal.text }}</p>
-          <p v-if="riddleFeedbackModal.portalOpened" class="riddle-feedback-success">Un portail s ouvre.</p>
-          <p v-else>Aucun portail ne reagit.</p>
+          <p v-if="riddleFeedbackModal.portalOpened" class="riddle-feedback-success">Un portail s'ouvre.</p>
+          <p v-else>Aucun portail ne réagit.</p>
           <button class="primary" @click="riddleFeedbackModal = null">Continuer</button>
         </article>
       </div>
@@ -3933,6 +4001,30 @@ button.primary {
 
 button.secondary {
   background: linear-gradient(130deg, #3f4d57, #24343d);
+}
+
+.modal-close-btn {
+  display: block;
+  margin: 14px auto 0;
+  min-width: 180px;
+  padding: 10px 18px;
+  font-size: 0.98rem;
+  text-align: center;
+}
+
+.gold-btn-icon {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  vertical-align: -2px;
+  margin-left: 2px;
+}
+
+.no-wrap-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
 }
 
 button.danger {
@@ -4581,6 +4673,75 @@ button.danger {
   z-index: 40;
 }
 
+.combat-intro-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: rgba(0, 2, 6, 0.85);
+}
+
+.combat-intro-modal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 28px 36px;
+  border-radius: 16px;
+  border: 2px solid rgba(252, 208, 135, 0.5);
+  background: linear-gradient(165deg, rgba(12, 28, 38, 0.97), rgba(35, 18, 12, 0.95));
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 24px 48px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+  animation: combat-intro-modal-in 0.4s ease-out;
+}
+
+@keyframes combat-intro-modal-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.combat-intro-text {
+  margin: 0;
+  font-size: 1.35rem;
+  color: #e8dcc8;
+  text-align: center;
+}
+
+.combat-intro-text strong {
+  color: #f5c987;
+}
+
+.combat-intro-sprite-box {
+  width: 160px;
+  height: 160px;
+  overflow: hidden;
+  flex-shrink: 0;
+  animation: combat-intro-sprite-in 0.5s ease-out 0.2s both;
+}
+
+@keyframes combat-intro-sprite-in {
+  from { opacity: 0; transform: scale(0.3); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.combat-intro-sprite-img {
+  display: block;
+  height: 100%;
+  transform-origin: 0 0;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
+}
+
+.combat-intro-skip {
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgba(220, 207, 175, 0.7);
+}
+
 .combat-modal {
   width: min(96vw, 1520px);
   max-height: 92vh;
@@ -4734,9 +4895,10 @@ button.danger {
   border-radius: 12px;
   overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  justify-items: center;
   align-items: end;
-  gap: 26px;
+  gap: 18px;
   padding: 12px;
   background-size: cover;
   background-position: center;
@@ -4794,17 +4956,20 @@ button.danger {
   display: grid;
   gap: 8px;
   align-content: end;
+  justify-items: center;
+  text-align: center;
   min-height: 300px;
+  width: 100%;
 }
 
 .battle-unit.player {
-  padding-right: 8px;
+  padding-right: 0;
 }
 
 .battle-unit.enemy {
-  justify-items: end;
-  text-align: right;
-  padding-left: 8px;
+  justify-items: center;
+  text-align: center;
+  padding-left: 0;
 }
 
 .battle-unit-hud {
@@ -4902,7 +5067,7 @@ button.danger {
 }
 
 .battle-actor.enemy {
-  width: clamp(96px, 14.2vw, 176px);
+  width: clamp(112px, 16.4vw, 220px);
 }
 
 .battle-actor::after {
@@ -5429,6 +5594,12 @@ button.danger {
   justify-items: start;
   text-align: left;
   gap: 2px;
+}
+
+.npc-actions button.modal-close-btn {
+  display: block;
+  text-align: center;
+  justify-items: unset;
 }
 
 .npc-actions button small {
