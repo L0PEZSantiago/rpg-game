@@ -3666,8 +3666,21 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="mobile-top-bar">
-        <button type="button" class="mobile-top-bar-btn" @click="npcOpen = false; run = null; closeMetaModals()">Quitter</button>
-        <button type="button" class="mobile-top-bar-btn danger" @click="abandonAndDeleteSave()">Abandonner</button>
+        <div class="mobile-hud-stats">
+          <span class="mobile-hud-stat">
+            <img src="/assets/Icons/heart.png" alt="" class="mobile-hud-icon" />
+            {{ run.player.hp }}/{{ stats.maxHp }}
+          </span>
+          <span class="mobile-hud-stat">
+            <img src="/assets/Icons/gold_coin.png" alt="" class="mobile-hud-icon" />
+            {{ run.player.gold }}
+          </span>
+          <span class="mobile-hud-stat">XP {{ run.player.xp }}/{{ run.player.nextXp }}</span>
+        </div>
+        <div class="mobile-top-bar-actions">
+          <button type="button" class="mobile-top-bar-btn" @click="npcOpen = false; run = null; closeMetaModals()">Quitter</button>
+          <button type="button" class="mobile-top-bar-btn danger" @click="abandonAndDeleteSave()">Abandonner</button>
+        </div>
       </div>
 
       <div class="mobile-map-section">
@@ -5325,6 +5338,7 @@ button.danger {
 
 .npc-modal {
   position: relative;
+  max-height: min(520px, calc(100vh - 80px));
 }
 
 .npc-modal-close {
@@ -7317,6 +7331,76 @@ button.danger {
     grid-template-columns: 1fr;
   }
 
+  .passive-tree-modal {
+    max-height: min(calc(100vh - 80px), 560px);
+  }
+
+  .passive-tree-header {
+    padding-bottom: 0.4rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .passive-tree-header h2 {
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .passive-tree-info {
+    font-size: 0.78rem;
+    gap: 0.75rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .passive-innate-line {
+    font-size: 0.76rem;
+  }
+
+  .passive-branch-picker {
+    margin: 6px 0 0;
+    gap: 4px;
+  }
+
+  .passive-branch-picker select {
+    padding: 5px 8px;
+    font-size: 0.82rem;
+  }
+
+  .passive-branches {
+    margin: 8px 0;
+  }
+
+  .passive-branch {
+    padding: 7px 10px;
+  }
+
+  .passive-node {
+    padding: 6px 9px;
+  }
+
+  .passive-node-name,
+  .passive-node strong {
+    font-size: 0.82rem;
+    margin-bottom: 0.15rem;
+  }
+
+  .passive-node-summary {
+    font-size: 0.76rem;
+    margin: 2px 0 4px;
+  }
+
+  .passive-node-req {
+    font-size: 0.7rem;
+    margin-top: 0.15rem;
+  }
+
+  .passive-node .passive-list li {
+    font-size: 0.7rem;
+  }
+
+  .passive-chain {
+    gap: 7px;
+  }
+
   .combat-modal-head {
     grid-template-columns: 1fr;
   }
@@ -7433,11 +7517,24 @@ button.danger {
 
   .combat-command-block {
     grid-area: commands;
-    display: grid;
-    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     gap: 4px;
     min-height: 0;
     overflow: hidden;
+    position: relative;
+  }
+
+  .combat-command-block:has(.potions-grid > button)::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 28px;
+    background: linear-gradient(to bottom, transparent, rgba(10, 20, 28, 0.92));
+    pointer-events: none;
+    z-index: 1;
   }
 
   .combat-actions-panel .panel-title {
@@ -7551,8 +7648,7 @@ button.danger {
   .potions-grid {
     grid-template-columns: 1fr;
     align-content: start;
-    height: 100%;
-    max-height: min(160px, 28dvh);
+    max-height: 80px;
     overflow-y: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
@@ -7918,10 +8014,42 @@ button.danger {
     gap: 8px;
     background: rgba(4, 10, 16, 0.93);
     border-bottom: 1px solid rgba(252, 208, 135, 0.18);
-    justify-content: flex-end;
+    justify-content: space-between;
     align-items: center;
     height: 44px;
     box-sizing: border-box;
+  }
+
+  .mobile-hud-stats {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .mobile-hud-stat {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #e8dcc8;
+    white-space: nowrap;
+  }
+
+  .mobile-hud-icon {
+    width: 14px;
+    height: 14px;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+
+  .mobile-top-bar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
   }
 
   .mobile-top-bar-btn {
