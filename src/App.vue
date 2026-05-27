@@ -77,6 +77,7 @@ const runHistory = ref([])
 const run = ref(null)
 
 const npcOpen = ref(false)
+const craftFilter = ref('all')
 const infoMessage = ref('')
 const exportMessage = ref('')
 const enemyTimer = ref(null)
@@ -4291,15 +4292,29 @@ onBeforeUnmount(() => {
               </button>
             </template>
             <template v-if="currentNpc.role === 'craft'">
-              <button v-for="recipe in RECIPES" :key="recipe.id" :disabled="!canCraftRecipe(recipe)"
-                @click="npcAction('craft', recipe.id)">
-                Forger {{ recipe.name }} ({{ RARITIES[recipe.rarity].label }})
-                <small>{{ recipe.description }}</small>
-                <small v-for="cost in recipeRequirementEntries(recipe)" :key="`cost-${recipe.id}-${cost.material}`"
-                  :class="{ warning: !cost.enough }">
-                  {{ cost.label }}: {{ cost.owned }}/{{ cost.needed }}
-                </small>
-              </button>
+              <div class="craft-filter-row">
+                <select v-model="craftFilter" class="craft-filter-select">
+                  <option value="all">Tout</option>
+                  <option value="consumable">Consommables</option>
+                  <option value="weapon">Armes</option>
+                  <option value="armor">Armures</option>
+                  <option value="trinket">Accessoires</option>
+                </select>
+              </div>
+              <div class="craft-recipes-wrap">
+                <div class="craft-recipes-list">
+                  <button v-for="recipe in RECIPES.filter(r => craftFilter === 'all' || r.result.kind === craftFilter || r.result.slot === craftFilter)"
+                    :key="recipe.id" :disabled="!canCraftRecipe(recipe)"
+                    @click="npcAction('craft', recipe.id)">
+                    Forger {{ recipe.name }} ({{ RARITIES[recipe.rarity].label }})
+                    <small>{{ recipe.description }}</small>
+                    <small v-for="cost in recipeRequirementEntries(recipe)" :key="`cost-${recipe.id}-${cost.material}`"
+                      :class="{ warning: !cost.enough }">
+                      {{ cost.label }}: {{ cost.owned }}/{{ cost.needed }}
+                    </small>
+                  </button>
+                </div>
+              </div>
             </template>
             <template v-if="currentNpc.role === 'respec'">
               <button :disabled="passiveResetRemaining <= 0 || run.player.gold < PASSIVE_RESET_RULES.cost"
@@ -5338,13 +5353,27 @@ button.danger {
 
 .npc-modal {
   position: relative;
-  max-height: min(520px, calc(100vh - 80px));
+  max-height: min(460px, calc(100vh - 80px));
 }
 
 .npc-modal-close {
   position: absolute;
   top: 10px;
   right: 10px;
+}
+
+.craft-filter-row {
+  margin-bottom: 6px;
+}
+
+.craft-filter-select {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(247, 204, 133, 0.36);
+  background: rgba(8, 18, 24, 0.92);
+  color: rgba(240, 230, 218, 0.96);
+  font-size: 0.85rem;
 }
 
 .npc-head {
@@ -5442,6 +5471,36 @@ button.danger {
   margin-top: 7px;
   display: grid;
   gap: 5px;
+}
+
+.craft-recipes-wrap {
+  position: relative;
+  overflow: hidden;
+}
+
+.craft-recipes-wrap:has(button)::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  background: linear-gradient(to bottom, transparent, rgba(10, 20, 28, 0.92));
+  pointer-events: none;
+  z-index: 1;
+}
+
+.craft-recipes-list {
+  display: grid;
+  gap: 5px;
+  max-height: min(260px, calc(100vh - 300px));
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.craft-recipes-list::-webkit-scrollbar {
+  display: none;
 }
 
 .equipment-grid {
