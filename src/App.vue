@@ -3680,7 +3680,6 @@ onBeforeUnmount(() => {
         </div>
         <div class="mobile-top-bar-actions">
           <button type="button" class="mobile-top-bar-btn" @click="npcOpen = false; run = null; closeMetaModals()">Quitter</button>
-          <button type="button" class="mobile-top-bar-btn danger" @click="abandonAndDeleteSave()">Abandonner</button>
         </div>
       </div>
 
@@ -8082,7 +8081,7 @@ button.danger {
   .mobile-hud-stats {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 35px;
     flex-shrink: 1;
     min-width: 0;
   }
