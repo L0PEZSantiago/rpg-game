@@ -3701,12 +3701,10 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div v-if="!run.combat" class="mobile-control-panel">
-            <div class="mobile-interact-row">
-              <button class="mobile-interact-btn" type="button" @click="triggerPrimaryInteraction">E</button>
-            </div>
             <div class="move-buttons move-buttons-mobile">
               <button type="button" class="move-btn move-up" aria-label="Haut" @click="handleMove(0, -1)">↑</button>
               <button type="button" class="move-btn move-left" aria-label="Gauche" @click="handleMove(-1, 0)">←</button>
+              <button class="mobile-interact-btn" type="button" @click="triggerPrimaryInteraction">E</button>
               <button type="button" class="move-btn move-right" aria-label="Droite" @click="handleMove(1, 0)">→</button>
               <button type="button" class="move-btn move-down" aria-label="Bas" @click="handleMove(0, 1)">↓</button>
             </div>
@@ -7764,31 +7762,27 @@ button.danger {
     width: 100%;
     gap: 4px;
     margin: 0;
-    padding: 4px 8px 4px;
+    padding: 16px 8px 4px;
     position: relative;
   }
 
-  .mobile-interact-row {
-    width: 100%;
-    display: flex;
-    justify-content: flex-end;
-    gap: 4px;
-  }
-
   .mobile-interact-btn {
-    min-width: 80px;
-    min-height: 48px;
-    border-radius: 12px;
-    border: 1px solid rgba(252, 208, 135, 0.4);
+    grid-column: 2 / 3;
+    grid-row: 2 / 3;
+    width: 72px;
+    height: 72px;
+    min-width: 72px;
+    min-height: 72px;
+    border-radius: 50%;
+    border: 1px solid rgba(252, 208, 135, 0.55);
     background: linear-gradient(135deg, rgba(39, 92, 104, 0.9), rgba(30, 43, 61, 0.95));
     color: #f7efda;
-    font-size: 1rem;
+    font-size: 1.2rem;
     font-weight: 700;
     display: grid;
     place-items: center;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
     cursor: pointer;
-    margin-right: 22px;
   }
 
   .mobile-menu-toggle {
@@ -7870,7 +7864,7 @@ button.danger {
     width: max-content;
     grid-template-columns: repeat(3, 72px);
     grid-template-rows: repeat(3, 72px);
-    gap: 4px;
+    gap: 10px;
     padding: 0;
     margin: 0;
     justify-items: center;
