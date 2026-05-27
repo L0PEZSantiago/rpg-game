@@ -906,13 +906,36 @@ export function currentMapState(run) {
   return ensureMapState(run, run.world.currentMapId)
 }
 
+function isHardcoreFog(run) {
+  return run.metadata?.difficulty === (DIFFICULTY_CONFIG.hardcore?.id ?? 'hardcore')
+}
+
 export function isTileDiscovered(run, mapId, x, y) {
+  if (isHardcoreFog(run) && mapId === run.world?.currentMapId) {
+    const px = run.world.playerPosition?.x ?? 0
+    const py = run.world.playerPosition?.y ?? 0
+    return Math.max(Math.abs(x - px), Math.abs(y - py)) <= 1
+  }
   return ensureMapState(run, mapId).discovered.includes(toKey(x, y))
 }
 
 export function revealAround(run, mapId, x, y, radius = 2) {
   const map = currentMapById(mapId)
   const mapState = ensureMapState(run, mapId)
+  if (isHardcoreFog(run)) {
+    const keys = []
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        const tx = x + dx
+        const ty = y + dy
+        if (tx >= 0 && ty >= 0 && tx < map.width && ty < map.height) {
+          keys.push(toKey(tx, ty))
+        }
+      }
+    }
+    mapState.discovered = keys
+    return
+  }
   for (let dy = -radius; dy <= radius; dy += 1) {
     for (let dx = -radius; dx <= radius; dx += 1) {
       if (Math.abs(dx) + Math.abs(dy) > radius + 1) {
@@ -1150,6 +1173,43 @@ export function harvestNearby(run) {
   }
   return { ok: true, resource, gained }
 }
+
+/** Récolte toutes les charges de la ressource à proximité en une fois. Retourne { ok, reason? } ou { ok: true, resourceName, gained }. */
+export function harvestNearbyAllCharges(run) {
+  const resource = nearbyResource(run)
+  if (!resource) {
+    return { ok: false, reason: 'Aucune ressource à proximité.' }
+  }
+
+  const table = RESOURCE_TABLE[resource.type]
+  if (!table) {
+    return { ok: false, reason: 'Ressource invalide.' }
+  }
+
+  const stats = derivedStats(run)
+  const aggregated = /** @type {Record<string, number>} */ ({})
+
+  while (resource.charges > 0) {
+    for (const drop of table.drops) {
+      if (!chance(drop.chance)) continue
+      const qty = randomInt(drop.min, drop.max) + Math.floor(randomInt(drop.min, drop.max) * stats.gatherBonus)
+      addMaterial(run, drop.material, qty)
+      aggregated[drop.material] = (aggregated[drop.material] ?? 0) + qty
+    }
+    resource.charges -= 1
+  }
+
+  const gained = Object.entries(aggregated).map(([material, quantity]) => ({ material, quantity }))
+  if (gained.length) {
+    appendLog(
+      run,
+      `Recolte ${table.name} (tout): ${gained.map((e) => `${e.quantity} ${MATERIAL_LABELS[e.material]}`).join(', ')}.`,
+    )
+  } else {
+    appendLog(run, `Recolte ${table.name} (tout): rien de notable.`)
+  }
+  return { ok: true, resourceName: table.name, gained }
+}
 function rarityWeights(isBoss) {
   if (isBoss) {
     return [
@@ -1368,13 +1428,15 @@ export function openNearbyChest(run) {
   const gold = randomInt(25, 75)
   run.player.gold += gold
   const chestMaterial = randomChoice(['ore', 'wood', 'resin', 'herb', 'obsidian_fragment'])
-  addMaterial(run, chestMaterial, randomInt(1, 3))
+  const materialQty = randomInt(1, 3)
+  addMaterial(run, chestMaterial, materialQty)
+  const materials = [{ material: chestMaterial, quantity: materialQty }]
 
   appendLog(
     run,
     `Coffre ouvert: +${gold} or, +${MATERIAL_LABELS[chestMaterial]}, loot ${loots.map((item) => item.name).join(', ')}.`,
   )
-  return { ok: true, chest, loots }
+  return { ok: true, chest, loots, gold, materials }
 }
 
 function grantXp(run, xp) {

@@ -45,14 +45,33 @@ function resolveAssetPath(rootDir, urlPath) {
   return filePath
 }
 
+const MIME_TYPES = {
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+}
+
 function registerAppProtocol() {
   if (protocolRegistered) {
     return
   }
   const distDir = path.join(__dirname, '..', 'dist')
-  protocol.handle(APP_SCHEME, (request) => {
+  protocol.handle(APP_SCHEME, async (request) => {
     const requestUrl = new URL(request.url)
     const filePath = resolveAssetPath(distDir, requestUrl.pathname)
+    const ext = path.extname(filePath).toLowerCase()
+    const mimeType = MIME_TYPES[ext]
+    if (mimeType) {
+      try {
+        const buffer = fs.readFileSync(filePath)
+        return new Response(buffer, {
+          headers: { 'Content-Type': mimeType },
+        })
+      } catch (err) {
+        console.error('[protocol] failed to read audio:', filePath, err.message)
+      }
+    }
     return net.fetch(pathToFileURL(filePath).toString())
   })
   protocolRegistered = true

@@ -33,7 +33,7 @@ import {
   getFleeChance,
   getEnemyMoveOptions,
   getNpcRiddle,
-  harvestNearby,
+  harvestNearbyAllCharges,
   healAtNpc,
   hydrateRun,
   isTileDiscovered,
@@ -85,6 +85,9 @@ const skillsModalOpen = ref(false)
 const passivesModalOpen = ref(false)
 const inventoryModalOpen = ref(false)
 const characteristicsModalOpen = ref(false)
+const mobileActionMenuOpen = ref(false)
+const mobileEquipmentModalOpen = ref(false)
+const selectedPassiveBranchId = ref('')
 const riddleModal = ref(null)
 const riddleFeedbackModal = ref(null)
 const lootModal = ref(null)
@@ -155,10 +158,61 @@ const playerIdleSprite = computed(() => {
 const skillCatalog = computed(() => currentClass.value?.skills ?? [])
 const passiveCatalog = computed(() => currentClass.value?.passives ?? [])
 const passiveBranches = computed(() => currentClass.value?.passiveTree ?? [])
+const selectedPassiveBranch = computed(() => {
+  const branches = passiveBranches.value
+  return branches.find((branch) => branch.id === selectedPassiveBranchId.value) ?? branches[0] ?? null
+})
+watch(
+  passiveBranches,
+  (branches) => {
+    if (!branches.length) {
+      selectedPassiveBranchId.value = ''
+      return
+    }
+    if (!branches.some((branch) => branch.id === selectedPassiveBranchId.value)) {
+      selectedPassiveBranchId.value = branches[0].id
+    }
+  },
+  { immediate: true },
+)
 const currentNpc = computed(() => (run.value ? nearbyNpc(run.value) : null))
 const currentResource = computed(() => (run.value ? nearbyResource(run.value) : null))
 const currentChest = computed(() => (run.value ? nearbyChest(run.value) : null))
 const progress = computed(() => (run.value ? progressSummary(run.value) : null))
+const primaryInteractionTarget = computed(() => {
+  if (currentNpc.value) {
+    return { type: 'npc', label: `Parler à ${currentNpc.value.name}` }
+  }
+  if (currentChest.value) {
+    return { type: 'chest', label: 'Ouvrir coffre' }
+  }
+  if (currentResource.value) {
+    return { type: 'resource', label: `Récolter ${currentResource.value.type}` }
+  }
+  return null
+})
+const primaryInteractionLabel = computed(() => {
+  if (!run.value) {
+    return 'Interagir (E)'
+  }
+  return primaryInteractionTarget.value ? `E - ${primaryInteractionTarget.value.label}` : 'Aucun objet proche'
+})
+
+function triggerPrimaryInteraction() {
+  if (!run.value) {
+    return
+  }
+  if (currentNpc.value) {
+    openNpcPanel()
+  } else if (currentChest.value) {
+    openChestAction()
+  } else if (currentResource.value) {
+    harvestAction()
+  } else {
+    setInfo('Aucun objet interactif à proximité.')
+  }
+}
+
 const combatEnemy = computed(() => {
   if (!run.value?.combat) {
     return null
@@ -744,6 +798,12 @@ const MAP_PORTAL_SPRITES = {
 
 const MAP_CHEST_SPRITE = '/assets/world/treasure-chest.png'
 
+const MAP_RESOURCE_SPRITES = {
+  tree: { src: '/assets/Environment/Props/Animated/Pan_01-Sheet.png', frames: 4 },
+  ore: { src: '/assets/Environment/Props/Animated/Pan_04-Sheet.png', frames: 4 },
+  herb: { src: '/assets/Environment/Props/Animated/Pan_02-Sheet.png', frames: 2 },
+}
+
 const BACKGROUND_MUSIC = {
   world: '/assets/musics/Goblins_Den_(Regular).wav',
   battle: '/assets/musics/Goblins_Dance_(Battle).wav',
@@ -796,6 +856,7 @@ const combatSpriteFrame = reactive({
 
 const worldMusic = ref(null)
 const battleMusic = ref(null)
+const audioPools = new Map()
 const combatPlayerState = ref('idle')
 const combatEnemyState = ref('idle')
 const combatStateTokens = reactive({
@@ -1236,11 +1297,42 @@ function stopMusicTrack(trackRef, resetPosition = false) {
   }
 }
 
+function createAudioElement(source, volume = 1, loop = false) {
+  const audio = new Audio(source)
+  audio.preload = 'auto'
+  audio.loop = loop
+  audio.volume = volume
+  audio.muted = false
+  return audio
+}
+
+function getPooledAudio(source) {
+  let pool = audioPools.get(source)
+  if (!pool) {
+    pool = []
+    audioPools.set(source, pool)
+  }
+
+  const available = pool.find((audio) => audio.paused && audio.currentTime === 0)
+  if (available) {
+    return available
+  }
+
+  const audio = createAudioElement(source)
+  pool.push(audio)
+  if (pool.length > 6) {
+    pool.splice(0, pool.length - 6)
+  }
+
+  audio.addEventListener('ended', () => {
+    audio.currentTime = 0
+  })
+  return audio
+}
+
 function startMusicTrack(trackRef, source, volume) {
   if (!trackRef.value || trackRef.value.src !== new URL(source, window.location.origin).href) {
-    const audio = new Audio(source)
-    audio.loop = true
-    audio.volume = volume
+    const audio = createAudioElement(source, volume, true)
     trackRef.value = audio
   }
   trackRef.value.volume = volume
@@ -1279,22 +1371,24 @@ function playCombatSound(pool, volume = 0.18) {
     return
   }
   try {
-    const sound = new Audio(source)
-    sound.volume = Math.min(0.25, Math.max(0, volume))
+    const sound = getPooledAudio(source)
+    sound.volume = Math.min(0.20, Math.max(0, volume))
+    sound.currentTime = 0
     void sound.play().catch(() => { })
   } catch {
     // Ignore sound failures (autoplay, format or permissions).
   }
 }
 
-function playUiSound(pool, volume = 0.24) {
+function playUiSound(pool, volume = 0.22) {
   const source = randomFrom(pool)
   if (!source) {
     return
   }
   try {
-    const sound = new Audio(source)
-    sound.volume = volume
+    const sound = getPooledAudio(source)
+    sound.volume = Math.min(0.24, Math.max(0, volume))
+    sound.currentTime = 0
     void sound.play().catch(() => { })
   } catch {
     // Ignore UI sound failures.
@@ -2170,9 +2264,10 @@ function buildMapCellSprite(cell) {
     }
   }
   if (cell.resource) {
+    const resSpr = MAP_RESOURCE_SPRITES[cell.resource.type] ?? { src: '/assets/Environment/Props/Animated/Pan_03-Sheet.png', frames: 12 }
     return {
-      src: RESOURCE_TABLE[cell.resource.type]?.icon ?? '/assets/Icons/skills.png',
-      frames: 1,
+      src: resSpr.src,
+      frames: resSpr.frames,
       className: 'entity-resource',
     }
   }
@@ -2426,6 +2521,7 @@ function closeMetaModals() {
   skillsModalOpen.value = false
   passivesModalOpen.value = false
   characteristicsModalOpen.value = false
+  mobileEquipmentModalOpen.value = false
   riddleModal.value = null
   riddleFeedbackModal.value = null
   lootModal.value = null
@@ -2570,6 +2666,7 @@ function startNewGame() {
   syncMapPlayerToRun()
   npcOpen.value = false
   closeMetaModals()
+  passivesModalOpen.value = true
   setInfo('Nouvelle campagne lancee.')
   persistRun()
 }
@@ -2745,13 +2842,20 @@ function openNpcPanel() {
   persistRun()
 }
 
+const harvestResultModal = ref(/** @type {{ resourceName: string, gained: Array<{ material: string, quantity: number }> } | null */(null))
+
 function harvestAction() {
   if (!run.value) {
     return
   }
-  const result = harvestNearby(run.value)
+  const result = harvestNearbyAllCharges(run.value)
   if (!result.ok) {
     setInfo(result.reason)
+  } else {
+    harvestResultModal.value = {
+      resourceName: result.resourceName,
+      gained: result.gained,
+    }
   }
   persistRun()
 }
@@ -2771,6 +2875,13 @@ function openChestAction() {
       startTick: mapAnimTick.value,
     }
     playUiSound(UI_SOUND_BANK.chestOpen, 0.3)
+    lootModal.value = {
+      enemyName: 'Coffre ouvert',
+      xp: 0,
+      gold: result.gold,
+      materials: result.materials ?? [],
+      items: result.loots ?? [],
+    }
   }
   persistRun()
 }
@@ -3096,6 +3207,7 @@ function closeLevelUp() {
     return
   }
   dismissLevelUpModal(run.value)
+  passivesModalOpen.value = true
   persistRun()
 }
 
@@ -3168,12 +3280,15 @@ function keyHandler(event) {
       handleMove(1, 0)
     }
     if (key === 'e') {
-      openNpcPanel()
+      event.preventDefault()
+      triggerPrimaryInteraction()
     }
     if (key === 'f') {
+      event.preventDefault()
       harvestAction()
     }
     if (key === 'c') {
+      event.preventDefault()
       openChestAction()
     }
     return
@@ -3356,7 +3471,7 @@ onBeforeUnmount(() => {
             <span>Inventaire</span>
             <span v-if="newInventoryCount" class="new-badge">{{ newInventoryCount }}</span>
           </button>
-          <button @click="skillsModalOpen = true">Competences</button>
+          <button class="hud-btn-skills" @click="skillsModalOpen = true">Competences</button>
           <button class="hud-icon-btn" @click="passivesModalOpen = true">
             <img src="/assets/Icons/skills.png" alt="" />
             <span>Passifs</span>
@@ -3369,13 +3484,194 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
-      <div class="columns">
-        <article class="card world-card">
-          <div class="world-header">
-            <h2>{{ activeMap.name }}</h2>
-            <p>Niveaux recommandes {{ activeMap.levelRange }}</p>
-          </div>
+      <div class="game-content">
+        <div class="desktop-columns columns">
+          <article class="card world-card">
+            <div class="world-header">
+              <h2>{{ activeMap.name }}</h2>
+              <p>Niveaux recommandes {{ activeMap.levelRange }}</p>
+            </div>
 
+            <div class="map-grid-shell" :style="mapGridStyle">
+              <div ref="mapGridRef" class="map-grid" :style="mapGridStyle">
+                <button v-for="cell in mapCells" :key="cell.id" class="tile-btn" :class="cellClass(cell)"
+                  @click="clickCell(cell)">
+                  <div v-if="cellIcon(cell)" class="tile-sprite" :class="cell.sprite?.className">
+                    <img class="tile-sprite-strip" :src="cellIcon(cell)" alt="sprite case"
+                      :style="tileSpriteStripStyle(cell.sprite)" />
+                  </div>
+                  <span v-else class="tile-symbol">{{ cellLabel(cell) }}</span>
+                </button>
+              </div>
+              <template v-for="token in mapEnemyTokens" :key="token.id">
+                <div class="map-enemy-token" :class="{ walking: token.walking }" :style="mapEnemyTokenStyle(token)">
+                  <div class="tile-sprite enemy-sprite">
+                    <img class="tile-sprite-strip" :src="token.asset" alt="" :style="mapEnemyStripStyle(token)" />
+                  </div>
+                </div>
+              </template>
+              <div class="map-player-token" :class="{
+                walking: mapPlayerVisual.walking,
+                druid: run.player.classId === 'druid',
+                warrior: run.player.classId === 'warrior',
+              }" :style="mapPlayerStyle">
+                <div class="tile-sprite player-sprite">
+                  <img class="tile-sprite-strip" :src="mapPlayerSpriteSource" alt="joueur"
+                    :style="mapPlayerStripStyle" />
+                </div>
+              </div>
+            </div>
+
+            <div v-if="!run.combat" class="move-buttons">
+              <button type="button" class="move-btn move-up" aria-label="Haut" @click="handleMove(0, -1)">↑</button>
+              <button type="button" class="move-btn move-left" aria-label="Gauche" @click="handleMove(-1, 0)">←</button>
+              <button type="button" class="move-btn move-right" aria-label="Droite" @click="handleMove(1, 0)">→</button>
+              <button type="button" class="move-btn move-down" aria-label="Bas" @click="handleMove(0, 1)">↓</button>
+            </div>
+
+            <p v-if="infoMessage" class="info-msg">{{ infoMessage }}</p>
+
+            <div class="legend">
+              <span class="legend-secret">Portail Violet = Salle secrete</span>
+              <span class="legend-exit">Portail Bleu = Nouvelle zone</span>
+              <span class="legend-return">Portail Rose = Salle précédente</span>
+            </div>
+            <div class="legend-keys">
+              <span><kbd>Z</kbd> Haut</span>
+              <span><kbd>S</kbd> Bas</span>
+              <span><kbd>Q</kbd> Gauche</span>
+              <span><kbd>D</kbd> Droite</span>
+            </div>
+            <div class="legend-keys legend-keys-modals">
+              <span><kbd>I</kbd> Inventaire</span>
+              <span><kbd>K</kbd> Competences</span>
+              <span><kbd>P</kbd> Passifs</span>
+              <span><kbd>B</kbd> Caracteristiques</span>
+            </div>
+
+            <div class="controls">
+              <button class="control-btn" @click="openNpcPanel">Interagir PNJ (E)</button>
+              <button class="control-btn" @click="harvestAction">Recolter (F)</button>
+              <button class="control-btn" @click="openChestAction">Ouvrir coffre (C)</button>
+            </div>
+
+            <div class="quick-status">
+              <p v-if="currentResource">Ressource proche: {{ currentResource.type }} ({{ currentResource.charges }}
+                charges)</p>
+              <p v-if="currentChest">Coffre proche detecte.</p>
+            </div>
+          </article>
+
+          <article class="card side-card">
+            <h2>Équipement</h2>
+
+            <div class="equipment-grid">
+              <div class="equip-slot">
+                <h3>Arme</h3>
+                <div v-if="run.player.equipment.weapon" class="equip-item">
+                  <img :src="itemIcon(run.player.equipment.weapon)" alt="arme" />
+                  <div>
+                    <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">
+                      {{ run.player.equipment.weapon.name }}
+                    </strong>
+                    <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0
+                      }}</p>
+                    <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{
+                      bonus
+                      }}</p>
+                    <button @click="unequipAction('weapon')">Retirer</button>
+                  </div>
+                </div>
+                <p v-else>Aucune arme equipee.</p>
+              </div>
+
+              <div class="equip-slot">
+                <h3>Armure</h3>
+                <div v-if="run.player.equipment.armor" class="equip-item">
+                  <img :src="itemIcon(run.player.equipment.armor)" alt="armure" />
+                  <div>
+                    <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">
+                      {{ run.player.equipment.armor.name }}
+                    </strong>
+                    <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0
+                      }}
+                    </p>
+                    <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus
+                      }}</p>
+                    <button @click="unequipAction('armor')">Retirer</button>
+                  </div>
+                </div>
+                <p v-else>Aucune armure equipee.</p>
+              </div>
+
+              <div class="equip-slot">
+                <h3>Bibelot</h3>
+                <div v-if="run.player.equipment.trinket" class="equip-item">
+                  <img :src="itemIcon(run.player.equipment.trinket)" alt="trinket" />
+                  <div>
+                    <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">
+                      {{ run.player.equipment.trinket.name }}
+                    </strong>
+                    <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ??
+                      0
+                      }}</p>
+                    <p v-for="bonus in itemAffixes(run.player.equipment.trinket)" :key="bonus" class="item-affix">{{
+                      bonus
+                      }}</p>
+                    <button @click="unequipAction('trinket')">Retirer</button>
+                  </div>
+                </div>
+                <p v-else>Aucun trinket equipe.</p>
+              </div>
+            </div>
+
+
+            <div class="materials">
+              <h3>Materiaux</h3>
+              <ul>
+                <li v-for="(label, key) in MATERIAL_LABELS" :key="key">{{ label }}: {{ run.player.materials[key] }}</li>
+              </ul>
+            </div>
+          </article>
+
+          <article class="card progress-card">
+            <div class="short-log">
+              <h3>Journal recent</h3>
+              <ul>
+                <li v-for="(entry, index) in run.eventLog.slice(0, 10)" :key="`recent-${index}-${entry}`">{{ entry }}
+                </li>
+              </ul>
+            </div>
+            <h2>Progression</h2>
+            <ul>
+              <li v-for="entry in progress.maps" :key="entry.mapId">
+                {{ MAPS[entry.mapId].name }}
+                : boss {{ entry.bossDefeated ? 'vaincu' : 'vivant' }},
+                ennemis {{ entry.remainingEnemies }},
+                coffres {{ entry.openedChests }}/{{ entry.totalChests }},
+                enigmes {{ entry.solvedRiddles }},
+                secret {{ entry.secretPortalRevealed ? 'revele' : 'cache' }}
+              </li>
+            </ul>
+            <p>Mythiques obtenus: {{ progress.mythicCount }}</p>
+            <p>Morts: {{ progress.totalDeaths }}</p>
+
+
+            <div class="exit-buttons">
+              <button class="secondary" @click="run = null; npcOpen = false; closeMetaModals()">Retour menu</button>
+              <button class="danger" @click="abandonAndDeleteSave">Abandonner run</button>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <div class="mobile-top-bar">
+        <button type="button" class="mobile-top-bar-btn" @click="npcOpen = false; run = null; closeMetaModals()">Quitter</button>
+        <button type="button" class="mobile-top-bar-btn danger" @click="abandonAndDeleteSave()">Abandonner</button>
+      </div>
+
+      <div class="mobile-map-section">
+        <article class="card world-card-mobile">
           <div class="map-grid-shell" :style="mapGridStyle">
             <div ref="mapGridRef" class="map-grid" :style="mapGridStyle">
               <button v-for="cell in mapCells" :key="cell.id" class="tile-btn" :class="cellClass(cell)"
@@ -3404,136 +3700,95 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-
-          <p v-if="infoMessage" class="info-msg">{{ infoMessage }}</p>
-
-          <div class="legend">
-            <span class="legend-secret">Portail Violet = Salle secrete</span>
-            <span class="legend-exit">Portail Bleu = Nouvelle zone</span>
-            <span class="legend-return">Portail Rose = Salle précédente</span>
-          </div>
-          <div class="legend-keys">
-            <span><kbd>Z</kbd> Haut</span>
-            <span><kbd>S</kbd> Bas</span>
-            <span><kbd>Q</kbd> Gauche</span>
-            <span><kbd>D</kbd> Droite</span>
-          </div>
-          <div class="legend-keys legend-keys-modals">
-            <span><kbd>I</kbd> Inventaire</span>
-            <span><kbd>K</kbd> Competences</span>
-            <span><kbd>P</kbd> Passifs</span>
-            <span><kbd>B</kbd> Caracteristiques</span>
-          </div>
-
-          <div class="controls">
-            <button @click="openNpcPanel">Interagir PNJ (E)</button>
-            <button @click="harvestAction">Recolter (F)</button>
-            <button @click="openChestAction">Ouvrir coffre (C)</button>
-          </div>
-
-          <div class="quick-status">
-            <p v-if="currentResource">Ressource proche: {{ currentResource.type }} ({{ currentResource.charges }}
-              charges)</p>
-            <p v-if="currentChest">Coffre proche detecte.</p>
+          <div v-if="!run.combat" class="mobile-control-panel">
+            <div class="mobile-interact-row">
+              <button class="mobile-interact-btn" type="button" @click="triggerPrimaryInteraction">E</button>
+            </div>
+            <div class="move-buttons move-buttons-mobile">
+              <button type="button" class="move-btn move-up" aria-label="Haut" @click="handleMove(0, -1)">↑</button>
+              <button type="button" class="move-btn move-left" aria-label="Gauche" @click="handleMove(-1, 0)">←</button>
+              <button type="button" class="move-btn move-right" aria-label="Droite" @click="handleMove(1, 0)">→</button>
+              <button type="button" class="move-btn move-down" aria-label="Bas" @click="handleMove(0, 1)">↓</button>
+            </div>
           </div>
         </article>
+      </div>
 
-        <article class="card side-card">
-          <h2>Équipement</h2>
+      <div class="mobile-action-bar">
+        <button class="mobile-quick-btn" @click="inventoryModalOpen = true">
+          <img src="/assets/Icons/backpack.png" alt="" />
+          <span>Inv</span>
+          <span v-if="newInventoryCount" class="mobile-badge">{{ newInventoryCount }}</span>
+        </button>
+        <button class="mobile-quick-btn" @click="skillsModalOpen = true">
+          <img src="/assets/Icons/sword.png" alt="" />
+          <span>Comp</span>
+        </button>
+        <button class="mobile-quick-btn" @click="passivesModalOpen = true">
+          <img src="/assets/Icons/skills.png" alt="" />
+          <span>Pass</span>
+          <span v-if="passivePointBadge > 0" class="mobile-badge">{{ passivePointBadge }}</span>
+        </button>
+        <button class="mobile-quick-btn" @click="characteristicsModalOpen = true">
+          <img src="/assets/Icons/armor.png" alt="" />
+          <span>Stats</span>
+        </button>
+        <button class="mobile-quick-btn" @click="mobileEquipmentModalOpen = true">
+          <img src="/assets/Icons/dagger.png" alt="" />
+          <span>Equip.</span>
+        </button>
+      </div>
 
+      <div v-if="mobileEquipmentModalOpen" class="mobile-equipment-modal-overlay" @click.self="mobileEquipmentModalOpen = false">
+        <article class="mobile-equipment-modal">
+          <header class="mobile-equip-header">
+            <h2>Équipement</h2>
+            <button type="button" class="modal-close-btn" @click="mobileEquipmentModalOpen = false">✕</button>
+          </header>
           <div class="equipment-grid">
             <div class="equip-slot">
               <h3>Arme</h3>
               <div v-if="run.player.equipment.weapon" class="equip-item">
                 <img :src="itemIcon(run.player.equipment.weapon)" alt="arme" />
                 <div>
-                  <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">
-                    {{ run.player.equipment.weapon.name }}
-                  </strong>
-                  <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0
-                    }}</p>
-                  <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{ bonus
-                    }}</p>
+                  <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">{{ run.player.equipment.weapon.name }}</strong>
+                  <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0 }}</p>
+                  <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{ bonus }}</p>
                   <button @click="unequipAction('weapon')">Retirer</button>
                 </div>
               </div>
-              <p v-else>Aucune arme equipee.</p>
+              <p v-else class="equip-empty">Aucune arme.</p>
             </div>
-
             <div class="equip-slot">
               <h3>Armure</h3>
               <div v-if="run.player.equipment.armor" class="equip-item">
                 <img :src="itemIcon(run.player.equipment.armor)" alt="armure" />
                 <div>
-                  <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">
-                    {{ run.player.equipment.armor.name }}
-                  </strong>
-                  <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0 }}
-                  </p>
-                  <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus
-                    }}</p>
+                  <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">{{ run.player.equipment.armor.name }}</strong>
+                  <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0 }}</p>
+                  <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus }}</p>
                   <button @click="unequipAction('armor')">Retirer</button>
                 </div>
               </div>
-              <p v-else>Aucune armure equipee.</p>
+              <p v-else class="equip-empty">Aucune armure.</p>
             </div>
-
             <div class="equip-slot">
               <h3>Bibelot</h3>
               <div v-if="run.player.equipment.trinket" class="equip-item">
                 <img :src="itemIcon(run.player.equipment.trinket)" alt="trinket" />
                 <div>
-                  <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">
-                    {{ run.player.equipment.trinket.name }}
-                  </strong>
-                  <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ?? 0
-                    }}</p>
-                  <p v-for="bonus in itemAffixes(run.player.equipment.trinket)" :key="bonus" class="item-affix">{{ bonus
-                    }}</p>
+                  <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">{{ run.player.equipment.trinket.name }}</strong>
+                  <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ?? 0 }}</p>
+                  <p v-for="bonus in itemAffixes(run.player.equipment.trinket)" :key="bonus" class="item-affix">{{ bonus }}</p>
                   <button @click="unequipAction('trinket')">Retirer</button>
                 </div>
               </div>
-              <p v-else>Aucun trinket equipe.</p>
+              <p v-else class="equip-empty">Aucun bibelot.</p>
             </div>
-          </div>
-
-
-          <div class="materials">
-            <h3>Materiaux</h3>
-            <ul>
-              <li v-for="(label, key) in MATERIAL_LABELS" :key="key">{{ label }}: {{ run.player.materials[key] }}</li>
-            </ul>
-          </div>
-        </article>
-
-        <article class="card progress-card">
-          <div class="short-log">
-            <h3>Journal recent</h3>
-            <ul>
-              <li v-for="(entry, index) in run.eventLog.slice(0, 10)" :key="`recent-${index}-${entry}`">{{ entry }}</li>
-            </ul>
-          </div>
-          <h2>Progression</h2>
-          <ul>
-            <li v-for="entry in progress.maps" :key="entry.mapId">
-              {{ MAPS[entry.mapId].name }}
-              : boss {{ entry.bossDefeated ? 'vaincu' : 'vivant' }},
-              ennemis {{ entry.remainingEnemies }},
-              coffres {{ entry.openedChests }}/{{ entry.totalChests }},
-              enigmes {{ entry.solvedRiddles }},
-              secret {{ entry.secretPortalRevealed ? 'revele' : 'cache' }}
-            </li>
-          </ul>
-          <p>Mythiques obtenus: {{ progress.mythicCount }}</p>
-          <p>Morts: {{ progress.totalDeaths }}</p>
-
-
-          <div class="exit-buttons">
-            <button class="secondary" @click="run = null; npcOpen = false; closeMetaModals()">Retour menu</button>
-            <button class="danger" @click="abandonAndDeleteSave">Abandonner run</button>
           </div>
         </article>
       </div>
+
       <div v-if="activeCombatView && run" class="overlay-combat">
         <div v-if="combatIntroActive && run.combat" class="combat-intro-overlay" @click="closeCombatIntro">
           <article class="combat-intro-modal">
@@ -3562,67 +3817,73 @@ onBeforeUnmount(() => {
           <div class="combat-modal-body">
             <section class="combat-actions-panel">
               <template v-if="run.combat">
-                <h3 class="panel-title">
-                  <img src="/assets/Icons/sword.png" alt="" />
-                  Actions
-                </h3>
-                <div class="combat-actions-row">
-                  <button :disabled="!normalAttackReady()" @click="useNormalAttack">
-                    Attaque normale (2 PA) (A)<kbd></kbd>
-                  </button>
-                  <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%)
-                    (V)</button>
-                  <button :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }" :disabled="run.combat.actor !== 'player'"
-                    type="button" @click.prevent="endTurnAction">
-                    Terminer le tour (Espace)
-                  </button>
-                </div>
+                <div class="combat-command-block">
+                  <h3 class="panel-title">
+                    <img src="/assets/Icons/sword.png" alt="" />
+                    Actions
+                  </h3>
+                  <div class="combat-actions-row">
+                    <button :disabled="!normalAttackReady()" @click="useNormalAttack">
+                      Attaque (2 PA)<kbd></kbd>
+                    </button>
+                    <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate
+                      }}%)</button>
+                    <button :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
+                      :disabled="run.combat.actor !== 'player'" type="button" @click.prevent="endTurnAction">
+                      Fin du tour
+                    </button>
+                  </div>
 
-                <h3 class="panel-title">
-                  <img src="/assets/Icons/skills.png" alt="" />
-                  Competences
-                </h3>
-                <div class="skills-grid">
-                  <button v-for="(skill, index) in unlockedPlayerSkills" :key="skill.id" :disabled="!skillReady(skill)"
-                    @click="useSkillAction(skill.id)">
-                    {{ index + 1 }}. {{ skill.name }} <kbd></kbd>
-                    <small>
-                      {{ skill.description }}
-                      | PA {{ skill.apCost }} mana {{ effectiveSkillManaCost(skill) }}
-                      | Recharge {{ skill.cooldown }} tour(s)
-                      <span v-if="(run.combat.playerCooldowns[skill.id] ?? 0) > 0">
-                        (disponible dans {{ run.combat.playerCooldowns[skill.id] }})
+                  <h3 class="panel-title">
+                    <img src="/assets/Icons/potion.png" alt="" />
+                    Inventaire combat
+                  </h3>
+                  <div class="consumable-tabs">
+                    <button v-for="group in combatConsumableGroups" :key="`combat-consumable-tab-${group.id}`"
+                      class="consumable-tab" :class="{ active: combatActiveConsumableGroup?.id === group.id }"
+                      @click="selectCombatConsumableTab(group.id)">
+                      <img :src="group.icon" alt="" />
+                      <span>{{ group.label }}</span>
+                      <small>{{ group.items.length }}</small>
+                    </button>
+                  </div>
+                  <div class="potions-grid">
+                    <button v-for="item in combatActiveConsumableGroup?.items ?? []" :key="item.id"
+                      class="potions-grid-btn" :disabled="!canUseConsumable(item)" :title="consumableDisableReason(item)"
+                      @click="consumeItem(item.id)" @mouseenter="markInventoryItemSeen(item.id)">
+                      <img class="potions-grid-icon" :src="itemIcon(item)" alt="" />
+                      <span class="potions-grid-body">
+                        <span class="potions-grid-name" :style="{ color: rarityColor(item.rarity) }">{{ item.name }} x{{
+                          item.quantity }}</span>
+                        <span class="consumable-effect">{{ consumableDescription(item.effect, item) }}</span>
                       </span>
-                    </small>
-                  </button>
+                      <span class="potions-grid-cost">2 PA</span>
+                    </button>
+                    <p v-if="!(combatActiveConsumableGroup?.items.length ?? 0)">Aucun objet dans cet onglet.</p>
+                  </div>
                 </div>
 
-                <h3 class="panel-title">
-                  <img src="/assets/Icons/potion.png" alt="" />
-                  Inventaire combat
-                </h3>
-                <div class="consumable-tabs">
-                  <button v-for="group in combatConsumableGroups" :key="`combat-consumable-tab-${group.id}`"
-                    class="consumable-tab" :class="{ active: combatActiveConsumableGroup?.id === group.id }"
-                    @click="selectCombatConsumableTab(group.id)">
-                    <img :src="group.icon" alt="" />
-                    <span>{{ group.label }}</span>
-                    <small>{{ group.items.length }}</small>
-                  </button>
-                </div>
-                <div class="potions-grid">
-                  <button v-for="item in combatActiveConsumableGroup?.items ?? []" :key="item.id"
-                    class="potions-grid-btn" :disabled="!canUseConsumable(item)" :title="consumableDisableReason(item)"
-                    @click="consumeItem(item.id)" @mouseenter="markInventoryItemSeen(item.id)">
-                    <img class="potions-grid-icon" :src="itemIcon(item)" alt="" />
-                    <span class="potions-grid-body">
-                      <span class="potions-grid-name" :style="{ color: rarityColor(item.rarity) }">{{ item.name }} x{{
-                        item.quantity }}</span>
-                      <span class="consumable-effect">{{ consumableDescription(item.effect, item) }}</span>
-                    </span>
-                    <span class="potions-grid-cost">2 PA</span>
-                  </button>
-                  <p v-if="!(combatActiveConsumableGroup?.items.length ?? 0)">Aucun objet dans cet onglet.</p>
+                <div class="combat-skills-block">
+                  <h3 class="panel-title">
+                    <img src="/assets/Icons/skills.png" alt="" />
+                    Competences
+                  </h3>
+                  <div class="skills-grid">
+                    <button v-for="(skill, index) in unlockedPlayerSkills" :key="skill.id"
+                      :disabled="!skillReady(skill)" :title="skill.description" @click="useSkillAction(skill.id)">
+                      <span class="skill-btn-name">{{ index + 1 }}. {{ skill.name }}</span>
+                      <span class="skill-btn-cost">PA {{ skill.apCost }} / Mana {{ effectiveSkillManaCost(skill)
+                        }}</span>
+                      <small>
+                        {{ skill.description }}
+                        | PA {{ skill.apCost }} mana {{ effectiveSkillManaCost(skill) }}
+                        | Recharge {{ skill.cooldown }} tour(s)
+                        <span v-if="(run.combat.playerCooldowns[skill.id] ?? 0) > 0">
+                          (disponible dans {{ run.combat.playerCooldowns[skill.id] }})
+                        </span>
+                      </small>
+                    </button>
+                  </div>
                 </div>
               </template>
               <template v-else>
@@ -3708,7 +3969,7 @@ onBeforeUnmount(() => {
                     <div class="battle-ap-spotlight enemy">
                       <img src="/assets/Icons/dagger.png" alt="" />
                       <p class="battle-ap-label">PA : {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap
-                        }}</p>
+                      }}</p>
                     </div>
                   </div>
 
@@ -3740,6 +4001,19 @@ onBeforeUnmount(() => {
               </ul>
             </section>
           </div>
+        </article>
+      </div>
+
+      <div v-if="harvestResultModal" class="overlay-meta" @click="harvestResultModal = null">
+        <article class="harvest-result-modal" @click.stop>
+          <h3>Récolte : {{ harvestResultModal.resourceName }}</h3>
+          <ul v-if="harvestResultModal.gained.length">
+            <li v-for="entry in harvestResultModal.gained" :key="entry.material">
+              {{ entry.quantity }} × {{ MATERIAL_LABELS[entry.material] ?? entry.material }}
+            </li>
+          </ul>
+          <p v-else class="harvest-result-empty">Rien de notable.</p>
+          <button type="button" class="harvest-result-close" @click="harvestResultModal = null">OK</button>
         </article>
       </div>
 
@@ -3868,7 +4142,7 @@ onBeforeUnmount(() => {
             <p class="loot-modal-source">{{ lootModal.enemyName }}</p>
           </header>
           <div class="loot-summary">
-            <span class="loot-badge">+{{ lootModal.xp }} XP</span>
+            <span v-if="lootModal.xp > 0" class="loot-badge">+{{ lootModal.xp }} XP</span>
             <span class="loot-badge">+{{ lootModal.gold }} or</span>
           </div>
           <section v-if="lootModal.materials?.length" class="loot-section">
@@ -3883,16 +4157,16 @@ onBeforeUnmount(() => {
             <h3 class="loot-section-title">Objets</h3>
             <ul class="loot-items">
               <li v-for="item in lootModal.items" :key="`loot-item-${item.id}`"
-                @mouseenter="showInventoryItemTooltip(item, $event)"
-                @mouseleave="hideInventoryItemTooltip()"
+                @mouseenter="showInventoryItemTooltip(item, $event)" @mouseleave="hideInventoryItemTooltip()"
                 @mousemove="moveInventoryItemTooltip($event)">
                 <img class="item-icon" :src="itemIcon(item)" alt="loot" />
                 <div class="item-main">
                   <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
+                  <p class="loot-item-rarity" :style="{ color: rarityColor(item.rarity) }">{{ rarityLabel(item.rarity)
+                    }}</p>
                   <p>{{ inventoryTypeLabel(item) }}</p>
                   <p v-if="itemDescription(item)">{{ itemDescription(item) }}</p>
                   <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
-                  <p class="inventory-price">Prix de vente: {{ itemSellPrice(item) }} or</p>
                   <div class="row-actions">
                     <button v-if="item.kind === 'equipment'" @click="equipLootItem(item.id)">Equiper</button>
                     <button class="secondary" @click="sellLootItem(item.id)">
@@ -4022,8 +4296,11 @@ onBeforeUnmount(() => {
       <div v-if="skillsModalOpen" class="overlay-meta" @click="skillsModalOpen = false">
         <article class="meta-modal skills-modal" @click.stop>
           <header class="skills-modal-header">
-            <h2>Compétences – {{ currentClass?.name }}</h2>
-            <p class="skills-modal-subtitle">Compétences de classe disponibles au combat</p>
+            <div>
+              <h2>Compétences – {{ currentClass?.name }}</h2>
+              <p class="skills-modal-subtitle">Compétences de classe disponibles au combat</p>
+            </div>
+            <button type="button" class="modal-x-btn" @click="skillsModalOpen = false">✕</button>
           </header>
           <div class="skills-catalog">
             <article v-for="skill in skillCatalog" :key="skill.id" class="skill-card"
@@ -4050,23 +4327,35 @@ onBeforeUnmount(() => {
       <div v-if="passivesModalOpen" class="overlay-meta" @click="passivesModalOpen = false">
         <article class="meta-modal passive-tree-modal" @click.stop>
           <header class="passive-tree-header">
+            <button type="button" class="passive-close-btn" aria-label="Fermer" @click="passivesModalOpen = false">
+              ×
+            </button>
             <h2>Arbre passif – {{ currentClass?.name }}</h2>
             <div class="passive-tree-info">
               <span>Points disponibles: <strong>{{ run.player.passivePoints }}</strong></span>
               <span>Réinit. possible: <strong>{{ passiveResetRemaining }}</strong> / {{ PASSIVE_RESET_RULES.limit
-                }}</span>
+              }}</span>
             </div>
             <p v-if="currentClass?.innatePassive" class="passive-innate-line">
               Passif de base: <strong>{{ currentClass.innatePassive.name }}</strong> – {{
                 currentClass.innatePassive.description }}
             </p>
           </header>
-          <div v-if="passiveBranches.length" class="passive-branches">
-            <section v-for="branch in passiveBranches" :key="branch.id" class="passive-branch">
-              <h3 class="passive-branch-title">{{ branch.name }}</h3>
-              <p class="passive-branch-desc">{{ branch.description }}</p>
+          <template v-if="passiveBranches.length">
+            <label class="passive-branch-picker">
+              <span>Arbre</span>
+              <select v-model="selectedPassiveBranchId">
+                <option v-for="branch in passiveBranches" :key="branch.id" :value="branch.id">
+                  {{ branch.name }}
+                </option>
+              </select>
+            </label>
+            <div v-if="selectedPassiveBranch" class="passive-branches passive-branches-single">
+              <section class="passive-branch">
+                <h3 class="passive-branch-title">{{ selectedPassiveBranch.name }}</h3>
+                <p class="passive-branch-desc">{{ selectedPassiveBranch.description }}</p>
               <div class="passive-chain">
-                <article v-for="passive in branch.passives" :key="passive.id" class="passive-node" :class="{
+                <article v-for="passive in selectedPassiveBranch.passives" :key="passive.id" class="passive-node" :class="{
                   unlocked: run.player.unlockedPassives.includes(passive.id),
                   major: passive.isMajor,
                 }">
@@ -4079,7 +4368,7 @@ onBeforeUnmount(() => {
                   <p v-else class="passive-node-summary">{{ passive.description }}</p>
                   <small v-if="passive.requires" class="passive-node-req">Préreq.: {{ passive.requiresName ??
                     passive.requires
-                    }}</small>
+                  }}</small>
                   <button type="button" class="passive-unlock-btn" :class="{
                     'passive-btn-available': passiveCanUnlock(passive) && !run.player.unlockedPassives.includes(passive.id),
                     'passive-btn-unlocked': run.player.unlockedPassives.includes(passive.id),
@@ -4088,8 +4377,9 @@ onBeforeUnmount(() => {
                   </button>
                 </article>
               </div>
-            </section>
-          </div>
+              </section>
+            </div>
+          </template>
           <ul v-else class="passive-fallback-list">
             <li v-for="passive in passiveCatalog" :key="passive.id">
               <strong>{{ passive.name }}</strong>
@@ -4177,6 +4467,7 @@ onBeforeUnmount(() => {
   min-height: 100vh;
   padding: 20px;
   box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .loading-screen,
@@ -4221,8 +4512,18 @@ onBeforeUnmount(() => {
   margin-bottom: 10px;
 }
 
+.setup-card > button {
+  display: block;
+  width: 100%;
+  padding: 11px 14px;
+  font-size: 0.95rem;
+  margin-top: 8px;
+}
+
 .setup-card input,
 .setup-card select {
+  width: 100%;
+  box-sizing: border-box;
   border-radius: 8px;
   border: 1px solid rgba(229, 205, 168, 0.4);
   background: rgba(9, 19, 26, 0.9);
@@ -4447,12 +4748,22 @@ button.danger {
   image-rendering: pixelated;
 }
 
+.hud-btn-skills {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+}
+
 @keyframes new-badge-blink {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
     transform: scale(1);
     filter: brightness(1);
   }
+
   50% {
     opacity: 0.4;
     transform: scale(1.15);
@@ -4482,6 +4793,19 @@ button.danger {
   display: grid;
   grid-template-columns: 1.2fr 1fr 1fr;
   gap: 12px;
+}
+
+.desktop-columns {
+  display: grid;
+}
+
+.game-content {
+  margin-top: 12px;
+}
+
+.mobile-map-section {
+  display: none;
+  margin-top: 0;
 }
 
 .world-header {
@@ -4623,6 +4947,7 @@ button.danger {
 
 .map-player-token .player-sprite {
   transform: scale(1.8);
+  transform-origin: center 65%;
 }
 
 
@@ -4768,6 +5093,203 @@ button.danger {
   margin-top: 8px;
   display: grid;
   gap: 6px;
+}
+
+.control-btn {
+  min-height: 44px;
+}
+
+.mobile-action-bar {
+  display: none;
+  width: calc(100vw - 16px);
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  padding: 8px 6px 10px;
+  background: rgba(4, 10, 16, 0.92);
+  border-top: 1px solid rgba(252, 208, 135, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  z-index: 22;
+  box-sizing: border-box;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 4px;
+}
+
+.mobile-control-panel {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 8px;
+  padding-top: 10px;
+}
+
+.mobile-interact-btn {
+  align-self: start;
+}
+
+.mobile-interact-btn {
+  min-width: 60px;
+  min-height: 60px;
+  border-radius: 16px;
+  border: 1px solid rgba(252, 208, 135, 0.4);
+  background: linear-gradient(135deg, rgba(39, 92, 104, 0.9), rgba(30, 43, 61, 0.95));
+  color: #f7efda;
+  font-size: 1.2rem;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.mobile-action-bar .mobile-quick-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(252, 208, 135, 0.25);
+  background: rgba(20, 40, 50, 0.7);
+  color: #e8dcc8;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 160ms ease;
+  text-align: center;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 0;
+  max-width: 80px;
+  overflow: hidden;
+}
+
+.mobile-action-menu-wrapper {
+  position: relative;
+  flex: 1 1 0;
+  max-width: 80px;
+  min-width: 0;
+}
+
+.mobile-action-menu-wrapper .mobile-quick-btn {
+  width: 100%;
+  max-width: none;
+}
+
+.mobile-action-menu-dropdown {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: grid;
+  gap: 4px;
+  min-width: 132px;
+  padding: 6px;
+  border: 1px solid rgba(252, 208, 135, 0.34);
+  border-radius: 10px;
+  background: rgba(5, 13, 18, 0.96);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  z-index: 30;
+}
+
+.mobile-action-menu-dropdown button {
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 0.78rem;
+  border-radius: 7px;
+}
+
+.mobile-action-menu-dropdown button.danger {
+  background: linear-gradient(130deg, #6d241e, #8d3429);
+}
+
+.mobile-quick-btn img {
+  width: 22px;
+  height: 22px;
+  image-rendering: pixelated;
+  object-fit: contain;
+}
+
+.mobile-quick-btn span {
+  display: block;
+  line-height: 1.1;
+}
+
+.mobile-quick-btn:hover:enabled {
+  background: rgba(30, 55, 65, 0.85);
+  border-color: rgba(252, 208, 135, 0.4);
+  transform: scale(1.05);
+}
+
+.mobile-quick-btn-primary {
+  border-color: rgba(252, 208, 135, 0.5);
+  background: linear-gradient(135deg, rgba(39, 92, 104, 0.8), rgba(30, 43, 61, 0.8));
+  font-size: 0.95rem;
+  font-weight: 700;
+  padding: 5px 4px;
+}
+
+.mobile-quick-btn-primary:hover {
+  background: linear-gradient(135deg, rgba(50, 110, 125, 0.9), rgba(40, 55, 75, 0.9));
+}
+
+/* D-pad style: 4 flèches sous la carte */
+.move-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  gap: 6px;
+  max-width: 200px;
+  margin: 12px auto 0;
+}
+
+.move-btn {
+  min-width: 52px;
+  min-height: 52px;
+  font-size: 1.6rem;
+  border-radius: 12px;
+  border: 2px solid rgba(247, 207, 144, 0.5);
+  background: linear-gradient(145deg, rgba(29, 96, 113, 0.9), rgba(31, 54, 74, 0.9));
+  color: #f8efdb;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.1s, background 0.15s;
+}
+
+.move-btn:hover {
+  background: linear-gradient(145deg, rgba(35, 110, 130, 0.95), rgba(38, 65, 88, 0.95));
+  transform: scale(1.05);
+}
+
+.move-btn:active {
+  transform: scale(0.98);
+}
+
+.move-up {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.move-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.move-right {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.move-down {
+  grid-column: 2;
+  grid-row: 3;
 }
 
 .dir-grid {
@@ -5125,6 +5647,7 @@ button.danger {
 
 .combat-modal {
   width: min(96vw, 1520px);
+  min-height: 92vh;
   max-height: 92vh;
   overflow: auto;
   border-radius: 14px;
@@ -5216,6 +5739,26 @@ button.danger {
   width: 18px;
   height: 18px;
   image-rendering: pixelated;
+}
+
+.combat-actions-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.combat-command-block,
+.combat-skills-block {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.skill-btn-name {
+  display: block;
+}
+
+.skill-btn-cost {
+  display: none;
 }
 
 .combat-actions-row,
@@ -5853,18 +6396,78 @@ button.danger {
 }
 
 .overlay-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: rgba(2, 8, 13, 0.72);
   z-index: 55;
+  padding: 24px 16px;
+  box-sizing: border-box;
 }
 
 .meta-modal {
-  width: min(90vw, 720px);
-  max-height: 88vh;
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
   overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   border-radius: 12px;
   border: 1px solid rgba(247, 204, 133, 0.38);
   background: linear-gradient(150deg, rgba(13, 30, 38, 0.96), rgba(51, 20, 15, 0.95));
   padding: 14px;
+}
+
+.meta-modal::-webkit-scrollbar {
+  display: none;
+}
+
+.harvest-result-modal {
+  width: min(90vw, 340px);
+  border-radius: 12px;
+  border: 1px solid rgba(247, 204, 133, 0.38);
+  background: linear-gradient(150deg, rgba(13, 30, 38, 0.98), rgba(51, 20, 15, 0.96));
+  padding: 16px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+.harvest-result-modal h3 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  color: #e8d4a8;
+}
+
+.harvest-result-modal ul {
+  margin: 0 0 14px;
+  padding-left: 1.2em;
+  list-style: none;
+}
+
+.harvest-result-modal ul li {
+  padding: 2px 0;
+  color: #c4b896;
+  font-size: 0.9rem;
+}
+
+.harvest-result-empty {
+  margin: 0 0 14px;
+  color: #9a8f72;
+  font-size: 0.9rem;
+}
+
+.harvest-result-close {
+  display: block;
+  margin: 0 auto;
+  padding: 6px 20px;
+  border-radius: 8px;
+  border: 1px solid rgba(247, 204, 133, 0.5);
+  background: rgba(60, 35, 20, 0.9);
+  color: #e8d4a8;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.harvest-result-close:hover {
+  background: rgba(80, 50, 28, 0.95);
 }
 
 .npc-modal {
@@ -5872,7 +6475,7 @@ button.danger {
 }
 
 .inventory-modal {
-  width: min(92vw, 980px);
+  width: min(980px, calc(100vw - 32px));
 }
 
 .inventory-modal-head {
@@ -6062,6 +6665,15 @@ button.danger {
   margin: 0.5rem 0 0;
 }
 
+.loot-item-rarity {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.95;
+}
+
 .loot-modal-actions {
   display: flex;
   justify-content: center;
@@ -6115,7 +6727,9 @@ button.danger {
 }
 
 .passive-tree-header {
+  position: relative;
   border-bottom: 1px solid rgba(247, 204, 133, 0.35);
+  padding-right: 42px;
   padding-bottom: 0.75rem;
   margin-bottom: 1rem;
 }
@@ -6137,10 +6751,49 @@ button.danger {
   color: rgba(255, 208, 122, 1);
 }
 
+.passive-close-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+  line-height: 1;
+  border-color: rgba(247, 204, 133, 0.45);
+  background: rgba(8, 18, 24, 0.72);
+}
+
 .passive-innate-line {
   margin: 0;
   font-size: 0.88rem;
   opacity: 0.92;
+}
+
+.passive-branch-picker {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  max-width: 360px;
+}
+
+.passive-branch-picker span {
+  font-size: 0.84rem;
+  color: rgba(247, 204, 133, 0.92);
+}
+
+.passive-branch-picker select {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(247, 204, 133, 0.36);
+  background: rgba(8, 18, 24, 0.92);
+  color: rgba(240, 230, 218, 0.96);
+  padding: 8px 10px;
 }
 
 .passive-branches {
@@ -6148,6 +6801,10 @@ button.danger {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
+}
+
+.passive-branches-single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .passive-branch {
@@ -6367,6 +7024,10 @@ button.danger {
 }
 
 .skills-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
   border-bottom: 1px solid rgba(247, 204, 133, 0.35);
   padding-bottom: 0.75rem;
   margin-bottom: 1rem;
@@ -6382,6 +7043,27 @@ button.danger {
   margin: 0;
   font-size: 0.88rem;
   opacity: 0.88;
+}
+
+.modal-x-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #c8b99a;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.modal-x-btn:hover {
+  background: rgba(255, 255, 255, 0.13);
+  color: #f3d98a;
 }
 
 .skills-catalog {
@@ -6547,6 +7229,43 @@ button.danger {
     grid-template-columns: 1fr;
   }
 
+  .hud-actions {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .hud-actions .hud-icon-btn,
+  .hud-actions .hud-btn-skills {
+    min-height: 52px;
+    padding: 12px 14px;
+    font-size: 1rem;
+    justify-content: flex-start;
+  }
+
+  .hud-actions .hud-icon-btn img {
+    width: 22px;
+    height: 22px;
+  }
+
+  .controls .control-btn {
+    min-height: 52px;
+    padding: 14px 18px;
+    font-size: 1.05rem;
+  }
+
+  .move-buttons {
+    max-width: 240px;
+    margin: 14px auto 0;
+    gap: 8px;
+  }
+
+  .move-btn {
+    min-width: 64px;
+    min-height: 64px;
+    font-size: 2rem;
+  }
+
   .characteristics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -6582,62 +7301,636 @@ button.danger {
 }
 
 @media (max-width: 760px) {
+  .overlay-combat {
+    place-items: stretch;
+  }
+
   .combat-modal {
-    width: min(98vw, 760px);
-    padding: 10px;
+    width: 100vw;
+    height: 100dvh;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+    padding: 4px;
+    border-radius: 0;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    box-sizing: border-box;
+  }
+
+  .combat-modal-head {
+    padding: 6px 8px;
+    border-radius: 8px;
+  }
+
+  .combat-head-main {
+    gap: 3px;
+  }
+
+  .combat-head-main h2 {
+    font-size: 1.05rem;
+    line-height: 1.1;
   }
 
   .combat-subline {
+    gap: 5px;
+    font-size: 0.7rem;
+  }
+
+  .turn-pill {
+    padding: 1px 8px;
+  }
+
+  .combat-modal-body {
+    margin-top: 6px;
+    display: grid;
+    grid-template-rows: minmax(188px, 42dvh) minmax(0, 1fr);
     gap: 6px;
-    font-size: 0.76rem;
+    min-height: 0;
+  }
+
+  .combat-actions-panel,
+  .combat-scene-panel,
+  .combat-log-panel {
+    width: auto;
+    min-height: 0;
+    box-sizing: border-box;
+  }
+
+  .combat-log-panel {
+    display: none;
+  }
+
+  .combat-actions-panel {
+    order: 2;
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(126px, 0.8fr);
+    grid-template-areas: "skills commands";
+    align-items: stretch;
+    gap: 6px;
+    padding: 6px;
+    overflow: hidden;
+  }
+
+  .combat-scene-panel {
+    order: 1;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .combat-skills-block {
+    grid-area: skills;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 4px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .combat-command-block {
+    grid-area: commands;
+    display: grid;
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    gap: 4px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .combat-actions-panel .panel-title {
+    margin: 0;
+    gap: 4px;
+    font-size: 0.68rem;
+    line-height: 1.1;
+  }
+
+  .combat-actions-panel .panel-title img {
+    width: 13px;
+    height: 13px;
+  }
+
+  .combat-actions-row,
+  .skills-grid,
+  .potions-grid {
+    display: grid;
+    gap: 4px;
+    min-height: 0;
+  }
+
+  .combat-actions-row>button,
+  .skills-grid>button,
+  .potions-grid>button {
+    width: 100%;
+  }
+
+  .combat-actions-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .combat-actions-row button {
+    min-height: 32px;
+    padding: 4px;
+    font-size: 0.66rem;
+    line-height: 1.1;
+  }
+
+  .combat-actions-row .end-turn-btn {
+    grid-column: 1 / -1;
+  }
+
+  .skills-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 48px;
+    align-content: start;
+  }
+
+  .skills-grid button {
+    min-height: 0;
+    padding: 5px;
+    font-size: 0.7rem;
+    line-height: 1.1;
+    overflow: hidden;
+  }
+
+  .skills-grid small {
+    display: none;
+  }
+
+  .skill-btn-name,
+  .skill-btn-cost {
+    display: block;
+  }
+
+  .skill-btn-cost {
+    margin-top: 2px;
+    font-size: 0.58rem;
+    line-height: 1.05;
+    color: #d6c6a2;
+    opacity: 0.86;
   }
 
   .battle-stage {
-    min-height: 300px;
-    padding: 9px;
-    gap: 12px;
+    height: 100%;
+    min-height: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+    gap: 5px;
+    padding: 6px;
+    border-radius: 8px;
   }
 
   .consumable-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    margin-bottom: 0;
+  }
+
+  .consumable-tab {
+    min-height: 28px;
+    padding: 3px;
+    gap: 2px;
+  }
+
+  .consumable-tab img {
+    width: 13px;
+    height: 13px;
+  }
+
+  .consumable-tab span {
+    display: none;
+  }
+
+  .consumable-tab small {
+    font-size: 0.6rem;
+  }
+
+  .potions-grid {
     grid-template-columns: 1fr;
+    align-content: start;
+    overflow: hidden;
+  }
+
+  .potions-grid-btn {
+    min-height: 30px;
+    padding: 3px 4px;
+    gap: 4px;
+  }
+
+  .potions-grid-icon {
+    width: 16px;
+    height: 16px;
+  }
+
+  .potions-grid-name {
+    font-size: 0.64rem;
+    line-height: 1.05;
+  }
+
+  .potions-grid .consumable-effect {
+    display: none;
+  }
+
+  .potions-grid-cost {
+    font-size: 0.58rem;
+  }
+
+  .potions-grid p {
+    margin: 0;
+    font-size: 0.68rem;
+  }
+
+  .battle-scene-topline {
+    display: none;
+  }
+
+  .battle-unit {
+    min-height: 0;
+    gap: 4px;
+    align-content: end;
+  }
+
+  .battle-unit-hud {
+    width: 100%;
+    max-width: 178px;
+    padding: 5px;
+    border-radius: 7px;
+  }
+
+  .battle-unit-hud strong {
+    font-size: 0.72rem;
+    line-height: 1.1;
+  }
+
+  .battle-hud-meta {
+    margin-top: 2px;
+    gap: 3px;
+    font-size: 0.58rem;
+    line-height: 1.05;
+  }
+
+  .battle-bars {
+    gap: 3px;
+    margin-top: 4px;
+  }
+
+  .battle-bar {
+    height: 6px;
+  }
+
+  .battle-ap-spotlight {
+    margin-top: 4px;
+    gap: 3px;
+    padding: 2px 6px;
+  }
+
+  .battle-ap-spotlight img {
+    width: 10px;
+    height: 10px;
+  }
+
+  .battle-ap-label {
+    font-size: 0.64rem;
+  }
+
+  .battle-actor {
+    width: clamp(58px, 23vw, 104px);
+    min-height: 76px;
+  }
+
+  .battle-actor.enemy {
+    width: clamp(56px, 22vw, 96px);
+  }
+
+  .battle-sprite-frame {
+    max-height: 88px;
+  }
+
+  .battle-projectile {
+    top: 64%;
+    width: 12px;
+    height: 12px;
+  }
+
+  .battle-impact {
+    top: 64%;
+    width: 52px;
+    height: 52px;
   }
 
   .inventory-tabs {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
   }
 
   .legend {
     grid-template-columns: 1fr;
   }
 
-  .battle-scene-topline {
-    font-size: 0.75rem;
+  /* Mobile layout restructure */
+  .layout {
+    padding: 10px 10px 90px;
   }
 
-  .battle-unit {
-    min-height: 228px;
+  .hud {
+    display: none;
   }
 
-  .battle-unit-hud {
+  .desktop-columns {
+    display: none;
+  }
+
+  .mobile-map-section {
+    display: block;
+    margin: 0;
+    padding: 0 8px;
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    padding-top: 44px;
+    box-sizing: border-box;
+  }
+
+  .world-card-mobile {
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .world-card-mobile {
+    margin: 0 0 70px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    overflow: hidden;
     width: 100%;
   }
 
-  .battle-hud-meta {
+  .world-card-mobile .map-grid-shell {
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    background: linear-gradient(145deg, rgba(7, 15, 20, 0.98), rgba(18, 10, 8, 0.98));
+    padding-bottom: 10px;
+    overflow: hidden;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .world-card-mobile .map-grid {
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    grid-template-columns: repeat(var(--grid-cols), minmax(0, 1fr)) !important;
+    padding: 6px;
+  }
+
+  .world-card-mobile .tile-btn {
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    box-sizing: border-box;
+  }
+
+  .mobile-control-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    gap: 4px;
+    margin: 0;
+    padding: 4px 8px 4px;
+    position: relative;
+  }
+
+  .mobile-interact-row {
+    width: 100%;
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .mobile-interact-btn {
+    min-width: 80px;
+    min-height: 48px;
+    border-radius: 12px;
+    border: 1px solid rgba(252, 208, 135, 0.4);
+    background: linear-gradient(135deg, rgba(39, 92, 104, 0.9), rgba(30, 43, 61, 0.95));
+    color: #f7efda;
+    font-size: 1rem;
+    font-weight: 700;
+    display: grid;
+    place-items: center;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    margin-right: 22px;
+  }
+
+  .mobile-action-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: calc(100vw - 16px);
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    padding: 8px 6px 10px;
+    gap: 4px;
+    overflow: visible;
+  }
+
+  .controls {
+    display: none;
+  }
+
+  .legend,
+  .legend-keys,
+  .legend-keys-modals,
+  .quick-status {
+    display: none;
+  }
+
+  .move-buttons-mobile {
+    display: grid;
+    position: relative;
+    z-index: 3;
+    width: max-content;
+    grid-template-columns: repeat(3, 72px);
+    grid-template-rows: repeat(3, 72px);
+    gap: 4px;
+    padding: 0;
+    margin: 0;
+    justify-items: center;
+  }
+
+  .move-buttons-mobile .move-up {
+    grid-column: 2 / 3;
+    grid-row: 1 / 2;
+  }
+
+  .move-buttons-mobile .move-left {
+    grid-column: 1 / 2;
+    grid-row: 2 / 3;
+  }
+
+  .move-buttons-mobile .move-right {
+    grid-column: 3 / 4;
+    grid-row: 2 / 3;
+  }
+
+  .move-buttons-mobile .move-down {
+    grid-column: 2 / 3;
+    grid-row: 3 / 4;
+  }
+
+  .move-buttons-mobile .move-btn {
+    width: 72px;
+    height: 72px;
+    min-width: 72px;
+    min-height: 72px;
+    font-size: 1.55rem;
+    border-radius: 12px;
+    padding: 0;
+  }
+}
+
+/* ── Mobile top bar (Quitter / Abandonner) ── */
+.mobile-top-bar {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .mobile-top-bar {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 24;
+    padding: 6px 10px;
+    gap: 8px;
+    background: rgba(4, 10, 16, 0.93);
+    border-bottom: 1px solid rgba(252, 208, 135, 0.18);
+    justify-content: flex-end;
+    align-items: center;
+    height: 44px;
+    box-sizing: border-box;
+  }
+
+  .mobile-top-bar-btn {
+    padding: 4px 14px;
+    border-radius: 8px;
     font-size: 0.72rem;
+    font-weight: 600;
+    border: 1px solid rgba(252, 208, 135, 0.3);
+    background: rgba(25, 50, 65, 0.85);
+    color: #e8dcc8;
+    cursor: pointer;
   }
 
-  .battle-actor {
-    width: clamp(98px, 34vw, 158px);
-    min-height: 150px;
+  .mobile-top-bar-btn.danger {
+    background: linear-gradient(130deg, #6d241e, #8d3429);
+    border-color: rgba(200, 80, 60, 0.5);
+    color: #ffd5cc;
+  }
+}
+
+/* ── Mobile badge ── */
+.mobile-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  background: #e04a1f;
+  color: #fff;
+  font-size: 0.55rem;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 1px 4px;
+  line-height: 1.2;
+  pointer-events: none;
+  animation: new-badge-blink 1.2s ease-in-out infinite;
+}
+
+.mobile-quick-btn {
+  position: relative;
+}
+
+/* ── Mobile equipment modal ── */
+.mobile-equipment-modal-overlay {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .mobile-equipment-modal-overlay {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.72);
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
   }
 
-  .battle-actor.enemy {
-    width: clamp(86px, 30vw, 140px);
+  .mobile-equipment-modal {
+    width: 100%;
+    max-width: 480px;
+    max-height: 80vh;
+    overflow-y: auto;
+    background: rgba(5, 13, 20, 0.97);
+    border: 1px solid rgba(252, 208, 135, 0.28);
+    border-radius: 18px;
+    padding: 16px 16px 20px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
   }
 
-  .battle-sprite-frame {
-    max-height: 142px;
+  .mobile-equip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .mobile-equip-header h2 {
+    margin: 0;
+    font-size: 1rem;
+    color: #f3d98a;
+  }
+
+  .mobile-equip-header .modal-close-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    margin: 0;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #c8b99a;
+    cursor: pointer;
+  }
+
+  .equip-empty {
+    font-size: 0.75rem;
+    color: #8a7f6e;
+    font-style: italic;
+    margin: 4px 0 0;
+  }
+
+  .meta-modal {
+    width: min(calc(100vw - 32px), 700px);
   }
 }
 </style>

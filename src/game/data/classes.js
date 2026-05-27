@@ -56,7 +56,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 10,
         cooldown: 1,
         effect: 'damage',
-        power: 1.65,
+        power: 1.95,
       },
       {
         id: 'mage_nova',
@@ -274,7 +274,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 6,
         cooldown: 1,
         effect: 'damage',
-        power: 1.65,
+        power: 1.95,
       },
       {
         id: 'assassin_fade',
@@ -392,7 +392,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 4,
         cooldown: 1,
         effect: 'damage',
-        power: 1.65,
+        power: 1.95,
       },
       {
         id: 'warrior_bulwark',
@@ -501,7 +501,7 @@ const RAW_CLASS_DEFINITIONS = [
         manaCost: 8,
         cooldown: 1,
         effect: 'damage',
-        power: 1.65,
+        power: 1.95,
       },
       {
         id: 'archer_pin',

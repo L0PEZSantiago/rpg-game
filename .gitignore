@@ -40,3 +40,6 @@ __screenshots__/
 
 # Electron build output
 release/
+
+# Android release signing credentials
+android/app/keystore.properties
