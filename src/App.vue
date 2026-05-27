@@ -3714,30 +3714,36 @@ onBeforeUnmount(() => {
         </article>
       </div>
 
-      <div class="mobile-action-bar">
-        <button class="mobile-quick-btn" @click="inventoryModalOpen = true">
-          <img src="/assets/Icons/backpack.png" alt="" />
-          <span>Inv</span>
-          <span v-if="newInventoryCount" class="mobile-badge">{{ newInventoryCount }}</span>
-        </button>
-        <button class="mobile-quick-btn" @click="skillsModalOpen = true">
-          <img src="/assets/Icons/sword.png" alt="" />
-          <span>Comp</span>
-        </button>
-        <button class="mobile-quick-btn" @click="passivesModalOpen = true">
-          <img src="/assets/Icons/skills.png" alt="" />
-          <span>Pass</span>
-          <span v-if="passivePointBadge > 0" class="mobile-badge">{{ passivePointBadge }}</span>
-        </button>
-        <button class="mobile-quick-btn" @click="characteristicsModalOpen = true">
-          <img src="/assets/Icons/armor.png" alt="" />
-          <span>Stats</span>
-        </button>
-        <button class="mobile-quick-btn" @click="mobileEquipmentModalOpen = true">
-          <img src="/assets/Icons/dagger.png" alt="" />
-          <span>Equip.</span>
-        </button>
-      </div>
+      <Transition name="bar-slide">
+        <div v-if="mobileActionMenuOpen" class="mobile-action-bar">
+          <button class="mobile-quick-btn" @click="inventoryModalOpen = true; mobileActionMenuOpen = false">
+            <img src="/assets/Icons/backpack.png" alt="" />
+            <span>Inv</span>
+            <span v-if="newInventoryCount" class="mobile-badge">{{ newInventoryCount }}</span>
+          </button>
+          <button class="mobile-quick-btn" @click="skillsModalOpen = true; mobileActionMenuOpen = false">
+            <img src="/assets/Icons/sword.png" alt="" />
+            <span>Comp</span>
+          </button>
+          <button class="mobile-quick-btn" @click="passivesModalOpen = true; mobileActionMenuOpen = false">
+            <img src="/assets/Icons/skills.png" alt="" />
+            <span>Pass</span>
+            <span v-if="passivePointBadge > 0" class="mobile-badge">{{ passivePointBadge }}</span>
+          </button>
+          <button class="mobile-quick-btn" @click="characteristicsModalOpen = true; mobileActionMenuOpen = false">
+            <img src="/assets/Icons/armor.png" alt="" />
+            <span>Stats</span>
+          </button>
+          <button class="mobile-quick-btn" @click="mobileEquipmentModalOpen = true; mobileActionMenuOpen = false">
+            <img src="/assets/Icons/dagger.png" alt="" />
+            <span>Equip.</span>
+          </button>
+        </div>
+      </Transition>
+      <button type="button" class="mobile-menu-toggle" @click="mobileActionMenuOpen = !mobileActionMenuOpen">
+        <span class="mobile-menu-toggle-icon">{{ mobileActionMenuOpen ? '✕' : '☰' }}</span>
+        <span v-if="(newInventoryCount || passivePointBadge > 0) && !mobileActionMenuOpen" class="mobile-badge mobile-toggle-badge">!</span>
+      </button>
 
       <div v-if="mobileEquipmentModalOpen" class="mobile-equipment-modal-overlay" @click.self="mobileEquipmentModalOpen = false">
         <article class="mobile-equipment-modal">
@@ -3872,8 +3878,11 @@ onBeforeUnmount(() => {
                     <button v-for="(skill, index) in unlockedPlayerSkills" :key="skill.id"
                       :disabled="!skillReady(skill)" :title="skill.description" @click="useSkillAction(skill.id)">
                       <span class="skill-btn-name">{{ index + 1 }}. {{ skill.name }}</span>
-                      <span class="skill-btn-cost">PA {{ skill.apCost }} / Mana {{ effectiveSkillManaCost(skill)
-                        }}</span>
+                      <span class="skill-btn-cost">PA {{ skill.apCost }} / Mana {{ effectiveSkillManaCost(skill) }}</span>
+                      <span v-if="(run.combat.playerCooldowns[skill.id] ?? 0) > 0" class="skill-btn-cd">
+                        Cd {{ run.combat.playerCooldowns[skill.id] }}t
+                      </span>
+                      <span v-else-if="skill.cooldown > 0" class="skill-btn-cd skill-btn-cd-ready">Prêt</span>
                       <small>
                         {{ skill.description }}
                         | PA {{ skill.apCost }} mana {{ effectiveSkillManaCost(skill) }}
@@ -4217,6 +4226,7 @@ onBeforeUnmount(() => {
 
       <div v-if="npcOpen && currentNpc" class="overlay-meta" @click="npcOpen = false">
         <article class="meta-modal npc-modal" @click.stop>
+          <button type="button" class="modal-x-btn npc-modal-close" @click="npcOpen = false">✕</button>
           <header class="npc-head" :class="{ 'npc-head-scene': npcDialogueSceneEnabled }">
             <template v-if="npcDialogueSceneEnabled">
               <div class="npc-scene-sprites">
@@ -4241,7 +4251,10 @@ onBeforeUnmount(() => {
               </div>
             </template>
             <template v-else>
-              <img :src="currentNpc.portrait" alt="portrait npc" />
+              <div class="animated-avatar npc-head-avatar">
+                <img class="animated-avatar-strip" :src="npcIdleSprite" alt="portrait npc"
+                  :style="animatedSpriteStripStyle(npcIdleSprite, 4, 1)" />
+              </div>
               <div>
                 <h2>{{ currentNpc.name }}</h2>
                 <p>{{ npcDialogueText || currentNpc.dialogue }}</p>
@@ -5312,17 +5325,30 @@ button.danger {
   background: rgba(12, 23, 31, 0.74);
 }
 
+.npc-modal {
+  position: relative;
+}
+
+.npc-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
 .npc-head {
   display: flex;
   gap: 9px;
 }
 
-.npc-head>img {
+.npc-head-avatar {
   width: 52px;
   height: 52px;
+  flex-shrink: 0;
   border-radius: 9px;
-  object-fit: cover;
-  image-rendering: pixelated;
+}
+
+.npc-head-avatar .animated-avatar-strip {
+  width: 400%;
 }
 
 .characteristics-modal {
@@ -5761,6 +5787,25 @@ button.danger {
   display: none;
 }
 
+.skill-btn-cd {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: rgba(180, 60, 40, 0.55);
+  color: #ffb8a0;
+  border: 1px solid rgba(255, 120, 80, 0.4);
+  line-height: 1.3;
+}
+
+.skill-btn-cd-ready {
+  background: rgba(40, 140, 60, 0.45);
+  color: #a0ffb0;
+  border-color: rgba(60, 200, 80, 0.35);
+}
+
 .combat-actions-row,
 .skills-grid,
 .potions-grid {
@@ -5772,8 +5817,8 @@ button.danger {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px;
-  min-height: 0;
+  padding: 7px 8px;
+  min-height: 48px;
   text-align: left;
 }
 
@@ -7428,10 +7473,10 @@ button.danger {
   }
 
   .combat-actions-row button {
-    min-height: 32px;
-    padding: 4px;
-    font-size: 0.66rem;
-    line-height: 1.1;
+    min-height: 44px;
+    padding: 6px 8px;
+    font-size: 0.78rem;
+    line-height: 1.2;
   }
 
   .combat-actions-row .end-turn-btn {
@@ -7440,12 +7485,12 @@ button.danger {
 
   .skills-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-rows: 48px;
+    grid-auto-rows: auto;
     align-content: start;
   }
 
   .skills-grid button {
-    min-height: 0;
+    min-height: 58px;
     padding: 5px;
     font-size: 0.7rem;
     line-height: 1.1;
@@ -7508,12 +7553,20 @@ button.danger {
   .potions-grid {
     grid-template-columns: 1fr;
     align-content: start;
-    overflow: hidden;
+    height: 100%;
+    max-height: min(160px, 28dvh);
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .potions-grid::-webkit-scrollbar {
+    display: none;
   }
 
   .potions-grid-btn {
-    min-height: 30px;
-    padding: 3px 4px;
+    min-height: 42px;
+    padding: 5px 6px;
     gap: 4px;
   }
 
@@ -7528,7 +7581,11 @@ button.danger {
   }
 
   .potions-grid .consumable-effect {
-    display: none;
+    display: block;
+    font-size: 0.58rem;
+    opacity: 0.75;
+    line-height: 1.1;
+    margin-top: 1px;
   }
 
   .potions-grid-cost {
@@ -7734,17 +7791,65 @@ button.danger {
     margin-right: 22px;
   }
 
+  .mobile-menu-toggle {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    z-index: 24;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: rgba(10, 22, 30, 0.95);
+    border: 1px solid rgba(252, 208, 135, 0.4);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .mobile-menu-toggle-icon {
+    font-size: 1.3rem;
+    color: #f3d98a;
+    line-height: 1;
+  }
+
+  .mobile-toggle-badge {
+    top: 4px;
+    right: 4px;
+  }
+
   .mobile-action-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    width: calc(100vw - 16px);
-    left: 8px;
-    right: 8px;
-    bottom: 8px;
-    padding: 8px 6px 10px;
+    width: 100%;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 10px 12px 18px;
+    padding-right: 72px;
     gap: 4px;
     overflow: visible;
+    border-radius: 20px 20px 0 0;
+    border-top: 1px solid rgba(252, 208, 135, 0.25);
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  /* Transition slide depuis le bas */
+  .bar-slide-enter-active {
+    transition: transform 300ms cubic-bezier(0.34, 1.3, 0.64, 1), opacity 220ms ease;
+  }
+
+  .bar-slide-leave-active {
+    transition: transform 220ms cubic-bezier(0.4, 0, 1, 1), opacity 180ms ease;
+  }
+
+  .bar-slide-enter-from,
+  .bar-slide-leave-to {
+    transform: translateY(100%);
+    opacity: 0;
   }
 
   .controls {
