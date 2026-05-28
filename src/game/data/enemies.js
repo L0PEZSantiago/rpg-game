@@ -11,7 +11,7 @@ import {
 const RAW_ENEMY_TEMPLATES = {
   ash_hound: {
     id: 'ash_hound',
-    name: 'Chien des cendres',
+    name: 'Pillard des cendres',
     asset: ORC_ROGUE_ASSET,
     level: 2,
     maxHp: 84,
@@ -27,7 +27,7 @@ const RAW_ENEMY_TEMPLATES = {
     skills: [
       {
         id: 'hound_bite',
-        name: 'Morsure',
+        name: 'Griffure sournoise',
         apCost: 3,
         manaCost: 0,
         effect: 'damage',
@@ -36,7 +36,7 @@ const RAW_ENEMY_TEMPLATES = {
       },
       {
         id: 'hound_lunge',
-        name: 'Bond',
+        name: 'Plongeon',
         apCost: 4,
         manaCost: 0,
         effect: 'damage',

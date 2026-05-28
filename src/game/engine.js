@@ -5,6 +5,7 @@ import {
   DIFFICULTY_CONFIG,
   EQUIPMENT_BONUS_POOL,
   ENEMY_TEMPLATES,
+  KNIGHT_ASSET,
   LOOT_BASES,
   MAPS,
   MAP_ORDER,
@@ -15,6 +16,8 @@ import {
   RARITY_ORDER,
   RECIPES,
   RESOURCE_TABLE,
+  ROGUE_ASSET,
+  WIZZARD_ASSET,
   mapIsWalkable,
 } from './data'
 import { chance, clamp, deepClone, randomChoice, randomInt, toKey, uid, weightedChoice } from './utils'
@@ -32,6 +35,16 @@ const NON_BOSS_EQUIPMENT_DROP_CHANCE = 0.6
 /** Poids mythique boss : avec biais mythic (+4), (w+4)/(84+w) ≤ 0.10 => max 10% */
 const BOSS_MYTHIC_WEIGHT = 4.9
 const CHEST_MYTHIC_CHANCE = 0.05
+const CHEST_TYPE_WEIGHTS = [
+  { value: 'normal', weight: 54 },
+  { value: 'trapped', weight: 16 },
+  { value: 'bonus', weight: 30 },
+]
+const SECRET_ROOM_IDS = ['secret_room_vault', 'secret_room_hollow', 'secret_room_sanctum']
+const CHALLENGER_NPC_SPAWN_CHANCE = 0.42
+const WANDERING_MERCHANT_SPAWN_CHANCE = 0.30
+const CHALLENGER_NAMES = ['Mercenaire Borgne', 'Duelliste des Ombres', 'Champion Errant', 'Vétéran des Ruines', 'Gladiateur Exilé']
+const WANDERING_MERCHANT_NAMES = ['Caravane Spectrale', 'Marchand Sans Visage', 'Trafiquant des Ombres', 'Colporteur Maudit']
 const SELL_PRICE_FACTOR = 0.12 // 12% du prix d'achat, pour changer la valeur de vente des objets
 const SELL_RARITY_MULTIPLIER = {
   common: 1,
@@ -347,22 +360,21 @@ function createMapState(mapId) {
   const layoutVariant = randomChoice(MAP_LAYOUT_VARIANTS) ?? 'none'
   const tiles = transformTiles(map.tiles, layoutVariant, map.width, map.height)
   const transformedStart = transformPoint(map.start, layoutVariant, map.width, map.height)
-  const transformedExit = transformPoint(map.exit, layoutVariant, map.width, map.height)
-  const transformedSecret = transformPoint(map.secretPortal, layoutVariant, map.width, map.height)
-  const transformedBack = transformPoint(map.backPortal, layoutVariant, map.width, map.height)
+  const transformedSecret = transformPoint(map.secretPortal ?? null, layoutVariant, map.width, map.height)
+  const transformedBack = transformPoint(map.backPortal ?? null, layoutVariant, map.width, map.height)
   const noSpawnZones = transformedNoSpawnZones(map, layoutVariant)
 
   const blocked = new Set()
   const start = findNearestWalkable(map, transformedStart.x, transformedStart.y, blocked, tiles)
   blocked.add(toKey(start.x, start.y))
 
-  const exitCell = findNearestWalkable(map, transformedExit.x, transformedExit.y, blocked, tiles)
-  const exit = {
-    ...map.exit,
-    x: exitCell.x,
-    y: exitCell.y,
+  let exit = null
+  if (map.exit) {
+    const transformedExit = transformPoint(map.exit, layoutVariant, map.width, map.height)
+    const exitCell = findNearestWalkable(map, transformedExit.x, transformedExit.y, blocked, tiles)
+    exit = { ...map.exit, x: exitCell.x, y: exitCell.y }
+    blocked.add(toKey(exit.x, exit.y))
   }
-  blocked.add(toKey(exit.x, exit.y))
 
   let secretPortal = null
   if (map.secretPortal) {
@@ -420,12 +432,53 @@ function createMapState(mapId) {
     createEnemyInstance(enemySpawn, cell, false),
   )
 
-  const randomBossCell = takeCellFromPool(pool, blocked, start, 6)
-  const transformedBoss = transformPoint(map.boss, layoutVariant, map.width, map.height)
-  const bossCell =
-    randomBossCell ?? findNearestWalkable(map, transformedBoss.x, transformedBoss.y, blocked, tiles)
-  blocked.add(toKey(bossCell.x, bossCell.y))
-  enemies.push(createEnemyInstance(map.boss, bossCell, true))
+  let bossDefeatedInitial = false
+  if (map.boss) {
+    const randomBossCell = takeCellFromPool(pool, blocked, start, 6)
+    const transformedBoss = transformPoint(map.boss, layoutVariant, map.width, map.height)
+    const bossCell =
+      randomBossCell ?? findNearestWalkable(map, transformedBoss.x, transformedBoss.y, blocked, tiles)
+    blocked.add(toKey(bossCell.x, bossCell.y))
+    enemies.push(createEnemyInstance(map.boss, bossCell, true))
+  } else {
+    bossDefeatedInitial = true
+  }
+
+  // Spawn aléatoire : PNJ Défi + Marchand itinérant (hors maps secrètes)
+  if (!map.isSecret && !map.isSecretRoom) {
+    if (chance(CHALLENGER_NPC_SPAWN_CHANCE)) {
+      const cell = takeCellFromPool(pool, blocked, start, 2)
+      if (cell) {
+        blocked.add(toKey(cell.x, cell.y))
+        npcs.push({
+          id: uid('challenger'),
+          name: randomChoice(CHALLENGER_NAMES),
+          role: 'challenger',
+          portrait: randomChoice([KNIGHT_ASSET, ROGUE_ASSET]),
+          dialogue: 'Je défie tout aventurier qui croise mon chemin. As-tu le cran ?',
+          completed: false,
+          x: cell.x,
+          y: cell.y,
+        })
+      }
+    }
+    if (chance(WANDERING_MERCHANT_SPAWN_CHANCE)) {
+      const cell = takeCellFromPool(pool, blocked, start, 2)
+      if (cell) {
+        blocked.add(toKey(cell.x, cell.y))
+        npcs.push({
+          id: uid('wandering_merchant'),
+          name: randomChoice(WANDERING_MERCHANT_NAMES),
+          role: 'wandering_merchant',
+          portrait: WIZZARD_ASSET,
+          dialogue: 'Des reliques uniques. Chères. Mais ça en vaut le prix.',
+          stock: null,
+          x: cell.x,
+          y: cell.y,
+        })
+      }
+    }
+  }
 
   return {
     layoutVariant,
@@ -442,7 +495,7 @@ function createMapState(mapId) {
     solvedRiddles: [],
     failedRiddles: [],
     selectedRiddles: {},
-    bossDefeated: false,
+    bossDefeated: bossDefeatedInitial,
     secretPortalRevealed: false,
     noSpawnZones,
   }
@@ -533,6 +586,7 @@ export function createRun({ name, classId, difficulty }) {
       materials: createMaterialBag(),
       deaths: 0,
       passiveResetsUsed: 0,
+      hasRevive: false,
     },
     world: {
       currentMapId: firstMapId,
@@ -587,6 +641,7 @@ function ensurePlayerState(run) {
   run.player.deaths ??= 0
   run.player.nextXp ??= xpForLevel(run.player.level || 1)
   run.player.preparedBuffs ??= []
+  run.player.hasRevive ??= false
 }
 
 function ensureShopStockState(run) {
@@ -628,7 +683,9 @@ export function hydrateRun(rawSnapshot) {
     const state = ensureMapState(run, mapId)
     state.tiles ??= [...MAPS[mapId].tiles]
     state.start ??= { ...MAPS[mapId].start }
-    state.exit ??= { ...MAPS[mapId].exit }
+    if (state.exit == null) {
+      state.exit = MAPS[mapId].exit != null ? { ...MAPS[mapId].exit } : null
+    }
     state.secretPortal ??= MAPS[mapId].secretPortal ? { ...MAPS[mapId].secretPortal } : null
     state.backPortal ??= MAPS[mapId].backPortal ? { ...MAPS[mapId].backPortal } : null
     if (state.exit && MAPS[mapId].exit) {
@@ -720,6 +777,7 @@ export function derivedStats(run) {
     statusResist: selectedClass.baseStats.statusResist ?? 0.03,
     ap: selectedClass.baseStats.ap,
     damagePercent: 0,
+    magicDamagePercent: 0,
     dotPercent: 0,
     manaRegenFlat: 0,
     lifeRegenFlat: 0,
@@ -759,6 +817,7 @@ export function derivedStats(run) {
   stats.statusResist += allBonuses.statusResistFlat ?? 0
   stats.ap += allBonuses.apFlat ?? 0
   stats.damagePercent += allBonuses.damagePercent ?? 0
+  stats.magicDamagePercent += allBonuses.magicDamagePercent ?? 0
   stats.dotPercent += allBonuses.dotPercent ?? 0
   stats.manaRegenFlat += allBonuses.manaRegenFlat ?? 0
   stats.lifeRegenFlat += allBonuses.lifeRegenFlat ?? 0
@@ -797,7 +856,7 @@ export function derivedStats(run) {
     stats.speed = Math.floor(stats.speed * (1 + stats.speedPercent))
   }
   if (stats.spellPowerPercent !== 0) {
-    stats.damagePercent += stats.spellPowerPercent
+    stats.magicDamagePercent += stats.spellPowerPercent
   }
 
   if (run.player.hp / Math.max(1, stats.maxHp) > 0.7) {
@@ -1408,8 +1467,101 @@ export function openNearbyChest(run) {
   }
 
   chest.opened = true
+  const chestType = weightedChoice(CHEST_TYPE_WEIGHTS)
+
+  if (chestType === 'trapped') {
+    const trapTypes = ['poison_blade', 'gold_thief', 'curse', 'attack_debuff', 'xp_drain']
+    const trap = randomChoice(trapTypes)
+    let chestEvent
+    if (trap === 'poison_blade') {
+      const stats = derivedStats(run)
+      const hpLost = Math.max(1, Math.floor(stats.maxHp * 0.2))
+      run.player.hp = Math.max(1, run.player.hp - hpLost)
+      appendLog(run, `Coffre piégé ! Une lame empoisonnée vous inflige ${hpLost} dégâts.`)
+      chestEvent = { type: 'trap', title: 'Piège !', desc: `Une lame empoisonnée jaillit du mécanisme. −${hpLost} PV.` }
+    } else if (trap === 'gold_thief') {
+      const stolen = Math.min(run.player.gold, randomInt(50, 90))
+      run.player.gold = Math.max(0, run.player.gold - stolen)
+      appendLog(run, `Coffre piégé ! Un mécanisme dérobe ${stolen} or.`)
+      chestEvent = { type: 'trap', title: 'Piège !', desc: `Un ressort catapulte votre bourse dans l'ombre. −${stolen} or.` }
+    } else if (trap === 'attack_debuff') {
+      pushPreparedBuff(run, { type: 'debuff', stat: 'attackPercent', value: 0.25, turns: 3 })
+      appendLog(run, `Coffre maudit ! Une malédiction affaiblit votre attaque lors du prochain combat.`)
+      chestEvent = { type: 'trap', title: 'Malédiction !', desc: `Une malédiction ronge vos muscles. −25% d'attaque pendant 3 tours au prochain combat.` }
+    } else if (trap === 'xp_drain') {
+      const drained = Math.min(run.player.xp, randomInt(100, 250))
+      run.player.xp = Math.max(0, run.player.xp - drained)
+      appendLog(run, `Coffre piégé ! Un vortex dévore ${drained} XP.`)
+      chestEvent = { type: 'trap', title: 'Drain d\'expérience !', desc: `Un vortex dévore votre expérience. −${drained} XP.` }
+    } else {
+      const matKeys = Object.keys(run.player.materials ?? {}).filter((k) => (run.player.materials[k] ?? 0) > 0)
+      if (matKeys.length > 0) {
+        const lostMat = randomChoice(matKeys)
+        const lostQty = Math.min(run.player.materials[lostMat], 2)
+        run.player.materials[lostMat] = Math.max(0, run.player.materials[lostMat] - lostQty)
+        appendLog(run, `Coffre maudit ! La malédiction consume ${lostQty} ${MATERIAL_LABELS[lostMat]}.`)
+        chestEvent = { type: 'trap', title: 'Malédiction !', desc: `Un sortilège corrompt vos ressources. −${lostQty} ${MATERIAL_LABELS[lostMat]}.` }
+      } else {
+        const stats = derivedStats(run)
+        const hpLost = Math.max(1, Math.floor(stats.maxHp * 0.15))
+        run.player.hp = Math.max(1, run.player.hp - hpLost)
+        appendLog(run, `Coffre piégé ! Une lame jaillit du mécanisme (${hpLost} dégâts).`)
+        chestEvent = { type: 'trap', title: 'Piège !', desc: `Une lame jaillit du mécanisme. −${hpLost} PV.` }
+      }
+    }
+    return { ok: true, chest, loots: [], gold: 0, materials: [], chestEvent }
+  }
+
+  if (chestType === 'bonus') {
+    const bonus = weightedChoice([
+      { value: 'healing',        weight: 22 },
+      { value: 'consumable_heal', weight: 22 },
+      { value: 'consumable_mana', weight: 20 },
+      { value: 'damage_boost',   weight: 18 },
+      { value: 'xp_surge',       weight: 14 },
+      { value: 'teleport_room',  weight: 10 },
+      { value: 'revive_charm',   weight: 4 },
+    ])
+    let chestEvent
+    if (bonus === 'healing') {
+      const stats = derivedStats(run)
+      const healed = Math.max(5, Math.floor(stats.maxHp * 0.35))
+      run.player.hp = Math.min(stats.maxHp, run.player.hp + healed)
+      appendLog(run, `Coffre béni ! Une source curative restaure ${healed} PV.`)
+      chestEvent = { type: 'bonus', title: 'Bénédiction !', desc: `Une source curative était cachée dans ce coffre. +${healed} PV restaurés.` }
+    } else if (bonus === 'consumable_heal') {
+      addInventoryItem(run, { id: uid('consumable'), kind: 'consumable', name: 'Potion de soin', effect: 'heal_50', quantity: 2, rarity: 'common', value: 24, icon: '/assets/Icons/life_potion.png' })
+      appendLog(run, `Coffre béni ! Deux potions de soin vous attendent.`)
+      chestEvent = { type: 'bonus', title: 'Provisions !', desc: `Deux potions de soin étaient soigneusement emballées à l'intérieur. +2 Potions de soin.` }
+    } else if (bonus === 'consumable_mana') {
+      addInventoryItem(run, { id: uid('consumable'), kind: 'consumable', name: 'Elixir de mana', effect: 'mana_60', quantity: 2, rarity: 'common', value: 22, icon: '/assets/Weapons/Wood/Wood.png' })
+      appendLog(run, `Coffre béni ! Deux élixirs de mana vous attendent.`)
+      chestEvent = { type: 'bonus', title: 'Énergie runique !', desc: `Des fioles d'énergie runique scintillent dans l'ombre. +2 Élixirs de mana.` }
+    } else if (bonus === 'damage_boost') {
+      pushPreparedBuff(run, { type: 'buff', stat: 'attackPercent', value: 0.30, turns: 3 })
+      appendLog(run, `Coffre béni ! Une rune de puissance vous galvanise pour le prochain combat.`)
+      chestEvent = { type: 'bonus', title: 'Rune de puissance !', desc: `Une rune ancienne vous galvanise. +30% d'attaque pendant 3 tours au prochain combat.` }
+    } else if (bonus === 'revive_charm') {
+      run.player.hasRevive = true
+      appendLog(run, `Coffre béni ! Un idole de renaissance vous protège de la mort.`)
+      chestEvent = { type: 'bonus', title: 'Idole de renaissance !', desc: `Une idole ancienne vous protège. Si vous tombez à 0 PV, vous revenez à 50% de vos PV.` }
+    } else if (bonus === 'xp_surge') {
+      const xpGain = randomInt(200, 450)
+      grantXp(run, xpGain)
+      appendLog(run, `Coffre béni ! Un fragment de savoir vous accorde ${xpGain} XP.`)
+      chestEvent = { type: 'bonus', title: 'Éveil du savoir !', desc: `Un fragment de connaissance ancienne illumine votre esprit. +${xpGain} XP.` }
+    } else {
+      const roomId = randomChoice(SECRET_ROOM_IDS)
+      const roomMap = currentMapById(roomId)
+      transitionToMap(run, roomId)
+      appendLog(run, `Coffre béni ! Un vortex vous aspire vers ${roomMap?.name ?? 'une salle secrète'}.`)
+      chestEvent = { type: 'bonus', title: 'Téléportation !', desc: `Un vortex vous aspire vers ${roomMap?.name ?? 'une salle secrète'}. Explorez et revenez via le portail de retour.`, teleport: true }
+    }
+    return { ok: true, chest, loots: [], gold: 0, materials: [], chestEvent }
+  }
+
   const map = currentMap(run)
-  const lootCount = map.isSecret ? 2 : 1
+  const lootCount = (map.isSecret || map.isSecretRoom) ? 2 : 1
   const chestHasMythic = chance(CHEST_MYTHIC_CHANCE)
   const mythicIndex = chestHasMythic ? randomInt(0, lootCount - 1) : -1
   const loots = Array.from({ length: lootCount }, (_, index) =>
@@ -1424,19 +1576,14 @@ export function openNearbyChest(run) {
   for (const item of loots) {
     addInventoryItem(run, item)
   }
-
   const gold = randomInt(25, 75)
   run.player.gold += gold
   const chestMaterial = randomChoice(['ore', 'wood', 'resin', 'herb', 'obsidian_fragment'])
   const materialQty = randomInt(1, 3)
   addMaterial(run, chestMaterial, materialQty)
   const materials = [{ material: chestMaterial, quantity: materialQty }]
-
-  appendLog(
-    run,
-    `Coffre ouvert: +${gold} or, +${MATERIAL_LABELS[chestMaterial]}, loot ${loots.map((item) => item.name).join(', ')}.`,
-  )
-  return { ok: true, chest, loots, gold, materials }
+  appendLog(run, `Coffre ouvert: +${gold} or, +${MATERIAL_LABELS[chestMaterial]}, loot ${loots.map((item) => item.name).join(', ')}.`)
+  return { ok: true, chest, loots, gold, materials, chestEvent: null }
 }
 
 function grantXp(run, xp) {
@@ -1576,10 +1723,12 @@ function transitionToMap(run, targetMapId) {
   const nextState = ensureMapState(run, nextMapId)
 
   const leavingMap = currentMap(run)
-  if (nextMap.isSecret && !leavingMap.isSecret) {
+  const nextIsHidden = nextMap.isSecret || nextMap.isSecretRoom
+  const leavingIsHidden = leavingMap.isSecret || leavingMap.isSecretRoom
+  if (nextIsHidden && !leavingIsHidden) {
     run.world.returnMapId = leavingMap.id
   }
-  if (!nextMap.isSecret && targetMapId === 'return') {
+  if (!nextIsHidden && targetMapId === 'return') {
     run.world.returnMapId = null
   }
 
@@ -1708,6 +1857,22 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
   const damageReduction = clamp(targetStats.damageReductionPercent ?? 0, 0, 0.55)
   if (damageReduction > 0) {
     damage = Math.max(0, Math.floor(damage * (1 - damageReduction)))
+  }
+
+  const guardEffect = !ignoreAvoidance && targetEffects.find((e) => e.type === 'guard' && e.value > 0)
+  if (guardEffect) {
+    guardEffect.value = 0
+    guardEffect.turns = 0
+    const beforeGuard = damage
+    damage = Math.max(1, Math.floor(damage * 0.25))
+    const guardBlocked = beforeGuard - damage
+    for (const shield of targetEffects.filter((effect) => effect.type === 'shield' && effect.value > 0)) {
+      if (damage <= 1) break
+      const absorbed = Math.min(shield.value, damage - 1)
+      shield.value -= absorbed
+      damage -= absorbed
+    }
+    return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: true, parryBlocked: guardBlocked }
   }
 
   const guaranteedDodge = targetEffects.find(
@@ -2184,7 +2349,8 @@ function applySkill(run, side, skill) {
   const bonusPercent =
     side === 'player'
       ? playerStats.damagePercent +
-      (battle.enemyIsBoss ? playerStats.bossDamagePercent : 0)
+        (skill.isMagic ? (playerStats.magicDamagePercent ?? 0) : 0) +
+        (battle.enemyIsBoss ? playerStats.bossDamagePercent : 0)
       : 0
 
   const actorName = side === 'player' ? run.player.name : battle.enemyName
@@ -2419,6 +2585,10 @@ function applySkill(run, side, skill) {
     const effects = side === 'player' ? battle.playerEffects : battle.enemyEffects
     effects.push({ id: uid('shield'), type: 'shield', value: shield, turns: 2 })
     text += ` Bouclier +${shield}.`
+  } else if (skill.effect === 'guard') {
+    const effects = side === 'player' ? battle.playerEffects : battle.enemyEffects
+    effects.push({ id: uid('guard'), type: 'guard', value: 1, turns: 1 })
+    text += ' Posture de garde active : le prochain coup est réduit à 25%.'
   } else if (skill.effect === 'buff') {
     const effects = side === 'player' ? battle.playerEffects : battle.enemyEffects
     const buffType = skill.buffType ?? 'attackPercent'
@@ -2665,6 +2835,14 @@ function resolvePlayerDeath(run) {
   const difficulty = difficultyFor(run)
   run.combat = null
   run.player.deaths += 1
+
+  if (run.player.hasRevive) {
+    run.player.hasRevive = false
+    const stats = derivedStats(run)
+    run.player.hp = Math.max(1, Math.floor(stats.maxHp * 0.5))
+    appendLog(run, `Idole de renaissance activé ! Vous revenez à 50% de vos PV.`)
+    return
+  }
 
   if (difficulty.permadeath) {
     run.gameOver = true
@@ -3385,4 +3563,92 @@ export function progressSummary(run) {
     level: run.player.level,
     availableRarities: RARITY_ORDER,
   }
+}
+
+export function stepWanderingNpcs(run) {
+  if (run.combat) return
+  const mapState = currentMapState(run)
+  const map = currentMap(run)
+  const px = run.world.playerPosition.x
+  const py = run.world.playerPosition.y
+  const dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]]
+
+  for (const npc of mapState.npcs) {
+    if (npc.role !== 'wandering_merchant') continue
+    if (!chance(0.55)) continue
+    const shuffled = [...dirs].sort(() => Math.random() - 0.5)
+    for (const [dx, dy] of shuffled) {
+      const nx = npc.x + dx
+      const ny = npc.y + dy
+      if (!mapIsWalkable(map, nx, ny, mapState.tiles)) continue
+      if (nx === px && ny === py) continue
+      if (mapState.enemies.some((e) => e.alive && e.x === nx && e.y === ny)) continue
+      if (mapState.npcs.some((n) => n.id !== npc.id && n.x === nx && n.y === ny)) continue
+      if (mapState.chests.some((c) => !c.opened && c.x === nx && c.y === ny)) continue
+      npc.x = nx
+      npc.y = ny
+      break
+    }
+  }
+}
+
+export function performChallengeRoll(run, npcId) {
+  const mapState = currentMapState(run)
+  const npc = mapState.npcs.find((n) => n.id === npcId && n.role === 'challenger')
+  if (!npc || npc.completed) {
+    return { ok: false, reason: 'Défi déjà terminé ou introuvable.' }
+  }
+  const playerRoll = randomInt(1, 6) + randomInt(1, 6)
+  const npcRoll = randomInt(1, 6) + randomInt(1, 6)
+  const won = playerRoll > npcRoll
+  npc.completed = true
+  let gold = 0
+  let xp = 0
+  let penalty = 0
+  if (won) {
+    gold = randomInt(80, 200)
+    xp = randomInt(100, 250)
+    run.player.gold += gold
+    grantXp(run, xp)
+    appendLog(run, `Défi remporté ! (${playerRoll} vs ${npcRoll}): +${gold} or, +${xp} XP.`)
+  } else {
+    penalty = Math.min(run.player.gold, randomInt(20, 65))
+    run.player.gold = Math.max(0, run.player.gold - penalty)
+    appendLog(run, `Défi perdu. (${playerRoll} vs ${npcRoll}): −${penalty} or.`)
+  }
+  return { ok: true, won, playerRoll, npcRoll, gold, xp, penalty }
+}
+
+export function getWanderingMerchantStock(run, npcId) {
+  const mapState = currentMapState(run)
+  const npc = mapState.npcs.find((n) => n.id === npcId && n.role === 'wandering_merchant')
+  if (!npc) return []
+  if (!npc.stock) {
+    const rarityBiases = ['rare', 'epic', 'rare', 'legendary']
+    npc.stock = rarityBiases.map((bias) => {
+      const item = buildLootItem({ run, isBoss: false, rarityBias: bias })
+      item.merchantPrice = Math.max(100, Math.floor((item.value ?? 50) * 3.2 + randomInt(40, 140)))
+      item.soldOut = false
+      return item
+    })
+  }
+  return npc.stock
+}
+
+export function buyWanderingItem(run, npcId, itemId) {
+  const mapState = currentMapState(run)
+  const npc = mapState.npcs.find((n) => n.id === npcId && n.role === 'wandering_merchant')
+  if (!npc?.stock) return { ok: false, reason: 'Marchand introuvable.' }
+  const item = npc.stock.find((i) => i.id === itemId)
+  if (!item) return { ok: false, reason: 'Article introuvable.' }
+  if (item.soldOut) return { ok: false, reason: 'Cet article a déjà été vendu.' }
+  if (run.player.gold < item.merchantPrice) return { ok: false, reason: `Il faut ${item.merchantPrice} or pour cet article.` }
+  run.player.gold -= item.merchantPrice
+  item.soldOut = true
+  const itemCopy = { ...item }
+  delete itemCopy.merchantPrice
+  delete itemCopy.soldOut
+  addInventoryItem(run, itemCopy)
+  appendLog(run, `Acheté ${item.name} au marchand pour ${item.merchantPrice} or.`)
+  return { ok: true, item }
 }

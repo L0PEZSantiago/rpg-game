@@ -19,6 +19,7 @@ import {
   appendLog,
   attemptMove,
   buyConsumable,
+  buyWanderingItem,
   canCraft,
   craftItem,
   createRun,
@@ -33,6 +34,7 @@ import {
   getFleeChance,
   getEnemyMoveOptions,
   getNpcRiddle,
+  getWanderingMerchantStock,
   harvestNearbyAllCharges,
   healAtNpc,
   hydrateRun,
@@ -42,6 +44,8 @@ import {
   nearbyNpc,
   nearbyResource,
   openNearbyChest,
+  performChallengeRoll,
+  stepWanderingNpcs,
   playerNormalAttack,
   playerUseSkill,
   progressSummary,
@@ -92,6 +96,16 @@ const selectedPassiveBranchId = ref('')
 const riddleModal = ref(null)
 const riddleFeedbackModal = ref(null)
 const lootModal = ref(null)
+const chestEvent = ref(null)
+let chestEventTimer = null
+const challengeModal = ref(/** @type {{ npcId: string, npcName: string, result: null | { won: boolean, playerRoll: number, npcRoll: number, gold: number, xp: number, penalty: number } } | null} */(null))
+const wanderingMerchantModal = ref(/** @type {{ npcId: string, npcName: string, portrait: string } | null} */(null))
+const merchantArrivalModal = ref(/** @type {{ npcName: string } | null} */(null))
+const merchantDepartedModal = ref(/** @type {{ npcName: string } | null} */(null))
+let merchantDepartureTimer = null
+let merchantMoveInterval = null
+let merchantDepartedAutoCloseTimer = null
+let merchantArrivalAutoCloseTimer = null
 const portalConfirmModal = ref(null)
 const inventoryTab = ref('weapon')
 const combatConsumableTab = ref('regen')
@@ -99,6 +113,7 @@ const inventoryTrackingPrimed = ref(false)
 const inventorySnapshot = ref(new Map())
 const newInventoryItems = reactive({})
 const hoveredInventoryItemId = ref(null)
+const hoveredMerchantItem = ref(null)
 const inventoryTooltip = reactive({
   x: 12,
   y: 12,
@@ -285,10 +300,18 @@ const shouldEmphasizeEndTurn = computed(() => {
 })
 const npcDialogueSceneEnabled = computed(() => {
   const role = currentNpc.value?.role ?? ''
-  return role !== 'merchant' && role !== 'craft'
+  return role !== 'merchant' && role !== 'craft' && role !== 'wandering_merchant'
+})
+const wanderingMerchantStock = computed(() => {
+  if (!run.value || !wanderingMerchantModal.value) return []
+  return getWanderingMerchantStock(run.value, wanderingMerchantModal.value.npcId)
 })
 const npcIdleSprite = computed(() => {
   const source = currentNpc.value?.portrait ?? ''
+  return spriteSetForSource(source).idle || source
+})
+const merchantIdleSprite = computed(() => {
+  const source = wanderingMerchantModal.value?.portrait ?? ''
   return spriteSetForSource(source).idle || source
 })
 
@@ -671,6 +694,18 @@ function hideInventoryItemTooltip() {
   inventoryTooltip.visible = false
 }
 
+function showMerchantItemTooltip(item, event = null) {
+  if (item?.kind !== 'equipment') return
+  hoveredMerchantItem.value = item
+  inventoryTooltip.visible = true
+  updateInventoryTooltipFromEvent(event)
+}
+
+function hideMerchantItemTooltip() {
+  hoveredMerchantItem.value = null
+  inventoryTooltip.visible = false
+}
+
 function equippedItemForComparison(item) {
   if (!run.value || item?.kind !== 'equipment') {
     return null
@@ -797,6 +832,7 @@ const MAP_PLAYER_SPRITES = {
   idle: '/assets/Entities/Characters/Body_A/Animations/Idle_Base/Idle_Down-Sheet.png',
   walk: '/assets/Entities/Characters/Body_A/Animations/Run_Base/Run_Down-Sheet.png',
 }
+
 
 const MAP_PORTAL_SPRITES = {
   secret: '/assets/world/PORTAL RED-Recovered-Recovered-Sheet.png',
@@ -1998,13 +2034,16 @@ watch(
 )
 
 watch(
-  () => run.value?.eventLog?.length,
-  (newLen, oldLen) => {
-    if (!run.value?.combat || !newLen) return
-    const added = newLen - (oldLen ?? 0)
-    if (added <= 0) return
+  () => [run.value?.eventLog?.length ?? 0, run.value?.eventLog?.[0] ?? ''],
+  ([newLen, newTop], [oldLen, oldTop]) => {
+    if (!run.value?.combat) return
+    if (newLen === oldLen && newTop === oldTop) return
+    // Quand le log est plafondé (newLen === oldLen), on ne sait pas combien d'entrées ont bougé :
+    // on pousse au moins la plus récente. Sinon on pousse toutes les nouvelles.
+    const added = newLen > (oldLen ?? 0) ? newLen - (oldLen ?? 0) : 1
     for (let i = added - 1; i >= 0; i--) {
-      startCombatDialogueAnimation(run.value.eventLog[i])
+      const entry = run.value.eventLog[i]
+      if (entry) startCombatDialogueAnimation(entry)
     }
   },
 )
@@ -2109,8 +2148,12 @@ const mapPlayerStyle = computed(() => {
   }
 })
 
-const mapPlayerSpriteSource = computed(() => (mapPlayerVisual.walking ? MAP_PLAYER_SPRITES.walk : MAP_PLAYER_SPRITES.idle))
-const mapPlayerSpriteFrames = computed(() => (mapPlayerVisual.walking ? 6 : 4))
+const mapPlayerSpriteSource = computed(() => {
+  return mapPlayerVisual.walking ? MAP_PLAYER_SPRITES.walk : MAP_PLAYER_SPRITES.idle
+})
+const mapPlayerSpriteFrames = computed(() => {
+  return mapPlayerVisual.walking ? 6 : 4
+})
 const mapPlayerStripStyle = computed(() => {
   const frames = Math.max(1, mapPlayerSpriteFrames.value)
   const frame = mapPlayerFrame.value % frames
@@ -2689,6 +2732,46 @@ function ensureMapAnimTicker() {
   }, 120)
 }
 
+function clearMerchantDepartureTimer() {
+  if (merchantDepartureTimer) {
+    clearTimeout(merchantDepartureTimer)
+    merchantDepartureTimer = null
+  }
+}
+
+function dismissMerchantFromMap(npcId, npcName) {
+  if (!run.value) return
+  const mapState = currentMapState(run.value)
+  const idx = mapState.npcs.findIndex((n) => n.id === npcId)
+  if (idx !== -1) mapState.npcs.splice(idx, 1)
+  if (wanderingMerchantModal.value?.npcId === npcId) {
+    wanderingMerchantModal.value = null
+  }
+  merchantArrivalModal.value = null
+  merchantDepartedModal.value = { npcName }
+  if (merchantDepartedAutoCloseTimer) clearTimeout(merchantDepartedAutoCloseTimer)
+  merchantDepartedAutoCloseTimer = setTimeout(() => { merchantDepartedModal.value = null }, 5000)
+  persistRun()
+}
+
+function startMerchantTimerForMap(showArrival = true) {
+  clearMerchantDepartureTimer()
+  if (!run.value) return
+  const mapState = currentMapState(run.value)
+  const merchant = mapState.npcs.find((n) => n.role === 'wandering_merchant')
+  if (!merchant) return
+  if (showArrival) {
+    merchantArrivalModal.value = { npcName: merchant.name }
+    if (merchantArrivalAutoCloseTimer) clearTimeout(merchantArrivalAutoCloseTimer)
+    merchantArrivalAutoCloseTimer = setTimeout(() => { merchantArrivalModal.value = null }, 9000)
+  }
+  const npcId = merchant.id
+  const npcName = merchant.name
+  merchantDepartureTimer = setTimeout(() => {
+    dismissMerchantFromMap(npcId, npcName)
+  }, 5 * 60 * 1000)
+}
+
 function startNewGame() {
   run.value = createRun({
     name: creation.name,
@@ -2697,8 +2780,13 @@ function startNewGame() {
   })
   syncMapPlayerToRun()
   npcOpen.value = false
+  challengeModal.value = null
+  wanderingMerchantModal.value = null
+  merchantArrivalModal.value = null
+  merchantDepartedModal.value = null
   closeMetaModals()
   passivesModalOpen.value = true
+  startMerchantTimerForMap(false)
   setInfo('Nouvelle campagne lancee.')
   persistRun()
 }
@@ -2712,16 +2800,26 @@ function continueSavedGame() {
   run.value = hydrateRun(loaded.snapshot)
   syncMapPlayerToRun()
   npcOpen.value = false
+  challengeModal.value = null
+  wanderingMerchantModal.value = null
+  merchantArrivalModal.value = null
+  merchantDepartedModal.value = null
   closeMetaModals()
+  startMerchantTimerForMap(false)
   setInfo('Sauvegarde chargee.')
   scheduleEnemyTurn()
 }
 
 function abandonAndDeleteSave() {
   clearSnapshot()
+  clearMerchantDepartureTimer()
   run.value = null
   stopMapPlayerMotion()
   npcOpen.value = false
+  challengeModal.value = null
+  wanderingMerchantModal.value = null
+  merchantArrivalModal.value = null
+  merchantDepartedModal.value = null
   closeMetaModals()
   updateSaveState()
   setInfo('Sauvegarde supprimee.')
@@ -2807,6 +2905,7 @@ function handleMove(dx, dy) {
     if (movedToAnotherMap) {
       syncMapPlayerToRun()
       playUiSound(UI_SOUND_BANK.portal, 0.3)
+      startMerchantTimerForMap(true)
     } else if (from.x !== to.x || from.y !== to.y) {
       animateMapPlayerMove(from, to)
     }
@@ -2913,7 +3012,7 @@ function typeCombatDialogueEntry(text) {
         processCombatDialogueQueue()
       }, 180)
     }
-  }, 18)
+  }, 10)
 }
 
 function startCombatDialogueAnimation(text) {
@@ -2943,6 +3042,19 @@ function openNpcPanel() {
   const npc = nearbyNpc(run.value)
   if (!npc) {
     setInfo('Aucun PNJ à proximité.')
+    return
+  }
+  if (npc.role === 'challenger') {
+    challengeModal.value = { npcId: npc.id, npcName: npc.name, result: null }
+    appendLog(run.value, `${npc.name}: ${npc.dialogue}`)
+    persistRun()
+    return
+  }
+  if (npc.role === 'wandering_merchant') {
+    wanderingMerchantModal.value = { npcId: npc.id, npcName: npc.name, portrait: npc.portrait ?? '' }
+    getWanderingMerchantStock(run.value, npc.id)
+    appendLog(run.value, `${npc.name}: ${npc.dialogue}`)
+    persistRun()
     return
   }
   npcOpen.value = true
@@ -2983,13 +3095,47 @@ function openChestAction() {
       startTick: mapAnimTick.value,
     }
     playUiSound(UI_SOUND_BANK.chestOpen, 0.3)
-    lootModal.value = {
-      enemyName: 'Coffre ouvert',
-      xp: 0,
-      gold: result.gold,
-      materials: result.materials ?? [],
-      items: result.loots ?? [],
+    if ((result.gold ?? 0) > 0 || result.loots?.length > 0 || result.materials?.length > 0) {
+      lootModal.value = {
+        enemyName: 'Coffre ouvert',
+        xp: 0,
+        gold: result.gold,
+        materials: result.materials ?? [],
+        items: result.loots ?? [],
+      }
     }
+    if (result.chestEvent) {
+      window.clearTimeout(chestEventTimer)
+      chestEvent.value = result.chestEvent
+      const duration = result.chestEvent.teleport ? 5000 : 3500
+      chestEventTimer = window.setTimeout(() => { chestEvent.value = null }, duration)
+      if (result.chestEvent.teleport) {
+        syncMapPlayerToRun()
+      }
+    }
+  }
+  persistRun()
+}
+
+function rollChallengeGame() {
+  if (!run.value || !challengeModal.value) return
+  const result = performChallengeRoll(run.value, challengeModal.value.npcId)
+  if (!result.ok) {
+    setInfo(result.reason)
+    challengeModal.value = null
+    return
+  }
+  challengeModal.value = { ...challengeModal.value, result }
+  persistRun()
+}
+
+function buyFromWanderingMerchant(itemId) {
+  if (!run.value || !wanderingMerchantModal.value) return
+  const result = buyWanderingItem(run.value, wanderingMerchantModal.value.npcId, itemId)
+  if (!result.ok) {
+    setInfo(result.reason)
+  } else {
+    setInfo(`Acheté ${result.item.name}.`)
   }
   persistRun()
 }
@@ -3445,6 +3591,9 @@ onMounted(async () => {
   ensureMapAnimTicker()
   restartMapPlayerFrameTicker()
   syncMapPlayerToRun()
+  merchantMoveInterval = setInterval(() => {
+    if (run.value && !run.value.combat) stepWanderingNpcs(run.value)
+  }, 1500)
 })
 
 onBeforeUnmount(() => {
@@ -3478,6 +3627,10 @@ onBeforeUnmount(() => {
   }
   stopNpcDialogueAnimation()
   clearLootModalTimer()
+  clearMerchantDepartureTimer()
+  if (merchantMoveInterval) { clearInterval(merchantMoveInterval); merchantMoveInterval = null }
+  if (merchantDepartedAutoCloseTimer) { clearTimeout(merchantDepartedAutoCloseTimer); merchantDepartedAutoCloseTimer = null }
+  if (merchantArrivalAutoCloseTimer) { clearTimeout(merchantArrivalAutoCloseTimer); merchantArrivalAutoCloseTimer = null }
 })
 </script>
 
@@ -3622,7 +3775,6 @@ onBeforeUnmount(() => {
               <div class="map-player-token" :class="{
                 walking: mapPlayerVisual.walking,
                 druid: run.player.classId === 'druid',
-                warrior: run.player.classId === 'warrior',
               }" :style="mapPlayerStyle">
                 <div class="tile-sprite player-sprite">
                   <img class="tile-sprite-strip" :src="mapPlayerSpriteSource" alt="joueur"
@@ -3815,7 +3967,6 @@ onBeforeUnmount(() => {
             <div class="map-player-token" :class="{
               walking: mapPlayerVisual.walking,
               druid: run.player.classId === 'druid',
-              warrior: run.player.classId === 'warrior',
             }" :style="mapPlayerStyle">
               <div class="tile-sprite player-sprite">
                 <img class="tile-sprite-strip" :src="mapPlayerSpriteSource" alt="joueur" :style="mapPlayerStripStyle" />
@@ -4049,7 +4200,8 @@ onBeforeUnmount(() => {
                 </div> -->
 
                 <div v-if="combatProjectile.active" :key="`projectile-${combatProjectile.tick}`"
-                  class="battle-projectile" :class="`from-${combatProjectile.from}`"></div>
+                  class="battle-projectile"
+                  :class="`from-${combatProjectile.from}`"></div>
                 <div v-if="combatImpact.active" :key="`impact-${combatImpact.tick}`" class="battle-impact"
                   :class="`on-${combatImpact.side}`"></div>
 
@@ -4360,6 +4512,127 @@ onBeforeUnmount(() => {
           </div>
         </article>
       </div>
+
+      <Transition name="chest-event-fade">
+        <div v-if="chestEvent" class="chest-event-overlay" :class="chestEvent.type">
+          <div class="chest-event-icon">{{ chestEvent.type === 'trap' ? '⚠' : (chestEvent.teleport ? '✵' : '✦') }}</div>
+          <div class="chest-event-title">{{ chestEvent.title }}</div>
+          <div class="chest-event-desc">{{ chestEvent.desc }}</div>
+        </div>
+      </Transition>
+
+      <div v-if="challengeModal" class="overlay-meta" @click="challengeModal = null">
+        <article class="meta-modal challenge-modal" @click.stop>
+          <button type="button" class="modal-x-btn" @click="challengeModal = null">✕</button>
+          <header class="challenge-modal-header">
+            <div class="challenge-icon">⚔</div>
+            <h2>{{ challengeModal.npcName }}</h2>
+            <p class="challenge-subtitle">Défi : Lancer de dés (2d6). Le plus haut total l'emporte.</p>
+          </header>
+          <div v-if="!challengeModal.result" class="challenge-pending">
+            <p class="challenge-rules">Enjeux : Victoire → or + XP · Défaite → perte d'or</p>
+            <button class="primary challenge-roll-btn" @click="rollChallengeGame">Lancer les dés</button>
+            <button class="secondary" @click="challengeModal = null">Refuser le défi</button>
+          </div>
+          <div v-else class="challenge-result" :class="challengeModal.result.won ? 'won' : 'lost'">
+            <div class="dice-results">
+              <div class="dice-block">
+                <div class="dice-label">Vous</div>
+                <div class="dice-value">{{ challengeModal.result.playerRoll }}</div>
+              </div>
+              <div class="dice-vs">VS</div>
+              <div class="dice-block">
+                <div class="dice-label">{{ challengeModal.npcName }}</div>
+                <div class="dice-value">{{ challengeModal.result.npcRoll }}</div>
+              </div>
+            </div>
+            <div class="challenge-outcome">
+              <strong>{{ challengeModal.result.won ? 'Victoire !' : 'Défaite.' }}</strong>
+              <span v-if="challengeModal.result.won"> +{{ challengeModal.result.gold }} or · +{{ challengeModal.result.xp }} XP</span>
+              <span v-else> −{{ challengeModal.result.penalty }} or</span>
+            </div>
+            <button class="secondary" @click="challengeModal = null">Fermer</button>
+          </div>
+        </article>
+      </div>
+
+      <div v-if="wanderingMerchantModal" class="overlay-meta" @click="wanderingMerchantModal = null">
+        <article class="meta-modal wandering-merchant-modal" @click.stop>
+          <button type="button" class="modal-x-btn" @click="wanderingMerchantModal = null">✕</button>
+          <header class="wandering-merchant-header">
+            <div class="animated-avatar merchant-header-avatar">
+              <img class="animated-avatar-strip" :src="merchantIdleSprite" alt="marchand"
+                :style="animatedSpriteStripStyle(merchantIdleSprite, 4, 1)" />
+            </div>
+            <div class="merchant-header-text">
+              <h2>{{ wanderingMerchantModal.npcName }}</h2>
+              <p class="merchant-subtitle">Reliques uniques — pas de remboursement.</p>
+            </div>
+          </header>
+          <div class="merchant-stock">
+            <div v-for="item in wanderingMerchantStock" :key="item.id" class="merchant-item"
+              :class="{ 'merchant-item-sold': item.soldOut }"
+              @mouseenter="showMerchantItemTooltip(item, $event)"
+              @mousemove="moveInventoryItemTooltip($event)"
+              @mouseleave="hideMerchantItemTooltip()">
+              <img :src="itemIcon(item)" class="merchant-item-icon" alt="" />
+              <div class="merchant-item-info">
+                <span class="merchant-item-name" :style="{ color: RARITIES[item.rarity]?.color }">{{ item.name }}</span>
+                <span class="merchant-item-rarity">{{ RARITIES[item.rarity]?.label }}</span>
+                <small v-if="item.attack" class="merchant-item-stat">ATK +{{ item.attack }}</small>
+                <small v-if="item.defense" class="merchant-item-stat">DEF +{{ item.defense }}</small>
+                <small v-for="affix in (item.affixes ?? [])" :key="affix" class="merchant-item-affix">{{ affix }}</small>
+              </div>
+              <button class="merchant-buy-btn"
+                :disabled="item.soldOut || run.player.gold < item.merchantPrice"
+                @click="buyFromWanderingMerchant(item.id)">
+                <span v-if="item.soldOut">Vendu</span>
+                <span v-else class="no-wrap-line">
+                  {{ item.merchantPrice }} <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />
+                </span>
+              </button>
+            </div>
+          </div>
+          <button class="secondary modal-close-btn" @click="wanderingMerchantModal = null">Fermer</button>
+          <div v-if="inventoryTooltip.visible && hoveredMerchantItem?.kind === 'equipment'"
+            class="item-compare-tooltip floating" :style="inventoryTooltipStyle">
+            <p class="compare-title">Comparaison equipement</p>
+            <p class="compare-equipped-name">{{ equippedComparisonLabel(hoveredMerchantItem) }}</p>
+            <div class="compare-head">
+              <span>Stat</span>
+              <span>Objet</span>
+              <span>Equipe</span>
+              <span>Delta</span>
+            </div>
+            <div v-for="row in equipmentCompareRows(hoveredMerchantItem)"
+              :key="`cmp-merch-${hoveredMerchantItem.id}-${row.id}`" class="compare-row">
+              <span>{{ row.label }}</span>
+              <span>{{ row.candidate }}</span>
+              <span>{{ row.equipped }}</span>
+              <strong :class="statDeltaClass(row.delta)">{{ statDeltaLabel(row.delta) }}</strong>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <Transition name="toast-slide">
+        <div v-if="merchantArrivalModal" class="merchant-toast merchant-toast-arrival">
+          <div class="merchant-toast-body">
+            <strong>{{ merchantArrivalModal.npcName }}</strong> est dans les environs.
+            <br /><small>Il disparaîtra dans 5 minutes.</small>
+          </div>
+          <button class="merchant-toast-close" @click="merchantArrivalModal = null">✕</button>
+        </div>
+      </Transition>
+
+      <Transition name="toast-slide">
+        <div v-if="merchantDepartedModal" class="merchant-toast merchant-toast-departed">
+          <div class="merchant-toast-body">
+            <strong>{{ merchantDepartedModal.npcName }}</strong> est reparti dans l'ombre.
+          </div>
+          <button class="merchant-toast-close" @click="merchantDepartedModal = null">✕</button>
+        </div>
+      </Transition>
 
       <div v-if="portalConfirmModal" class="overlay-meta" @click="cancelPortalMove">
         <article class="meta-modal portal-confirm-modal" @click.stop>
@@ -4738,6 +5011,7 @@ onBeforeUnmount(() => {
 .class-preview-avatar .animated-avatar-strip {
   width: 400%;
 }
+
 
 .innate-passive {
   margin: 6px 0 0;
@@ -5127,7 +5401,6 @@ button.danger {
   transform: scale(1.8);
   transform-origin: center 65%;
 }
-
 
 .tile-symbol {
   font-weight: 700;
@@ -6633,6 +6906,7 @@ button.danger {
     opacity: 0;
   }
 }
+
 
 @keyframes battle-impact-burst {
   0% {
@@ -8443,5 +8717,306 @@ button.danger {
   .meta-modal {
     width: min(calc(100vw - 32px), 700px);
   }
+}
+
+.chest-event-overlay {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 28px;
+  border-radius: 12px;
+  text-align: center;
+  pointer-events: none;
+  min-width: 240px;
+  max-width: 320px;
+  border: 2px solid;
+  backdrop-filter: blur(4px);
+}
+
+.chest-event-overlay.trap {
+  background: rgba(60, 10, 10, 0.92);
+  border-color: #c0392b;
+  color: #f5c6c0;
+  box-shadow: 0 0 24px rgba(192, 57, 43, 0.5);
+}
+
+.chest-event-overlay.bonus {
+  background: rgba(10, 40, 20, 0.92);
+  border-color: #27ae60;
+  color: #b7f5c8;
+  box-shadow: 0 0 24px rgba(39, 174, 96, 0.5);
+}
+
+.chest-event-icon {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.chest-event-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.chest-event-desc {
+  font-size: 0.88rem;
+  opacity: 0.9;
+  line-height: 1.4;
+}
+
+.chest-event-fade-enter-active {
+  animation: chest-event-in 0.3s ease;
+}
+.chest-event-fade-leave-active {
+  animation: chest-event-out 0.4s ease forwards;
+}
+
+@keyframes chest-event-in {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(0.88); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes chest-event-out {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -54%) scale(0.92); }
+}
+
+/* Challenge Modal */
+.challenge-modal {
+  max-width: 420px;
+}
+.challenge-modal-header {
+  text-align: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #3a3020;
+}
+.challenge-icon {
+  font-size: 2rem;
+  margin-bottom: 4px;
+}
+.challenge-subtitle {
+  font-size: 0.82rem;
+  color: #a09070;
+  margin: 4px 0 0;
+}
+.challenge-rules {
+  font-size: 0.82rem;
+  color: #c0a860;
+  text-align: center;
+  margin-bottom: 16px;
+}
+.challenge-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 0;
+}
+.challenge-roll-btn {
+  font-size: 1rem;
+  padding: 10px 28px;
+}
+.challenge-result {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 0 8px;
+}
+.challenge-result.won { color: #7fdd9a; }
+.challenge-result.lost { color: #e08070; }
+.dice-results {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.dice-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.dice-label {
+  font-size: 0.75rem;
+  color: #a09070;
+}
+.dice-value {
+  font-size: 2.2rem;
+  font-weight: 700;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 2px solid currentColor;
+  background: rgba(0,0,0,0.3);
+}
+.dice-vs {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #7a6a50;
+}
+.challenge-outcome {
+  font-size: 1rem;
+  text-align: center;
+}
+
+/* Wandering Merchant Modal */
+.wandering-merchant-modal {
+  max-width: 500px;
+  position: relative;
+}
+.wandering-merchant-modal > .modal-x-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+.wandering-merchant-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #3a3020;
+}
+.merchant-header-avatar {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+}
+.merchant-header-text h2 {
+  margin: 0 0 2px;
+}
+.merchant-subtitle {
+  font-size: 0.8rem;
+  color: #a09070;
+  margin: 2px 0 0;
+}
+.merchant-item-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+  image-rendering: pixelated;
+  border: 1px solid rgba(255, 203, 131, 0.35);
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* Merchant arrival / departure toasts */
+.merchant-toast {
+  position: fixed;
+  bottom: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(14, 10, 24, 0.94);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 500;
+  max-width: 340px;
+  width: max-content;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+  pointer-events: auto;
+}
+.merchant-toast-arrival {
+  border: 1px solid #ffb347;
+}
+.merchant-toast-departed {
+  border: 1px solid #6a5a80;
+  color: #a09070;
+}
+.merchant-toast-body {
+  flex: 1;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+.merchant-toast-close {
+  background: none;
+  border: none;
+  color: #8a7a60;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 2px 4px;
+  flex-shrink: 0;
+}
+.merchant-toast-close:hover {
+  color: #e0cca0;
+}
+.toast-slide-enter-active,
+.toast-slide-leave-active {
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.toast-slide-enter-from,
+.toast-slide-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(16px);
+}
+.merchant-stock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.merchant-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px;
+  border: 1px solid #3a3020;
+}
+.merchant-item-sold {
+  opacity: 0.45;
+}
+.merchant-item-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.merchant-item-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.merchant-item-rarity {
+  font-size: 0.75rem;
+  color: #8a7a60;
+}
+.merchant-item-stat {
+  font-size: 0.75rem;
+  color: #9ab878;
+}
+.merchant-item-affix {
+  font-size: 0.72rem;
+  color: #7ac0e0;
+}
+.merchant-buy-btn {
+  min-width: 72px;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  background: rgba(90, 70, 20, 0.7);
+  border: 1px solid #7a6030;
+  border-radius: 6px;
+  color: #f0d890;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.merchant-buy-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.merchant-buy-btn:not(:disabled):hover {
+  background: rgba(120, 95, 30, 0.8);
 }
 </style>

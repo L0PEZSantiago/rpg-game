@@ -230,6 +230,7 @@ export const MAPS = {
     chests: [
       { id: 'chest_ash_1', x: 10, y: 9, rarityBias: 'rare' },
       { id: 'chest_ash_2', x: 3, y: 8, rarityBias: 'uncommon' },
+      { id: 'chest_ash_3', x: 6, y: 5, rarityBias: 'common' },
     ],
     enemies: [
       { id: 'e_ash_1', templateId: 'ash_hound', x: 10, y: 3 },
@@ -502,6 +503,7 @@ export const MAPS = {
     chests: [
       { id: 'chest_cat_1', x: 8, y: 4, rarityBias: 'epic' },
       { id: 'chest_cat_2', x: 2, y: 7, rarityBias: 'rare' },
+      { id: 'chest_cat_3', x: 10, y: 9, rarityBias: 'uncommon' },
     ],
     enemies: [
       { id: 'e_cat_1', templateId: 'bone_guard', x: 4, y: 6 },
@@ -568,6 +570,8 @@ export const MAPS = {
     chests: [
       { id: 'chest_obs_1', x: 9, y: 7, rarityBias: 'legendary' },
       { id: 'chest_obs_2', x: 2, y: 4, rarityBias: 'epic' },
+      { id: 'chest_obs_3', x: 7, y: 9, rarityBias: 'rare' },
+      { id: 'chest_obs_4', x: 11, y: 5, rarityBias: 'uncommon' },
     ],
     enemies: [
       { id: 'e_obs_1', templateId: 'obsidian_reaper', x: 6, y: 5 },
@@ -841,6 +845,8 @@ export const MAPS = {
     chests: [
       { id: 'chest_sanctum_1', x: 7, y: 5, rarityBias: 'legendary' },
       { id: 'chest_sanctum_2', x: 13, y: 9, rarityBias: 'epic' },
+      { id: 'chest_sanctum_3', x: 2, y: 8, rarityBias: 'rare' },
+      { id: 'chest_sanctum_4', x: 8, y: 9, rarityBias: 'legendary' },
     ],
     enemies: [
       { id: 'e_sanctum_1', templateId: 'obsidian_reaper', x: 5, y: 6 },
@@ -911,6 +917,7 @@ export const MAPS = {
     chests: [
       { id: 'chest_archive_1', x: 8, y: 8, rarityBias: 'mythic' },
       { id: 'chest_archive_2', x: 3, y: 7, rarityBias: 'legendary' },
+      { id: 'chest_archive_3', x: 11, y: 9, rarityBias: 'epic' },
     ],
     enemies: [
       { id: 'e_archive_1', templateId: 'obsidian_reaper', x: 5, y: 5 },
@@ -981,6 +988,8 @@ export const MAPS = {
     chests: [
       { id: 'chest_cross_1', x: 3, y: 8, rarityBias: 'epic' },
       { id: 'chest_cross_2', x: 10, y: 9, rarityBias: 'legendary' },
+      { id: 'chest_cross_3', x: 8, y: 4, rarityBias: 'epic' },
+      { id: 'chest_cross_4', x: 5, y: 9, rarityBias: 'legendary' },
     ],
     enemies: [
       { id: 'e_cross_1', templateId: 'bone_guard', x: 5, y: 6 },
@@ -1248,6 +1257,7 @@ export const MAPS = {
     chests: [
       { id: 'chest_harbor_1', x: 6, y: 7, rarityBias: 'legendary' },
       { id: 'chest_harbor_2', x: 13, y: 3, rarityBias: 'mythic' },
+      { id: 'chest_harbor_3', x: 4, y: 3, rarityBias: 'epic' },
     ],
     enemies: [
       { id: 'e_harbor_1', templateId: 'obsidian_reaper', x: 5, y: 6 },
@@ -1301,8 +1311,10 @@ export const MAPS = {
       { id: 'lunar_herb_1', type: 'herb', x: 6, y: 9, charges: 4 },
       { id: 'lunar_tree_1', type: 'tree', x: 13, y: 8, charges: 3 },
     ],
-    chests: [{ id: 'chest_lunar_1', x: 4, y: 8, rarityBias: 'legendary' },
-             { id: 'chest_lunar_1', x: 8, y: 4, rarityBias: 'legendary' }
+    chests: [
+      { id: 'chest_lunar_1', x: 4, y: 8, rarityBias: 'legendary' },
+      { id: 'chest_lunar_2', x: 8, y: 4, rarityBias: 'legendary' },
+      { id: 'chest_lunar_3', x: 12, y: 7, rarityBias: 'mythic' },
     ],
     enemies: [
       { id: 'e_lunar_1', templateId: 'obsidian_reaper', x: 9, y: 3 },
@@ -1358,6 +1370,7 @@ export const MAPS = {
     chests: [
       { id: 'chest_forge_1', x: 6, y: 9, rarityBias: 'legendary' },
       { id: 'chest_forge_2', x: 12, y: 2, rarityBias: 'epic' },
+      { id: 'chest_forge_3', x: 3, y: 3, rarityBias: 'legendary' },
     ],
     enemies: [
       { id: 'e_forge_1', templateId: 'bone_guard', x: 5, y: 7 },
@@ -1415,6 +1428,8 @@ export const MAPS = {
     chests: [
       { id: 'chest_vault_1', x: 4, y: 8, rarityBias: 'mythic' },
       { id: 'chest_vault_2', x: 12, y: 2, rarityBias: 'legendary' },
+      { id: 'chest_vault_3', x: 7, y: 5, rarityBias: 'mythic' },
+      { id: 'chest_vault_4', x: 9, y: 9, rarityBias: 'legendary' },
     ],
     enemies: [
       { id: 'e_vault_1', templateId: 'obsidian_reaper', x: 5, y: 6 },
@@ -1436,6 +1451,115 @@ export const MAPS = {
       '#..............#',
       '#..............#',
       '################',
+    ],
+  },
+
+  secret_room_vault: {
+    id: 'secret_room_vault',
+    name: 'Chambre du Trésor',
+    levelRange: '1-10',
+    isSecretRoom: true,
+    background: '/assets/Environment/Tilesets/Wall_Variations.png',
+    width: 12,
+    height: 8,
+    start: { x: 1, y: 1 },
+    exit: null,
+    secretPortal: null,
+    backPortal: { x: 1, y: 6, targetMapId: 'return' },
+    npcs: [],
+    resources: [
+      { id: 'svault_ore_1', type: 'ore', x: 8, y: 2, charges: 3 },
+      { id: 'svault_herb_1', type: 'herb', x: 5, y: 5, charges: 2 },
+    ],
+    chests: [
+      { id: 'chest_svault_1', x: 3, y: 2, rarityBias: 'epic' },
+      { id: 'chest_svault_2', x: 8, y: 5, rarityBias: 'legendary' },
+      { id: 'chest_svault_3', x: 5, y: 3, rarityBias: 'rare' },
+      { id: 'chest_svault_4', x: 10, y: 2, rarityBias: 'epic' },
+    ],
+    enemies: [],
+    tiles: [
+      '############',
+      '#..........#',
+      '#..#....#..#',
+      '#..........#',
+      '#..........#',
+      '#..#....#..#',
+      '#..........#',
+      '############',
+    ],
+  },
+
+  secret_room_hollow: {
+    id: 'secret_room_hollow',
+    name: 'Creux des Anciens',
+    levelRange: '1-10',
+    isSecretRoom: true,
+    background: '/assets/Environment/Tilesets/Water_tiles.png',
+    width: 12,
+    height: 8,
+    start: { x: 1, y: 1 },
+    exit: null,
+    secretPortal: null,
+    backPortal: { x: 1, y: 6, targetMapId: 'return' },
+    npcs: [],
+    resources: [
+      { id: 'shollow_herb_1', type: 'herb', x: 9, y: 2, charges: 4 },
+      { id: 'shollow_tree_1', type: 'tree', x: 4, y: 5, charges: 3 },
+    ],
+    chests: [
+      { id: 'chest_shollow_1', x: 7, y: 2, rarityBias: 'rare' },
+      { id: 'chest_shollow_2', x: 10, y: 5, rarityBias: 'epic' },
+      { id: 'chest_shollow_3', x: 3, y: 6, rarityBias: 'legendary' },
+    ],
+    enemies: [],
+    tiles: [
+      '############',
+      '#..........#',
+      '#....##....#',
+      '#..........#',
+      '#..........#',
+      '#....##....#',
+      '#..........#',
+      '############',
+    ],
+  },
+
+  secret_room_sanctum: {
+    id: 'secret_room_sanctum',
+    name: 'Antichambre Runique',
+    levelRange: '1-10',
+    isSecretRoom: true,
+    background: '/assets/Environment/Tilesets/Dungeon.png',
+    width: 14,
+    height: 10,
+    start: { x: 1, y: 1 },
+    exit: null,
+    secretPortal: null,
+    backPortal: { x: 1, y: 8, targetMapId: 'return' },
+    npcs: [],
+    resources: [
+      { id: 'ssanctum_ore_1', type: 'ore', x: 6, y: 4, charges: 3 },
+      { id: 'ssanctum_herb_1', type: 'herb', x: 11, y: 2, charges: 3 },
+    ],
+    chests: [
+      { id: 'chest_ssanctum_1', x: 3, y: 3, rarityBias: 'epic' },
+      { id: 'chest_ssanctum_2', x: 10, y: 3, rarityBias: 'epic' },
+      { id: 'chest_ssanctum_3', x: 3, y: 7, rarityBias: 'legendary' },
+      { id: 'chest_ssanctum_4', x: 10, y: 7, rarityBias: 'mythic' },
+    ],
+    enemies: [],
+    tiles: [
+      '##############',
+      '#............#',
+      '#.##......##.#',
+      '#............#',
+      '#............#',
+      '#............#',
+      '#............#',
+      '#.##......##.#',
+      '#............#',
+      '##############',
     ],
   },
 }

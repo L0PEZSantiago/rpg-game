@@ -102,3 +102,6 @@ export const SKELETON_MAGE_ASSET = '/assets/Entities/Mobs/Skeleton Crew/Skeleton
 export const SKELETON_ROGUE_ASSET = '/assets/Entities/Mobs/Skeleton Crew/Skeleton - Rogue/Idle/Idle-Sheet.png'
 export const SKELETON_WARRIOR_ASSET = '/assets/Entities/Mobs/Skeleton Crew/Skeleton - Warrior/Idle/Idle-Sheet.png'
 
+export const SOLDIER_WARRIOR_ASSET = '/assets/Entities/Characters/Soldier/Warrior-Idle.png'
+export const SOLDIER_ARCHER_ASSET = '/assets/Entities/Characters/Soldier/Archer-Idle.png'
+
