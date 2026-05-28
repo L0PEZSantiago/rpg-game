@@ -1742,20 +1742,31 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
     )
     if (chance(parryChance)) {
       const reduction = clamp(targetStats.parryReduction ?? 0.45, 0.2, 0.85)
+      const beforeParry = damage
       damage = Math.max(0, Math.floor(damage * (1 - reduction)))
+      const parryBlocked = beforeParry - damage
       if (damage <= 0) {
-        return { hp: targetHp, damage: 0, dodged: false, parried: true }
+        return { hp: targetHp, damage: 0, dodged: false, parried: true, parryBlocked }
       }
       for (const shield of targetEffects.filter((effect) => effect.type === 'shield' && effect.value > 0)) {
         if (damage <= 0) {
           break
         }
-        const blocked = Math.min(shield.value, damage)
-        shield.value -= blocked
-        damage -= blocked
+        const absorbed = Math.min(shield.value, damage)
+        shield.value -= absorbed
+        damage -= absorbed
       }
-      return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: true }
+      if (damage > 0) {
+        const sleepIdxParry = targetEffects.findIndex((e) => e.type === 'debuff' && e.stat === 'sleep' && e.turns > 0)
+        if (sleepIdxParry >= 0) targetEffects.splice(sleepIdxParry, 1)
+      }
+      return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: true, parryBlocked }
     }
+  }
+
+  if (damage > 0) {
+    const sleepIdx = targetEffects.findIndex((e) => e.type === 'debuff' && e.stat === 'sleep' && e.turns > 0)
+    if (sleepIdx >= 0) targetEffects.splice(sleepIdx, 1)
   }
 
   for (const shield of targetEffects.filter((effect) => effect.type === 'shield' && effect.value > 0)) {
@@ -1821,15 +1832,12 @@ function ailmentLabel(kind) {
 }
 
 function statusLabel(kind) {
-  if (kind === 'disorient') {
-    return 'désorientation'
-  }
-  if (kind === 'topple') {
-    return 'renversement'
-  }
-  if (kind === 'weaken') {
-    return 'affaiblissement'
-  }
+  if (kind === 'disorient') return 'désorientation'
+  if (kind === 'topple') return 'renversement'
+  if (kind === 'weaken') return 'affaiblissement'
+  if (kind === 'stun') return 'étourdissement'
+  if (kind === 'fear') return 'peur'
+  if (kind === 'sleep') return 'sommeil'
   return 'alteration'
 }
 
@@ -1920,6 +1928,39 @@ function applySkillStatusEffect(run, side, statusEffect, attacker, defender, tar
     return `${targetName} subit ${statusLabel(statusEffect.kind)}.`
   }
 
+  if (statusEffect.kind === 'stun') {
+    targetEffects.push({
+      id: uid('status'),
+      type: 'debuff',
+      stat: 'stun',
+      value: 1,
+      turns,
+    })
+    return `${targetName} est ${statusLabel(statusEffect.kind)} !`
+  }
+
+  if (statusEffect.kind === 'fear') {
+    targetEffects.push({
+      id: uid('status'),
+      type: 'debuff',
+      stat: 'fear',
+      value: statusEffect.fearChance ?? 0.5,
+      turns,
+    })
+    return `${targetName} est saisi de ${statusLabel(statusEffect.kind)} !`
+  }
+
+  if (statusEffect.kind === 'sleep') {
+    targetEffects.push({
+      id: uid('status'),
+      type: 'debuff',
+      stat: 'sleep',
+      value: 1,
+      turns,
+    })
+    return `${targetName} s'endort !`
+  }
+
   return null
 }
 
@@ -1937,6 +1978,7 @@ function startTurn(run) {
   }
 
   if (battle.actor === 'player') {
+    battle.bonusTurnUsed = false
     const stats = derivedStats(run)
     battle.playerAp = stats.ap
     consumeCooldowns(battle.playerCooldowns)
@@ -1948,6 +1990,20 @@ function startTurn(run) {
     if (apPenalty > 0) {
       battle.playerAp = Math.max(0, battle.playerAp - apPenalty)
       appendLog(run, `Ralentissement: ${run.player.name} perd ${apPenalty} PA ce tour.`)
+    }
+
+    const stunEffect = battle.playerEffects.find((e) => e.type === 'debuff' && e.stat === 'stun' && e.turns > 0)
+    const sleepEffect = battle.playerEffects.find((e) => e.type === 'debuff' && e.stat === 'sleep' && e.turns > 0)
+    const fearEffect = battle.playerEffects.find((e) => e.type === 'debuff' && e.stat === 'fear' && e.turns > 0)
+    if (stunEffect) {
+      battle.playerAp = 0
+      appendLog(run, `${run.player.name} est étourdi et ne peut pas agir.`)
+    } else if (sleepEffect) {
+      battle.playerAp = 0
+      appendLog(run, `${run.player.name} dort et ne peut pas agir.`)
+    } else if (fearEffect && chance(fearEffect.value ?? 0.5)) {
+      battle.playerAp = 0
+      appendLog(run, `${run.player.name} est paralysé par la peur.`)
     }
 
     const dotDamage = battle.playerEffects
@@ -1964,7 +2020,7 @@ function startTurn(run) {
       }
     }
 
-    run.player.mana = clamp(run.player.mana + Math.max(4, stats.manaRegenFlat), 0, stats.maxMana)
+    run.player.mana = clamp(run.player.mana + Math.max(2, stats.manaRegenFlat), 0, stats.maxMana)
     return
   }
 
@@ -1978,6 +2034,20 @@ function startTurn(run) {
   if (enemyApPenalty > 0) {
     battle.enemyAp = Math.max(0, battle.enemyAp - enemyApPenalty)
     appendLog(run, `${battle.enemyName} perd ${enemyApPenalty} PA ce tour.`)
+  }
+
+  const enemyStunEffect = battle.enemyEffects.find((e) => e.type === 'debuff' && e.stat === 'stun' && e.turns > 0)
+  const enemySleepEffect = battle.enemyEffects.find((e) => e.type === 'debuff' && e.stat === 'sleep' && e.turns > 0)
+  const enemyFearEffect = battle.enemyEffects.find((e) => e.type === 'debuff' && e.stat === 'fear' && e.turns > 0)
+  if (enemyStunEffect) {
+    battle.enemyAp = 0
+    appendLog(run, `${battle.enemyName} est étourdi et ne peut pas agir.`)
+  } else if (enemySleepEffect) {
+    battle.enemyAp = 0
+    appendLog(run, `${battle.enemyName} dort et ne peut pas agir.`)
+  } else if (enemyFearEffect && chance(enemyFearEffect.value ?? 0.5)) {
+    battle.enemyAp = 0
+    appendLog(run, `${battle.enemyName} est paralysé par la peur.`)
   }
 
   const dotDamage = battle.enemyEffects
@@ -2006,6 +2076,21 @@ function endTurn(run) {
 
   if (battle.actor === 'player') {
     battle.playerEffects = reduceEffects(battle.playerEffects)
+
+    if (!battle.bonusTurnUsed) {
+      const playerStats = derivedStats(run)
+      const speedAdvantage = playerStats.speed - (battle.enemyStats.speed ?? 5)
+      if (speedAdvantage >= 4) {
+        const bonusChance = Math.min(0.65, speedAdvantage * 0.05)
+        if (chance(bonusChance)) {
+          battle.bonusTurnUsed = true
+          battle.playerAp = Math.ceil(playerStats.ap * 0.5)
+          appendLog(run, `Rapidité: ${run.player.name} agit à nouveau !`)
+          return
+        }
+      }
+    }
+
     battle.actor = 'enemy'
   } else {
     battle.enemyEffects = reduceEffects(battle.enemyEffects)
@@ -2171,7 +2256,10 @@ function applySkill(run, side, skill) {
     if (result.dodged) {
       text += ` ${targetName} esquive.`
     } else if (result.parried) {
-      text += ` ${targetName} pare et subit ${result.damage} degats.`
+      const pb = result.parryBlocked ?? 0
+      text += result.damage > 0
+        ? ` ${targetName} pare (bloque ${pb}) et subit ${result.damage} degats.`
+        : ` ${targetName} pare completement (bloque ${pb}).`
     } else {
       text += ` ${targetName} subit ${result.damage} degats.`
     }
@@ -2218,8 +2306,15 @@ function applySkill(run, side, skill) {
       const dotBonus = side === 'player' ? playerStats.dotPercent : 0
       const dotPower = skillPowerByAp(side, skill, attacker)
       const dotValue = Math.max(2, Math.floor(attacker.attack * dotPower * 0.7 * (1 + dotBonus)))
-      targetEffects.push({ id: uid('dot'), type: 'dot', kind: dotKind, value: dotValue, turns: dotTurns })
-      text += ` ${targetName} subit ${ailmentLabel(dotKind)} (${dotValue}/tour).`
+      const existingDotIdx = targetEffects.findIndex((e) => e.type === 'dot' && e.kind === dotKind)
+      if (existingDotIdx >= 0) {
+        targetEffects[existingDotIdx].value = dotValue
+        targetEffects[existingDotIdx].turns = dotTurns
+        text += ` ${targetName} : ${ailmentLabel(dotKind)} actualisé (${dotValue}/tour).`
+      } else {
+        targetEffects.push({ id: uid('dot'), type: 'dot', kind: dotKind, value: dotValue, turns: dotTurns })
+        text += ` ${targetName} subit ${ailmentLabel(dotKind)} (${dotValue}/tour).`
+      }
 
       if (dotKind === 'bleed') {
         targetEffects.push({
@@ -2489,7 +2584,10 @@ function normalAttackResult(run, side) {
     if (result.dodged) {
       text += `${battle.enemyName} esquive ton attaque normale.`
     } else if (result.parried) {
-      text += `${battle.enemyName} pare partiellement (${result.damage}).`
+      const pb = result.parryBlocked ?? 0
+      text += result.damage > 0
+        ? `${battle.enemyName} pare (bloque ${pb}) et subit ${result.damage} degats.`
+        : `${battle.enemyName} pare completement le coup (bloque ${pb}).`
     } else {
       text += `Attaque normale: ${result.damage} degats.`
     }
@@ -2518,7 +2616,10 @@ function normalAttackResult(run, side) {
     if (result.dodged) {
       text += `Tu esquives l\'attaque normale de ${battle.enemyName}.`
     } else if (result.parried) {
-      text += `Tu pares une partie du coup (${result.damage}).`
+      const pb = result.parryBlocked ?? 0
+      text += result.damage > 0
+        ? `Tu pares (bloque ${pb}) et recois ${result.damage} degats.`
+        : `Tu pares completement le coup (bloque ${pb}).`
     } else {
       text += `${battle.enemyName} frappe: ${result.damage} degats.`
     }
@@ -2615,6 +2716,7 @@ export function startCombat(run, enemy) {
     playerCooldowns: {},
     playerAp: 0,
     enemyAp: 0,
+    bonusTurnUsed: false,
     actor: playerStats.speed + randomInt(0, 6) >= scaled.speed + randomInt(0, 6) ? 'player' : 'enemy',
     turn: 1,
   }
