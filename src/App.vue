@@ -127,6 +127,8 @@ const combatDialogueCurrent = ref('')
 const combatDialogueHistory = ref([])
 const combatDialogueTyping = ref(false)
 const combatDialogueTimer = ref(null)
+const combatDialogueQueue = ref([])
+let combatDialogueFullText = ''
 
 const creation = reactive({
   name: 'Aelys',
@@ -1999,8 +2001,11 @@ watch(
   () => run.value?.eventLog?.length,
   (newLen, oldLen) => {
     if (!run.value?.combat || !newLen) return
-    if ((oldLen ?? 0) >= newLen) return
-    startCombatDialogueAnimation(run.value.eventLog[0])
+    const added = newLen - (oldLen ?? 0)
+    if (added <= 0) return
+    for (let i = added - 1; i >= 0; i--) {
+      startCombatDialogueAnimation(run.value.eventLog[i])
+    }
   },
 )
 
@@ -2011,6 +2016,8 @@ watch(
       stopCombatDialogueAnimation()
       combatDialogueCurrent.value = ''
       combatDialogueHistory.value = []
+      combatDialogueQueue.value = []
+      combatDialogueFullText = ''
     }
   },
 )
@@ -2856,36 +2863,77 @@ function startNpcDialogueAnimation(text) {
 function stopCombatDialogueAnimation() {
   if (combatDialogueTimer.value) {
     window.clearInterval(combatDialogueTimer.value)
+    window.clearTimeout(combatDialogueTimer.value)
     combatDialogueTimer.value = null
   }
   combatDialogueTyping.value = false
 }
 
-function startCombatDialogueAnimation(text) {
-  stopCombatDialogueAnimation()
+function processCombatDialogueQueue() {
+  if (!combatDialogueQueue.value.length) return
+  const next = combatDialogueQueue.value.shift()
+  typeCombatDialogueEntry(next)
+}
+
+function typeCombatDialogueEntry(text) {
+  if (combatDialogueTimer.value) {
+    window.clearInterval(combatDialogueTimer.value)
+    window.clearTimeout(combatDialogueTimer.value)
+    combatDialogueTimer.value = null
+  }
   const full = (text ?? '').toString()
+  combatDialogueFullText = full
   if (combatDialogueCurrent.value) {
-    combatDialogueHistory.value.unshift(combatDialogueCurrent.value)
-    if (combatDialogueHistory.value.length > 2) combatDialogueHistory.value.length = 2
+    combatDialogueHistory.value.push(combatDialogueCurrent.value)
+    if (combatDialogueHistory.value.length > 2) combatDialogueHistory.value.shift()
   }
   combatDialogueCurrent.value = ''
-  if (!full.length) return
+  if (!full.length) {
+    processCombatDialogueQueue()
+    return
+  }
   combatDialogueTyping.value = true
   let index = 0
   combatDialogueTimer.value = window.setInterval(() => {
+    if (combatDialogueQueue.value.length > 3) {
+      combatDialogueCurrent.value = full
+      window.clearInterval(combatDialogueTimer.value)
+      combatDialogueTimer.value = null
+      combatDialogueTyping.value = false
+      processCombatDialogueQueue()
+      return
+    }
     index += 1
     combatDialogueCurrent.value = full.slice(0, index)
     if (index >= full.length) {
-      stopCombatDialogueAnimation()
+      window.clearInterval(combatDialogueTimer.value)
+      combatDialogueTyping.value = false
+      combatDialogueTimer.value = window.setTimeout(() => {
+        combatDialogueTimer.value = null
+        processCombatDialogueQueue()
+      }, 180)
     }
   }, 18)
 }
 
+function startCombatDialogueAnimation(text) {
+  combatDialogueQueue.value.push(text)
+  if (!combatDialogueTyping.value && !combatDialogueTimer.value) {
+    processCombatDialogueQueue()
+  }
+}
+
 function skipCombatDialogue() {
-  if (!combatDialogueTyping.value) return
-  const entry = run.value?.eventLog?.[0]
-  if (entry) combatDialogueCurrent.value = entry
-  stopCombatDialogueAnimation()
+  if (combatDialogueTyping.value) {
+    stopCombatDialogueAnimation()
+    combatDialogueCurrent.value = combatDialogueFullText
+    combatDialogueTimer.value = window.setTimeout(() => {
+      combatDialogueTimer.value = null
+      processCombatDialogueQueue()
+    }, 80)
+  } else if (combatDialogueQueue.value.length > 0) {
+    processCombatDialogueQueue()
+  }
 }
 
 function openNpcPanel() {
