@@ -29,7 +29,6 @@ const COMBAT_NORMAL_ATTACK_COST = 2
 const MAP_LAYOUT_VARIANTS = ['none', 'flip_x', 'flip_y', 'flip_xy']
 const ENEMY_BASE_STAT_BOOST = 1.05
 const PASSIVE_LIFESTEAL_MAX_RATIO = 0.3
-const PASSIVE_LIFESTEAL_EFFECTIVENESS = 0.55
 const PASSIVE_LIFESTEAL_HIT_CAP_MAX_HP_RATIO = 0.12
 const NON_BOSS_EQUIPMENT_DROP_CHANCE = 0.6
 /** Poids mythique boss : avec biais mythic (+4), (w+4)/(84+w) ≤ 0.10 => max 10% */
@@ -2028,14 +2027,14 @@ function consumeNextAttackMissChance(effects) {
 }
 
 function applyPassiveLifeSteal(run, battle, side, attacker, dealtDamage) {
-  const ratio = clamp(attacker?.lifeStealPercent ?? 0, 0, PASSIVE_LIFESTEAL_MAX_RATIO) * PASSIVE_LIFESTEAL_EFFECTIVENESS
+  const ratio = clamp(attacker?.lifeStealPercent ?? 0, 0, PASSIVE_LIFESTEAL_MAX_RATIO)
   if (dealtDamage <= 0 || ratio <= 0) {
     return 0
   }
 
   const maxHp = Math.max(1, Math.floor(attacker?.maxHp ?? 1))
   const healCap = Math.max(1, Math.floor(maxHp * PASSIVE_LIFESTEAL_HIT_CAP_MAX_HP_RATIO))
-  const heal = Math.min(healCap, Math.max(1, Math.floor(dealtDamage * ratio)))
+  const heal = Math.min(healCap, Math.max(1, Math.round(dealtDamage * ratio)))
   if (side === 'player') {
     const before = run.player.hp
     run.player.hp = clamp(run.player.hp + heal, 0, maxHp)
@@ -2349,6 +2348,7 @@ function applySkill(run, side, skill) {
   const bonusPercent =
     side === 'player'
       ? playerStats.damagePercent +
+        effectAmount(battle.playerEffects, 'buff', 'damagePercent') +
         (skill.isMagic ? (playerStats.magicDamagePercent ?? 0) : 0) +
         (battle.enemyIsBoss ? playerStats.bossDamagePercent : 0)
       : 0
@@ -2687,11 +2687,21 @@ function normalAttackResult(run, side) {
   const battle = run.combat
   const playerStats = derivedStats(run)
 
+  const playerBuffAtk = effectAmount(battle.playerEffects, 'buff', 'attackPercent')
+  const playerDebuffAtk = effectAmount(battle.playerEffects, 'debuff', 'attackPercent') + effectAmount(battle.playerEffects, 'debuff', 'enemyAttackPercent')
+  const playerBuffDef = effectAmount(battle.playerEffects, 'buff', 'defensePercent')
+  const playerDebuffDef = effectAmount(battle.playerEffects, 'debuff', 'defensePercent') + effectAmount(battle.playerEffects, 'debuff', 'enemyDefensePercent')
+  const enemyBuffAtk = effectAmount(battle.enemyEffects, 'buff', 'attackPercent')
+  const enemyDebuffAtk = effectAmount(battle.enemyEffects, 'debuff', 'attackPercent') + effectAmount(battle.enemyEffects, 'debuff', 'enemyAttackPercent')
+  const enemyBuffDef = effectAmount(battle.enemyEffects, 'buff', 'defensePercent')
+  const enemyDebuffDef = effectAmount(battle.enemyEffects, 'debuff', 'defensePercent') + effectAmount(battle.enemyEffects, 'debuff', 'enemyDefensePercent')
+  const playerBonusDamage = playerStats.damagePercent + effectAmount(battle.playerEffects, 'buff', 'damagePercent')
+
   const attacker =
     side === 'player'
       ? {
-        attack: playerStats.attack,
-        defense: playerStats.defense,
+        attack: Math.floor(playerStats.attack * statMultiplier(playerBuffAtk, playerDebuffAtk)),
+        defense: Math.floor(playerStats.defense * statMultiplier(playerBuffDef, playerDebuffDef)),
         critChance: playerStats.critChance,
         critDamage: playerStats.critDamage,
         toppleChance: playerStats.toppleChance,
@@ -2700,8 +2710,8 @@ function normalAttackResult(run, side) {
         maxHp: playerStats.maxHp,
       }
       : {
-        attack: battle.enemyStats.attack,
-        defense: battle.enemyStats.defense,
+        attack: Math.floor(battle.enemyStats.attack * statMultiplier(enemyBuffAtk, enemyDebuffAtk)),
+        defense: Math.floor(battle.enemyStats.defense * statMultiplier(enemyBuffDef, enemyDebuffDef)),
         critChance: battle.enemyStats.critChance ?? 0.06,
         critDamage: battle.enemyStats.critDamage ?? 0.42,
         toppleChance: battle.enemyStats.toppleChance ?? 0.08,
@@ -2713,13 +2723,13 @@ function normalAttackResult(run, side) {
   const defender =
     side === 'player'
       ? {
-        defense: battle.enemyStats.defense,
+        defense: Math.floor(battle.enemyStats.defense * statMultiplier(enemyBuffDef, enemyDebuffDef)),
         dodgeChance: battle.enemyStats.dodgeChance ?? 0.03,
         parryChance: battle.enemyStats.parryChance ?? 0.03,
         statusResist: battle.enemyStats.statusResist ?? 0.05,
       }
       : {
-        defense: playerStats.defense,
+        defense: Math.floor(playerStats.defense * statMultiplier(playerBuffDef, playerDebuffDef)),
         dodgeChance: playerStats.dodgeChance,
         parryChance: playerStats.parryChance,
         statusResist: playerStats.statusResist,
@@ -2738,7 +2748,8 @@ function normalAttackResult(run, side) {
     return { ok: true, finished: false }
   }
 
-  const damage = computeDamage(attacker, defender, 1)
+  const bonusPercent = side === 'player' ? playerBonusDamage : 0
+  const damage = computeDamage(attacker, defender, 1, bonusPercent)
   const currentHp = side === 'player' ? battle.enemyHp : run.player.hp
   const targetEffects = side === 'player' ? battle.enemyEffects : battle.playerEffects
   const result = takeDamage(currentHp, targetEffects, damage.damage, defender)

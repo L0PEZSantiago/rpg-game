@@ -233,19 +233,19 @@
             "name": "Drain Vital",
             "description": "Sustain sombre.",
             "passives": [
-              { "id": "nec_drain_01", "name": "Siphon", "effect": { "magicLifestealPct": 2 } },
+              { "id": "nec_drain_01", "name": "Siphon", "effect": { "magicLifestealPct": 6 } },
               { "id": "nec_drain_02", "name": "Récupération", "effect": { "healingReceivedPct": 2 } },
               { "id": "nec_drain_03", "name": "Endurance", "effect": { "maxHpPct": 2 } },
               { "id": "nec_drain_04", "name": "Régénération", "effect": { "hpRegenPct": 1 } },
               { "id": "nec_drain_05", "name": "Voile sombre", "effect": { "damageReductionAfterSpellPct": 2, "durationTurns": 1 } },
               { "id": "nec_drain_06", "name": "Résistance", "effect": { "magicResistPct": 2 } },
-              { "id": "nec_drain_07", "name": "Guérison par dégâts", "effect": { "healFromDamagePct": 3 } },
+              { "id": "nec_drain_07", "name": "Guérison par dégâts", "effect": { "healFromDamagePct": 8 } },
               { "id": "nec_drain_08", "name": "Stabilité", "effect": { "damageTakenReductionPct": 2 } },
               {
                 "id": "nec_drain_09",
                 "name": "Lien Nécrotique",
                 "tier": "major",
-                "effect": { "magicLifestealPct": 5, "maxHpPct": 5 }
+                "effect": { "magicLifestealPct": 12, "maxHpPct": 5 }
               }
             ]
           },

@@ -2915,6 +2915,17 @@ function handleMove(dx, dy) {
     if (result.blockedExit) {
       setInfo('Sortie verrouillee: boss encore vivant.')
     }
+    if (!run.value.combat && !movedToAnotherMap && !result.portalPrompt) {
+      const px = run.value.world.playerPosition.x
+      const py = run.value.world.playerPosition.y
+      const onChest = currentChest.value && currentChest.value.x === px && currentChest.value.y === py
+      const onResource = currentResource.value && currentResource.value.x === px && currentResource.value.y === py
+      if (onChest) {
+        openChestAction()
+      } else if (onResource) {
+        harvestAction()
+      }
+    }
   }
   npcOpen.value = false
   persistRun()
