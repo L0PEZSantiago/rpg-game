@@ -1562,7 +1562,60 @@ export const MAPS = {
       '##############',
     ],
   },
+
+  tutorial_chamber: {
+    id: 'tutorial_chamber',
+    name: 'Chambre d\'initiation',
+    levelRange: '1',
+    isSecret: true,
+    isTutorial: true,
+    noVariants: true,
+    background: '/assets/Environment/Tilesets/Floors_Tiles.png',
+    width: 14,
+    height: 10,
+    start: { x: 4, y: 8 },
+    exit: { x: 11, y: 1, targetMapId: 'ashen_meadow' },
+    secretPortal: null,
+    backPortal: null,
+    npcs: [
+      {
+        id: 'npc_tuto_guide',
+        name: 'Guide Mystique',
+        role: 'lore',
+        fixed: true,
+        x: 6,
+        y: 7,
+        portrait: WIZZARD_ASSET,
+        dialogue: 'Bonne exploration ! Souviens-toi : les PNJ comme moi sont repérables en jaune sur la carte. Appuie sur E pour nous parler. Certains proposent des soins, du commerce ou des énigmes.',
+        riddlePool: [],
+      },
+    ],
+    resources: [
+      { id: 'tuto_herb_1', type: 'herb', fixed: true, x: 2, y: 6, charges: 2 },
+    ],
+    chests: [
+      { id: 'chest_tuto_1', fixed: true, x: 9, y: 6, rarityBias: 'common' },
+    ],
+    enemies: [
+      { id: 'e_tuto_1', templateId: 'tutorial_dummy', fixed: true, x: 2, y: 5 },
+    ],
+    boss: { id: 'boss_tuto', templateId: 'tutorial_boss', fixed: true, x: 7, y: 3 },
+    tiles: [
+      '##############',
+      '#............#',
+      '#............#',
+      '#............#',
+      '#............#',
+      '#............#',
+      '#............#',
+      '#............#',
+      '#............#',
+      '##############',
+    ],
+  },
 }
+
+export const TUTORIAL_MAP_ID = 'tutorial_chamber'
 
 export const MAP_ORDER = [
   'ashen_meadow',

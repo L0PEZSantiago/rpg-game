@@ -210,6 +210,14 @@ export const CONSUMABLES_SHOP = [
     description: 'Retire les debuffs et confere un bouclier.',
     stock: 1,
   },
+  {
+    id: 'shop_vision_torch',
+    name: 'Torche runique',
+    price: 65,
+    effect: 'vision_boost',
+    description: 'Augmente la visibilite pour 30 pas.',
+    stock: 2,
+  },
 ]
 
 export const RARITY_BONUS_RULES = {

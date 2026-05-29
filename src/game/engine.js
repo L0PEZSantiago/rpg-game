@@ -9,6 +9,7 @@ import {
   LOOT_BASES,
   MAPS,
   MAP_ORDER,
+  TUTORIAL_MAP_ID,
   MATERIAL_FROM_ENEMY,
   MATERIAL_LABELS,
   RARITY_BONUS_RULES,
@@ -331,10 +332,13 @@ function findNearestWalkable(map, x, y, blockedSet = new Set(), tiles = map.tile
 
 function placeRandomizedEntities(map, tiles, entities, pool, blockedSet, startCell, minDistance, mapper) {
   return entities.map((entry) => {
-    const randomCell = takeCellFromPool(pool, blockedSet, startCell, minDistance)
-    const cell =
-      randomCell ??
-      findNearestWalkable(map, entry.x ?? startCell?.x ?? 1, entry.y ?? startCell?.y ?? 1, blockedSet, tiles)
+    let cell
+    if (entry.fixed && entry.x != null && entry.y != null && mapIsWalkable(map, entry.x, entry.y, tiles)) {
+      cell = { x: entry.x, y: entry.y }
+    } else {
+      const randomCell = takeCellFromPool(pool, blockedSet, startCell, minDistance)
+      cell = randomCell ?? findNearestWalkable(map, entry.x ?? startCell?.x ?? 1, entry.y ?? startCell?.y ?? 1, blockedSet, tiles)
+    }
     blockedSet.add(toKey(cell.x, cell.y))
     return mapper(entry, cell)
   })
@@ -356,7 +360,7 @@ function createEnemyInstance(spawn, cell, isBoss = false) {
 
 function createMapState(mapId) {
   const map = currentMapById(mapId)
-  const layoutVariant = randomChoice(MAP_LAYOUT_VARIANTS) ?? 'none'
+  const layoutVariant = map.noVariants ? 'none' : (randomChoice(MAP_LAYOUT_VARIANTS) ?? 'none')
   const tiles = transformTiles(map.tiles, layoutVariant, map.width, map.height)
   const transformedStart = transformPoint(map.start, layoutVariant, map.width, map.height)
   const transformedSecret = transformPoint(map.secretPortal ?? null, layoutVariant, map.width, map.height)
@@ -433,18 +437,22 @@ function createMapState(mapId) {
 
   let bossDefeatedInitial = false
   if (map.boss) {
-    const randomBossCell = takeCellFromPool(pool, blocked, start, 6)
-    const transformedBoss = transformPoint(map.boss, layoutVariant, map.width, map.height)
-    const bossCell =
-      randomBossCell ?? findNearestWalkable(map, transformedBoss.x, transformedBoss.y, blocked, tiles)
+    let bossCell
+    if (map.boss.fixed && map.boss.x != null && map.boss.y != null && mapIsWalkable(map, map.boss.x, map.boss.y, tiles)) {
+      bossCell = { x: map.boss.x, y: map.boss.y }
+    } else {
+      const randomBossCell = takeCellFromPool(pool, blocked, start, 6)
+      const transformedBoss = transformPoint(map.boss, layoutVariant, map.width, map.height)
+      bossCell = randomBossCell ?? findNearestWalkable(map, transformedBoss.x, transformedBoss.y, blocked, tiles)
+    }
     blocked.add(toKey(bossCell.x, bossCell.y))
     enemies.push(createEnemyInstance(map.boss, bossCell, true))
   } else {
     bossDefeatedInitial = true
   }
 
-  // Spawn aléatoire : PNJ Défi + Marchand itinérant (hors maps secrètes)
-  if (!map.isSecret && !map.isSecretRoom) {
+  // Spawn aléatoire : PNJ Défi + Marchand itinérant (hors maps secrètes et hors tutoriel)
+  if (!map.isSecret && !map.isSecretRoom && mapId !== TUTORIAL_MAP_ID) {
     if (chance(CHALLENGER_NPC_SPAWN_CHANCE)) {
       const cell = takeCellFromPool(pool, blocked, start, 2)
       if (cell) {
@@ -525,7 +533,17 @@ function createStarterInventory(selectedClass) {
       quantity: 1,
       rarity: 'common',
       value: 22,
-      icon: '/assets/Weapons/Wood/Wood.png',
+      icon: '/assets/Icons/mana_potion.png',
+    },
+    {
+      id: uid('consumable'),
+      kind: 'consumable',
+      name: 'Torche runique',
+      effect: 'vision_boost',
+      quantity: 1,
+      rarity: 'common',
+      value: 30,
+      icon: '/assets/Icons/potion.png',
     },
     {
       id: uid('equipment'),
@@ -1466,6 +1484,24 @@ export function openNearbyChest(run) {
   }
 
   chest.opened = true
+
+  const map = currentMap(run)
+  if (map?.isTutorial) {
+    const tutRarity = weightedChoice([
+      { value: 'common', weight: 35 },
+      { value: 'uncommon', weight: 65 },
+    ])
+    const loots = [
+      buildLootItem({ run, isBoss: false, sourceName: 'Coffre', forcedRarity: tutRarity }),
+      buildLootItem({ run, isBoss: false, sourceName: 'Coffre', forcedRarity: tutRarity }),
+    ]
+    for (const item of loots) {
+      addInventoryItem(run, item)
+    }
+    appendLog(run, `Coffre ouvert : ${loots.map(l => l.baseName ?? l.name ?? 'objet').join(', ')}.`)
+    return { ok: true, chest, loots, gold: 0, materials: [], chestEvent: null }
+  }
+
   const chestType = weightedChoice(CHEST_TYPE_WEIGHTS)
 
   if (chestType === 'trapped') {
@@ -1513,13 +1549,14 @@ export function openNearbyChest(run) {
 
   if (chestType === 'bonus') {
     const bonus = weightedChoice([
-      { value: 'healing',        weight: 22 },
-      { value: 'consumable_heal', weight: 22 },
-      { value: 'consumable_mana', weight: 20 },
-      { value: 'damage_boost',   weight: 18 },
-      { value: 'xp_surge',       weight: 14 },
-      { value: 'teleport_room',  weight: 10 },
-      { value: 'revive_charm',   weight: 4 },
+      { value: 'healing',           weight: 22 },
+      { value: 'consumable_heal',   weight: 22 },
+      { value: 'consumable_mana',   weight: 20 },
+      { value: 'damage_boost',      weight: 18 },
+      { value: 'xp_surge',          weight: 14 },
+      { value: 'consumable_vision', weight: 8 },
+      { value: 'teleport_room',     weight: 10 },
+      { value: 'revive_charm',      weight: 4 },
     ])
     let chestEvent
     if (bonus === 'healing') {
@@ -1533,9 +1570,13 @@ export function openNearbyChest(run) {
       appendLog(run, `Coffre béni ! Deux potions de soin vous attendent.`)
       chestEvent = { type: 'bonus', title: 'Provisions !', desc: `Deux potions de soin étaient soigneusement emballées à l'intérieur. +2 Potions de soin.` }
     } else if (bonus === 'consumable_mana') {
-      addInventoryItem(run, { id: uid('consumable'), kind: 'consumable', name: 'Elixir de mana', effect: 'mana_60', quantity: 2, rarity: 'common', value: 22, icon: '/assets/Weapons/Wood/Wood.png' })
+      addInventoryItem(run, { id: uid('consumable'), kind: 'consumable', name: 'Elixir de mana', effect: 'mana_60', quantity: 2, rarity: 'common', value: 22, icon: '/assets/Icons/mana_potion.png' })
       appendLog(run, `Coffre béni ! Deux élixirs de mana vous attendent.`)
       chestEvent = { type: 'bonus', title: 'Énergie runique !', desc: `Des fioles d'énergie runique scintillent dans l'ombre. +2 Élixirs de mana.` }
+    } else if (bonus === 'consumable_vision') {
+      addInventoryItem(run, { id: uid('consumable'), kind: 'consumable', name: 'Torche runique', effect: 'vision_boost', quantity: 2, rarity: 'common', value: 30, icon: '/assets/Icons/potion.png' })
+      appendLog(run, `Coffre béni ! Des torches runiques illuminent le coffre.`)
+      chestEvent = { type: 'bonus', title: 'Torches runiques !', desc: `Deux torches runiques augmentent votre vision pour 30 pas chacune. +2 Torches runiques.` }
     } else if (bonus === 'damage_boost') {
       pushPreparedBuff(run, { type: 'buff', stat: 'attackPercent', value: 0.30, turns: 3 })
       appendLog(run, `Coffre béni ! Une rune de puissance vous galvanise pour le prochain combat.`)
@@ -1559,8 +1600,7 @@ export function openNearbyChest(run) {
     return { ok: true, chest, loots: [], gold: 0, materials: [], chestEvent }
   }
 
-  const map = currentMap(run)
-  const lootCount = (map.isSecret || map.isSecretRoom) ? 2 : 1
+  const lootCount = (map?.isSecret || map?.isSecretRoom) ? 2 : 1
   const chestHasMythic = chance(CHEST_MYTHIC_CHANCE)
   const mythicIndex = chestHasMythic ? randomInt(0, lootCount - 1) : -1
   const loots = Array.from({ length: lootCount }, (_, index) =>
@@ -1797,7 +1837,11 @@ export function attemptMove(run, dx, dy, options = {}) {
   }
 
   run.world.playerPosition = { x: nx, y: ny }
-  revealAround(run, map.id, nx, ny, 2)
+  const visionBoost = run.player.visionBoostSteps ?? 0
+  revealAround(run, map.id, nx, ny, visionBoost > 0 ? 4 : 2)
+  if (visionBoost > 0) {
+    run.player.visionBoostSteps = visionBoost - 1
+  }
 
   const enemy = enemyAtPosition(run, nx, ny)
   if (enemy) {
@@ -1865,13 +1909,18 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
     const beforeGuard = damage
     damage = Math.max(1, Math.floor(damage * 0.25))
     const guardBlocked = beforeGuard - damage
+    let shieldAbsorbed = 0
     for (const shield of targetEffects.filter((effect) => effect.type === 'shield' && effect.value > 0)) {
       if (damage <= 1) break
       const absorbed = Math.min(shield.value, damage - 1)
       shield.value -= absorbed
       damage -= absorbed
+      shieldAbsorbed += absorbed
     }
-    return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: true, parryBlocked: guardBlocked }
+    for (let i = targetEffects.length - 1; i >= 0; i--) {
+      if (targetEffects[i].type === 'shield' && targetEffects[i].value <= 0) targetEffects.splice(i, 1)
+    }
+    return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: true, parryBlocked: guardBlocked, shieldAbsorbed }
   }
 
   const guaranteedDodge = targetEffects.find(
@@ -1882,7 +1931,7 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
   if (!ignoreAvoidance && guaranteedDodge) {
     guaranteedDodge.value = 0
     guaranteedDodge.turns = 0
-    return { hp: targetHp, damage: 0, dodged: true, parried: false }
+    return { hp: targetHp, damage: 0, dodged: true, parried: false, shieldAbsorbed: 0 }
   }
 
   if (!ignoreAvoidance) {
@@ -1894,7 +1943,7 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
       0.72,
     )
     if (chance(dodgeChance)) {
-      return { hp: targetHp, damage: 0, dodged: true, parried: false }
+      return { hp: targetHp, damage: 0, dodged: true, parried: false, shieldAbsorbed: 0 }
     }
 
     const parryChance = clamp(
@@ -1910,21 +1959,24 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
       damage = Math.max(0, Math.floor(damage * (1 - reduction)))
       const parryBlocked = beforeParry - damage
       if (damage <= 0) {
-        return { hp: targetHp, damage: 0, dodged: false, parried: true, parryBlocked }
+        return { hp: targetHp, damage: 0, dodged: false, parried: true, parryBlocked, shieldAbsorbed: 0 }
       }
+      let shieldAbsorbed = 0
       for (const shield of targetEffects.filter((effect) => effect.type === 'shield' && effect.value > 0)) {
-        if (damage <= 0) {
-          break
-        }
+        if (damage <= 0) break
         const absorbed = Math.min(shield.value, damage)
         shield.value -= absorbed
         damage -= absorbed
+        shieldAbsorbed += absorbed
+      }
+      for (let i = targetEffects.length - 1; i >= 0; i--) {
+        if (targetEffects[i].type === 'shield' && targetEffects[i].value <= 0) targetEffects.splice(i, 1)
       }
       if (damage > 0) {
         const sleepIdxParry = targetEffects.findIndex((e) => e.type === 'debuff' && e.stat === 'sleep' && e.turns > 0)
         if (sleepIdxParry >= 0) targetEffects.splice(sleepIdxParry, 1)
       }
-      return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: true, parryBlocked }
+      return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: true, parryBlocked, shieldAbsorbed }
     }
   }
 
@@ -1933,16 +1985,19 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
     if (sleepIdx >= 0) targetEffects.splice(sleepIdx, 1)
   }
 
+  let shieldAbsorbed = 0
   for (const shield of targetEffects.filter((effect) => effect.type === 'shield' && effect.value > 0)) {
-    if (damage <= 0) {
-      break
-    }
+    if (damage <= 0) break
     const blocked = Math.min(shield.value, damage)
     shield.value -= blocked
     damage -= blocked
+    shieldAbsorbed += blocked
+  }
+  for (let i = targetEffects.length - 1; i >= 0; i--) {
+    if (targetEffects[i].type === 'shield' && targetEffects[i].value <= 0) targetEffects.splice(i, 1)
   }
 
-  return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: false }
+  return { hp: Math.max(0, targetHp - damage), damage, dodged: false, parried: false, shieldAbsorbed }
 }
 
 function computeDamage(attacker, defender, power, extraPercent = 0, armorPen = 0) {
@@ -2184,7 +2239,6 @@ function startTurn(run) {
       }
     }
 
-    run.player.mana = clamp(run.player.mana + Math.max(2, stats.manaRegenFlat), 0, stats.maxMana)
     return
   }
 
@@ -2255,6 +2309,8 @@ function endTurn(run) {
       }
     }
 
+    const endStats = derivedStats(run)
+    run.player.mana = clamp(run.player.mana + Math.max(2, endStats.manaRegenFlat), 0, endStats.maxMana)
     battle.actor = 'enemy'
   } else {
     battle.enemyEffects = reduceEffects(battle.enemyEffects)
@@ -2426,6 +2482,10 @@ function applySkill(run, side, skill) {
       text += result.damage > 0
         ? ` ${targetName} pare (bloque ${pb}) et subit ${result.damage} degats.`
         : ` ${targetName} pare completement (bloque ${pb}).`
+    } else if (result.shieldAbsorbed > 0) {
+      text += result.damage > 0
+        ? ` Bouclier absorbe ${result.shieldAbsorbed}, ${targetName} subit ${result.damage} degats.`
+        : ` Bouclier absorbe ${result.shieldAbsorbed}.`
     } else {
       text += ` ${targetName} subit ${result.damage} degats.`
     }
@@ -2581,10 +2641,16 @@ function applySkill(run, side, skill) {
     text += damage.crit && !result.dodged ? ' Critique.' : ''
     text += result.dodged ? ` ${targetName} esquive.` : ` ${targetName} perd ${result.damage}. ${actorName} vole ${heal} PV.`
   } else if (skill.effect === 'shield') {
-    const shield = Math.max(8, Math.floor(attacker.maxHp * (skill.shieldRatio ?? 0.25)))
+    const shieldValue = Math.max(8, Math.floor(attacker.maxHp * (skill.shieldRatio ?? 0.25)))
     const effects = side === 'player' ? battle.playerEffects : battle.enemyEffects
-    effects.push({ id: uid('shield'), type: 'shield', value: shield, turns: 2 })
-    text += ` Bouclier +${shield}.`
+    const existingShield = effects.find((e) => e.type === 'shield' && e.value > 0)
+    if (existingShield) {
+      existingShield.turns = 2
+      text += ` Bouclier maintenu (${existingShield.value} restant).`
+    } else {
+      effects.push({ id: uid('shield'), type: 'shield', value: shieldValue, turns: 2 })
+      text += ` Bouclier +${shieldValue}.`
+    }
   } else if (skill.effect === 'guard') {
     const effects = side === 'player' ? battle.playerEffects : battle.enemyEffects
     effects.push({ id: uid('guard'), type: 'guard', value: 1, turns: 1 })
@@ -2769,6 +2835,10 @@ function normalAttackResult(run, side) {
       text += result.damage > 0
         ? `${battle.enemyName} pare (bloque ${pb}) et subit ${result.damage} degats.`
         : `${battle.enemyName} pare completement le coup (bloque ${pb}).`
+    } else if (result.shieldAbsorbed > 0) {
+      text += result.damage > 0
+        ? `Attaque normale: bouclier absorbe ${result.shieldAbsorbed}, ${result.damage} degats.`
+        : `Attaque normale: bouclier absorbe ${result.shieldAbsorbed}.`
     } else {
       text += `Attaque normale: ${result.damage} degats.`
     }
@@ -3235,6 +3305,11 @@ function applyConsumable(run, effect, itemRarity = null) {
       pushPreparedBuff(run, { type: 'shield', value: 42, turns: 2 })
       appendLog(run, 'Orbe de clarte prepare: bouclier au prochain combat.')
     }
+    return true
+  }
+  if (effect === 'vision_boost') {
+    run.player.visionBoostSteps = (run.player.visionBoostSteps ?? 0) + 30
+    appendLog(run, 'Torche runique: visibilite augmentee pour 30 pas.')
     return true
   }
   return false

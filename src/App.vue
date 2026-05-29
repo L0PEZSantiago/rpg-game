@@ -13,6 +13,7 @@ import {
   RECIPES,
   RESOURCE_TABLE,
 } from './game/data'
+import { TUTORIAL_MAP_ID } from './game/data'
 import {
   PASSIVE_RESET_RULES,
   answerNpcRiddle,
@@ -51,6 +52,7 @@ import {
   progressSummary,
   recipeMaterialRequirements,
   resetPassiveTree,
+  revealAround,
   runEnemyTurn,
   sellItem,
   sellValueForItem,
@@ -108,6 +110,8 @@ let merchantMoveInterval = null
 let merchantDepartedAutoCloseTimer = null
 let merchantArrivalAutoCloseTimer = null
 const portalConfirmModal = ref(null)
+const tutorialIntroModal = ref(false)
+const tutorialEndModal = ref(false)
 const inventoryTab = ref('weapon')
 const combatConsumableTab = ref('regen')
 const inventoryTrackingPrimed = ref(false)
@@ -841,6 +845,29 @@ const MAP_PORTAL_SPRITES = {
 }
 
 const MAP_CHEST_SPRITE = '/assets/world/treasure-chest.png'
+
+const MATERIAL_ICONS = {
+  wood:               { col: 0, row: 0 },
+  resin:              { col: 1, row: 0 },
+  ore:                { col: 2, row: 0 },
+  obsidian_fragment:  { col: 3, row: 0 },
+  ether_drop:         { col: 0, row: 1 },
+  herb:               { col: 1, row: 1 },
+  bone_dust:          { col: 2, row: 1 },
+  boss_shard:         { col: 3, row: 1 },
+}
+
+function materialIconStyle(key) {
+  const icon = MATERIAL_ICONS[key]
+  if (!icon) return {}
+  const xPct = icon.col === 0 ? 0 : (icon.col / 3) * 100
+  const yPct = icon.row === 0 ? 0 : 100
+  return {
+    backgroundImage: `url('/assets/Icons/ressources-pixelArt.png')`,
+    backgroundSize: '400% 200%',
+    backgroundPosition: `${xPct}% ${yPct}%`,
+  }
+}
 
 const MAP_RESOURCE_SPRITES = {
   tree: { src: '/assets/Environment/Props/Animated/Pan_01-Sheet.png', frames: 4 },
@@ -2793,6 +2820,162 @@ function startNewGame() {
   persistRun()
 }
 
+const TUTO_GUIDE_SPRITE = "/assets/Entities/Npc's/Wizzard/Idle/Idle-Sheet.png"
+
+const TUTORIAL_WELCOME =
+  'Bienvenue, aventurier ! Je suis le Guide Mystique, gardien de cette chambre d\'initiation.\n\n' +
+  'Explore les environs : des ressources à récolter, des coffres à ouvrir, et des ennemis qui patrouillent. ' +
+  'Approche-toi des objets ou appuie sur E pour interagir.\n\n' +
+  'Les ennemis apparaissent en rouge sur la carte et ont une portée d\'agro — approche-toi trop près et le combat s\'enclenche ! ' +
+  'En combat, dépense tes PA (Points d\'Action) pour agir à chaque tour.\n\n' +
+  'Le portail de sortie est verrouillé tant que le boss vit. Vaincs le Gardien du sceau pour l\'activer. Bonne chance !'
+
+const tutorialWelcomeText = ref('')
+const tutorialTyping = ref(false)
+let tutorialWelcomeTimer = null
+
+const tutorialTip = ref(null)
+const tutorialShownTips = reactive({ chest: false, resource: false, npc: false, portal: false })
+
+function startTutorialTypewriter() {
+  tutorialWelcomeText.value = ''
+  tutorialTyping.value = true
+  let i = 0
+  tutorialWelcomeTimer = setInterval(() => {
+    if (i < TUTORIAL_WELCOME.length) {
+      tutorialWelcomeText.value += TUTORIAL_WELCOME[i]
+      i++
+    } else {
+      clearInterval(tutorialWelcomeTimer)
+      tutorialWelcomeTimer = null
+      tutorialTyping.value = false
+    }
+  }, 22)
+}
+
+function skipTutorialWelcome() {
+  if (tutorialWelcomeTimer) {
+    clearInterval(tutorialWelcomeTimer)
+    tutorialWelcomeTimer = null
+    tutorialTyping.value = false
+  }
+  tutorialWelcomeText.value = TUTORIAL_WELCOME
+}
+
+function handleTutorialWelcomeBtn() {
+  if (tutorialTyping.value) {
+    skipTutorialWelcome()
+  } else {
+    tutorialIntroModal.value = false
+  }
+}
+
+function showTutorialTip(key, tip) {
+  if (tutorialShownTips[key]) return
+  tutorialShownTips[key] = true
+  tutorialTip.value = tip
+}
+
+function dismissTutorialTip() {
+  tutorialTip.value = null
+}
+
+watch(
+  () => run.value?.world?.playerPosition,
+  (pos) => {
+    if (!run.value?.metadata?.isTutorial || !pos || run.value.combat || tutorialIntroModal.value) return
+    const r = run.value
+    if (!tutorialShownTips.chest && nearbyChest(r)) {
+      showTutorialTip('chest', {
+        icon: MAP_CHEST_SPRITE,
+        title: 'Coffre découvert !',
+        text: 'Appuie sur E pour l\'ouvrir. Les coffres renferment équipements, consommables et ressources.',
+      })
+    } else if (!tutorialShownTips.resource && nearbyResource(r)) {
+      showTutorialTip('resource', {
+        icon: '🌿',
+        title: 'Ressource à portée',
+        text: 'Appuie sur E ou F pour récolter. Les matériaux servent à fabriquer des objets chez les marchands.',
+      })
+    } else if (!tutorialShownTips.npc && nearbyNpc(r)) {
+      showTutorialTip('npc', {
+        icon: '💛',
+        title: 'PNJ à proximité',
+        text: 'Les PNJ sont en jaune sur la carte. Appuie sur E pour interagir — soins, commerce, énigmes...',
+      })
+    } else {
+      const exit = MAPS[TUTORIAL_MAP_ID]?.exit
+      if (exit && !tutorialShownTips.portal) {
+        const dx = Math.abs(pos.x - exit.x)
+        const dy = Math.abs(pos.y - exit.y)
+        if (dx <= 2 && dy <= 2) {
+          showTutorialTip('portal', {
+            icon: MAP_PORTAL_SPRITES.back,
+            title: 'Portail de sortie',
+            text: 'Ce portail est verrouillé tant que le boss est vivant. Vaincs le Gardien du sceau pour l\'activer.',
+          })
+        }
+      }
+    }
+  },
+  { deep: true }
+)
+
+function startTutorial() {
+  run.value = createRun({
+    name: creation.name,
+    classId: creation.classId,
+    difficulty: creation.difficulty,
+  })
+  const tutMap = MAPS[TUTORIAL_MAP_ID]
+  if (tutMap) {
+    run.value.world.currentMapId = TUTORIAL_MAP_ID
+    run.value.world.playerPosition = { ...tutMap.start }
+    run.value.metadata.isTutorial = true
+    revealAround(run.value, TUTORIAL_MAP_ID, tutMap.start.x, tutMap.start.y, 3)
+  }
+  syncMapPlayerToRun()
+  npcOpen.value = false
+  challengeModal.value = null
+  wanderingMerchantModal.value = null
+  merchantArrivalModal.value = null
+  merchantDepartedModal.value = null
+  closeMetaModals()
+  persistRun()
+  tutorialShownTips.chest = false
+  tutorialShownTips.resource = false
+  tutorialShownTips.npc = false
+  tutorialShownTips.portal = false
+  tutorialTip.value = null
+  tutorialIntroModal.value = true
+  startTutorialTypewriter()
+}
+
+function startGameFromTutorial() {
+  const { name, classId } = run.value.player
+  const { difficulty } = run.value.metadata
+  run.value = createRun({ name, classId, difficulty })
+  tutorialEndModal.value = false
+  syncMapPlayerToRun()
+  npcOpen.value = false
+  challengeModal.value = null
+  closeMetaModals()
+  passivesModalOpen.value = true
+  startMerchantTimerForMap(false)
+  setInfo('Tutoriel termine ! Bonne aventure !')
+  persistRun()
+}
+
+function returnToMenuFromTutorial() {
+  tutorialEndModal.value = false
+  clearSnapshot()
+  clearMerchantDepartureTimer()
+  run.value = null
+  stopMapPlayerMotion()
+  npcOpen.value = false
+  closeMetaModals()
+}
+
 function continueSavedGame() {
   const loaded = loadSnapshot()
   if (!loaded?.snapshot) {
@@ -2851,6 +3034,14 @@ function portalModalFromPrompt(prompt) {
     }
   }
 
+  if (run.value?.world?.currentMapId === TUTORIAL_MAP_ID) {
+    return {
+      title: 'Fin du tutoriel',
+      text: 'Commencer une nouvelle partie ? Ton inventaire sera reinitialise (lvl 1).',
+      color: '#6dff9b',
+    }
+  }
+
   const targetName = MAPS[prompt.targetMapId]?.name ?? 'la zone suivante'
   return {
     title: 'Portail de zone',
@@ -2863,6 +3054,13 @@ function confirmPortalMove() {
   if (!run.value || !portalConfirmModal.value) {
     return
   }
+
+  if (run.value.world.currentMapId === TUTORIAL_MAP_ID) {
+    portalConfirmModal.value = null
+    tutorialEndModal.value = true
+    return
+  }
+
   const result = usePortalAtPosition(run.value)
   portalConfirmModal.value = null
   if (!result.ok) {
@@ -2874,6 +3072,7 @@ function confirmPortalMove() {
   } else {
     syncMapPlayerToRun()
     playUiSound(UI_SOUND_BANK.portal, 0.3)
+    startMerchantTimerForMap(true)
   }
   persistRun()
   scheduleEnemyTurn()
@@ -2907,7 +3106,6 @@ function handleMove(dx, dy) {
     if (movedToAnotherMap) {
       syncMapPlayerToRun()
       playUiSound(UI_SOUND_BANK.portal, 0.3)
-      startMerchantTimerForMap(true)
     } else if (from.x !== to.x || from.y !== to.y) {
       animateMapPlayerMove(from, to)
     }
@@ -3620,6 +3818,10 @@ onBeforeUnmount(() => {
   stopAllSpriteTickers()
   stopMusicTrack(worldMusic, true)
   stopMusicTrack(battleMusic, true)
+  if (tutorialWelcomeTimer) {
+    clearInterval(tutorialWelcomeTimer)
+    tutorialWelcomeTimer = null
+  }
   if (enemyTimer.value) {
     window.clearTimeout(enemyTimer.value)
     enemyTimer.value = null
@@ -3702,6 +3904,7 @@ onBeforeUnmount(() => {
           <button class="primary" @click="startNewGame">Lancer la campagne</button>
           <button class="secondary" :disabled="!hasSave" @click="continueSavedGame">Continuer sauvegarde</button>
           <button class="danger" :disabled="!hasSave" @click="abandonAndDeleteSave">Effacer sauvegarde</button>
+          <button class="tutorial-btn" @click="startTutorial">Jouer le tutoriel</button>
           <p v-if="saveTimestamp" class="save-ts">Derniere sauvegarde: {{ saveTimestamp }}</p>
         </article>
 
@@ -3739,6 +3942,9 @@ onBeforeUnmount(() => {
           </span>
           <span>XP {{ run.player.xp }} / {{ run.player.nextXp }}</span>
           <span>Points passifs {{ run.player.passivePoints }}</span>
+          <span v-if="(run.player.visionBoostSteps ?? 0) > 0" class="hud-stat-vision">
+            Torche {{ run.player.visionBoostSteps }} pas
+          </span>
         </div>
         <div class="hud-actions">
           <button class="hud-icon-btn" @click="inventoryModalOpen = true">
@@ -3903,7 +4109,11 @@ onBeforeUnmount(() => {
             <div class="materials">
               <h3>Materiaux</h3>
               <ul>
-                <li v-for="(label, key) in MATERIAL_LABELS" :key="key">{{ label }}: {{ run.player.materials[key] }}</li>
+                <li v-for="(label, key) in MATERIAL_LABELS" :key="key" class="material-row">
+                  <span class="material-icon" :style="materialIconStyle(key)"></span>
+                  <span class="material-label">{{ label }}</span>
+                  <span class="material-qty">{{ run.player.materials[key] ?? 0 }}</span>
+                </li>
               </ul>
             </div>
           </article>
@@ -3950,6 +4160,9 @@ onBeforeUnmount(() => {
             {{ run.player.gold }}
           </span>
           <span class="mobile-hud-stat">XP {{ run.player.xp }}/{{ run.player.nextXp }}</span>
+          <span v-if="(run.player.visionBoostSteps ?? 0) > 0" class="mobile-hud-stat hud-stat-vision">
+            Torche {{ run.player.visionBoostSteps }}
+          </span>
         </div>
         <div class="mobile-top-bar-actions">
           <button type="button" class="mobile-top-bar-btn"
@@ -3994,17 +4207,19 @@ onBeforeUnmount(() => {
               <button type="button" class="move-btn move-right" aria-label="Droite" @click="handleMove(1, 0)">→</button>
               <button type="button" class="move-btn move-down" aria-label="Bas" @click="handleMove(0, 1)">↓</button>
             </div>
+            <div class="mobile-materials">
+              <div v-for="(label, key) in MATERIAL_LABELS" :key="key" class="mobile-material-row">
+                <span class="material-icon material-icon-sm" :style="materialIconStyle(key)"></span>
+                <span class="mobile-material-label">{{ label }}</span>
+                <span class="mobile-material-qty">{{ run.player.materials[key] ?? 0 }}</span>
+              </div>
+            </div>
           </div>
         </article>
       </div>
 
       <Transition name="bar-slide">
         <div v-if="mobileActionMenuOpen" class="mobile-action-bar">
-          <button class="mobile-quick-btn" @click="inventoryModalOpen = true; mobileActionMenuOpen = false">
-            <img src="/assets/Icons/backpack.png" alt="" />
-            <span>Inv</span>
-            <span v-if="newInventoryCount" class="mobile-badge">{{ newInventoryCount }}</span>
-          </button>
           <button class="mobile-quick-btn" @click="skillsModalOpen = true; mobileActionMenuOpen = false">
             <img src="/assets/Icons/sword.png" alt="" />
             <span>Comp</span>
@@ -4021,6 +4236,11 @@ onBeforeUnmount(() => {
           <button class="mobile-quick-btn" @click="mobileEquipmentModalOpen = true; mobileActionMenuOpen = false">
             <img src="/assets/Icons/dagger.png" alt="" />
             <span>Equip.</span>
+          </button>
+          <button class="mobile-quick-btn" @click="inventoryModalOpen = true; mobileActionMenuOpen = false">
+            <img src="/assets/Icons/backpack.png" alt="" />
+            <span>Inv</span>
+            <span v-if="newInventoryCount" class="mobile-badge">{{ newInventoryCount }}</span>
           </button>
         </div>
       </Transition>
@@ -4092,7 +4312,7 @@ onBeforeUnmount(() => {
         </article>
       </div>
 
-      <div v-if="activeCombatView && run" class="overlay-combat">
+      <div v-if="activeCombatView && run" class="overlay-combat" :data-actor="activeCombatView.actor ?? 'player'">
         <div v-if="combatIntroActive && run.combat" class="combat-intro-overlay" @click="closeCombatIntro">
           <article class="combat-intro-modal">
             <p class="combat-intro-text">Un <strong>{{ run.combat.enemyName }}</strong> apparaît !</p>
@@ -4104,7 +4324,7 @@ onBeforeUnmount(() => {
           </article>
         </div>
         <article v-show="!combatIntroActive" class="combat-modal"
-          :class="{ 'combat-modal-outro': Boolean(combatOutro) }">
+          :class="{ 'combat-modal-outro': Boolean(combatOutro), 'turn-player': run.combat?.actor === 'player', 'turn-enemy': run.combat?.actor === 'enemy' }">
           <header class="combat-modal-head">
             <div class="combat-head-main">
               <h2>
@@ -4114,6 +4334,12 @@ onBeforeUnmount(() => {
               <p class="combat-subline">
                 <span class="turn-pill" :class="{ enemy: run.combat?.actor === 'enemy' }">{{ combatTurnLabel }}</span>
               </p>
+              <div v-if="run.metadata?.isTutorial && run.combat" class="tuto-tip-bubble tuto-tip-turn">
+                <strong>{{ run.combat.actor === 'player' ? '🟦 Ton tour' : '🟥 Tour ennemi' }}</strong>
+                {{ run.combat.actor === 'player'
+                  ? ' — Utilise tes PA pour attaquer ou lancer une compétence, puis clique Fin du tour.'
+                  : ' — L\'ennemi agit automatiquement. Attends qu\'il passe la main.' }}
+              </div>
             </div>
           </header>
 
@@ -4139,7 +4365,7 @@ onBeforeUnmount(() => {
                     <span>Fin du tour</span>
                   </button>
                   <button class="mobile-menu-btn mobile-menu-flee" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">
-                    <span>Fuir ({{ fleeRate }}%)</span>
+                    <span>Fuir 2 PA ({{ fleeRate }}%)</span>
                   </button>
                 </div>
 
@@ -4172,6 +4398,10 @@ onBeforeUnmount(() => {
                       </small>
                     </button>
                   </div>
+                  <button class="skills-panel-end-turn" :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
+                    :disabled="run.combat.actor !== 'player'" @click.prevent="endTurnAction">
+                    Fin du tour
+                  </button>
                 </div>
 
                 <!-- ACTIONS + INVENTAIRE -->
@@ -4185,7 +4415,7 @@ onBeforeUnmount(() => {
                       <button :disabled="!normalAttackReady()" @click="useNormalAttack">
                         Attaque (2 PA)<kbd></kbd>
                       </button>
-                      <button class="combat-flee-desktop" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%)</button>
+                      <button class="combat-flee-desktop" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir 2 PA ({{ fleeRate }}% chance)</button>
                       <button :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
                         :disabled="run.combat.actor !== 'player'" type="button" @click.prevent="endTurnAction">
                         Fin du tour
@@ -4268,6 +4498,9 @@ onBeforeUnmount(() => {
                     <div class="battle-ap-spotlight">
                       <img src="/assets/Icons/dagger.png" alt="" />
                       <p class="battle-ap-label">PA : {{ activeCombatView.playerAp }} / {{ stats.ap }}</p>
+                    </div>
+                    <div v-if="run.metadata?.isTutorial && run.combat" class="tuto-tip-bubble">
+                      PA = Points d'Action. Attaque normale (2 PA), compétences (coût variable). Quand tu n'as plus de PA, clique <strong>Fin du tour</strong>.
                     </div>
                   </div>
 
@@ -4362,9 +4595,11 @@ onBeforeUnmount(() => {
       <div v-if="harvestResultModal" class="overlay-meta" @click="harvestResultModal = null">
         <article class="harvest-result-modal" @click.stop>
           <h3>Récolte : {{ harvestResultModal.resourceName }}</h3>
-          <ul v-if="harvestResultModal.gained.length">
-            <li v-for="entry in harvestResultModal.gained" :key="entry.material">
-              {{ entry.quantity }} × {{ MATERIAL_LABELS[entry.material] ?? entry.material }}
+          <ul v-if="harvestResultModal.gained.length" class="harvest-material-list">
+            <li v-for="entry in harvestResultModal.gained" :key="entry.material" class="material-row">
+              <span class="material-icon" :style="materialIconStyle(entry.material)"></span>
+              <span class="material-label">{{ MATERIAL_LABELS[entry.material] ?? entry.material }}</span>
+              <span class="material-qty">+{{ entry.quantity }}</span>
             </li>
           </ul>
           <p v-else class="harvest-result-empty">Rien de notable.</p>
@@ -4503,8 +4738,10 @@ onBeforeUnmount(() => {
           <section v-if="lootModal.materials?.length" class="loot-section">
             <h3 class="loot-section-title">Materiaux</h3>
             <ul class="loot-materials-list">
-              <li v-for="entry in lootModal.materials" :key="`loot-material-${entry.material}`">
-                {{ MATERIAL_LABELS[entry.material] ?? entry.material }} x{{ entry.quantity }}
+              <li v-for="entry in lootModal.materials" :key="`loot-material-${entry.material}`" class="material-row">
+                <span class="material-icon" :style="materialIconStyle(entry.material)"></span>
+                <span class="material-label">{{ MATERIAL_LABELS[entry.material] ?? entry.material }}</span>
+                <span class="material-qty">x{{ entry.quantity }}</span>
               </li>
             </ul>
           </section>
@@ -4686,7 +4923,9 @@ onBeforeUnmount(() => {
           <p>{{ portalConfirmModal.text }}</p>
           <div class="row-actions">
             <button class="primary" @click="confirmPortalMove">Prendre le portail</button>
-            <button class="secondary" @click="cancelPortalMove">Rester ici</button>
+            <button class="secondary" @click="run?.metadata?.isTutorial ? returnToMenuFromTutorial() : cancelPortalMove()">
+              {{ run?.metadata?.isTutorial ? 'Retour au menu' : 'Rester ici' }}
+            </button>
           </div>
         </article>
       </div>
@@ -4729,7 +4968,7 @@ onBeforeUnmount(() => {
             </template>
           </header>
           <div class="npc-actions">
-            <button v-if="currentNpc.role === 'lore'" @click="npcAction('lore')">Donne moi un indice</button>
+            <button v-if="currentNpc.role === 'lore' && !run.metadata?.isTutorial" @click="npcAction('lore')">Donne moi un indice</button>
             <button v-if="currentNpc.role === 'healer'" @click="npcAction('heal')">
               <span class="no-wrap-line">
                 Soin complet 55 <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />
@@ -4764,7 +5003,8 @@ onBeforeUnmount(() => {
                     Forger {{ recipe.name }} ({{ RARITIES[recipe.rarity].label }})
                     <small>{{ recipe.description }}</small>
                     <small v-for="cost in recipeRequirementEntries(recipe)" :key="`cost-${recipe.id}-${cost.material}`"
-                      :class="{ warning: !cost.enough }">
+                      :class="{ warning: !cost.enough }" class="craft-cost-row">
+                      <span class="material-icon material-icon-sm" :style="materialIconStyle(cost.material)"></span>
                       {{ cost.label }}: {{ cost.owned }}/{{ cost.needed }}
                     </small>
                   </button>
@@ -4943,6 +5183,63 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </section>
+
+    <!-- Tutorial NPC welcome dialogue (typewriter) -->
+    <div v-if="tutorialIntroModal" class="overlay-meta tuto-welcome-overlay" @click.self="handleTutorialWelcomeBtn">
+      <article class="meta-modal tuto-welcome-modal" @click.stop>
+        <div class="tuto-welcome-npc">
+          <div class="animated-avatar tuto-welcome-avatar">
+            <img class="animated-avatar-strip"
+              :src="TUTO_GUIDE_SPRITE"
+              alt="guide"
+              :style="animatedSpriteStripStyle(TUTO_GUIDE_SPRITE, 4, 2)" />
+          </div>
+          <div class="tuto-welcome-content">
+            <strong class="tuto-welcome-name">Guide Mystique</strong>
+            <div class="tuto-welcome-text" @click="skipTutorialWelcome">
+              <p>{{ tutorialWelcomeText }}<span v-if="tutorialTyping" class="tuto-cursor">|</span></p>
+            </div>
+          </div>
+        </div>
+        <div class="row-actions">
+          <button class="primary" @click="handleTutorialWelcomeBtn">
+            {{ tutorialTyping ? 'Passer ▶' : 'Commencer l\'exploration' }}
+          </button>
+        </div>
+      </article>
+    </div>
+
+    <!-- Tutorial contextual tip bubble -->
+    <Transition name="tuto-tip-slide">
+      <div v-if="tutorialTip && run?.metadata?.isTutorial && !run?.combat" class="tuto-tip-card">
+        <div class="tuto-tip-card-inner">
+          <div v-if="tutorialTip.icon.startsWith('/') && tutorialTip.icon.includes('Sheet')" class="tuto-tip-sprite-wrap">
+            <img :src="tutorialTip.icon" alt="" class="tuto-tip-sprite-img" />
+          </div>
+          <img v-else-if="tutorialTip.icon.startsWith('/')" class="tuto-tip-icon-img" :src="tutorialTip.icon" alt="" />
+          <span v-else class="tuto-tip-icon">{{ tutorialTip.icon }}</span>
+          <div>
+            <strong class="tuto-tip-title">{{ tutorialTip.title }}</strong>
+            <p class="tuto-tip-text">{{ tutorialTip.text }}</p>
+          </div>
+        </div>
+        <button class="tuto-tip-close" @click="dismissTutorialTip">✕</button>
+      </div>
+    </Transition>
+
+    <!-- Tutorial end modal (shows when completing the tutorial) -->
+    <div v-if="tutorialEndModal" class="overlay-meta" @click.self="tutorialEndModal = false">
+      <article class="meta-modal portal-confirm-modal" @click.stop>
+        <header>
+          <h2 style="color: #6dff9b">Tutoriel terminé !</h2>
+        </header>
+        <p>Bravo ! Tu as terminé la Chambre d'initiation et maîtrises les bases.<br>Que veux-tu faire maintenant ?</p>
+        <div class="row-actions">
+          <button class="primary" @click="startGameFromTutorial">Lancer la partie</button>
+          <button class="secondary" @click="returnToMenuFromTutorial">Menu principal</button>
+        </div>
+      </article>
+    </div>
   </main>
 </template>
 
@@ -5091,6 +5388,10 @@ button.secondary {
   background: linear-gradient(130deg, #3f4d57, #24343d);
 }
 
+button.tutorial-btn {
+  background: linear-gradient(130deg, #3d6a22, #1f4012);
+}
+
 .modal-close-btn {
   display: block;
   margin: 14px auto 0;
@@ -5129,7 +5430,6 @@ button.danger {
 
 .history-list,
 .progress-card ul,
-.materials ul,
 .inventory ul,
 .short-log ul,
 .meta-modal ul,
@@ -5138,6 +5438,50 @@ button.danger {
   padding-left: 16px;
   display: grid;
   gap: 6px;
+}
+
+.materials ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.material-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+}
+
+.material-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: block;
+  image-rendering: pixelated;
+  border-radius: 3px;
+}
+
+.material-icon-sm {
+  width: 22px;
+  height: 22px;
+}
+
+.material-label {
+  flex: 1;
+  font-size: 0.85rem;
+  color: #ccc;
+}
+
+.material-qty {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #e8d48b;
+  min-width: 24px;
+  text-align: right;
 }
 
 .hud {
@@ -5184,6 +5528,11 @@ button.danger {
   height: 18px;
   object-fit: contain;
   vertical-align: middle;
+}
+
+.hud-stat-vision {
+  color: #e8d87a;
+  font-weight: 600;
 }
 
 .hud-actions {
@@ -5946,6 +6295,12 @@ button.danger {
   z-index: 1;
 }
 
+.craft-cost-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .craft-recipes-list {
   display: grid;
   gap: 5px;
@@ -6113,6 +6468,155 @@ button.danger {
 .overlay-combat {
   background: rgba(1, 5, 10, 0.78);
   z-index: 40;
+  transition: background 0.6s ease;
+}
+.overlay-combat[data-actor="player"] {
+  background: rgba(4, 12, 34, 0.92);
+}
+.overlay-combat[data-actor="enemy"] {
+  background: rgba(30, 4, 4, 0.88);
+}
+
+.tuto-tip-bubble {
+  background: rgba(255, 220, 100, 0.1);
+  border: 1px solid rgba(255, 220, 100, 0.35);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  color: #ffd166;
+  margin-top: 6px;
+  line-height: 1.45;
+}
+.tuto-tip-turn {
+  margin-bottom: 4px;
+}
+
+.tuto-welcome-overlay {
+  z-index: 200;
+}
+.tuto-welcome-modal {
+  max-width: 480px;
+  padding: 16px;
+}
+.tuto-welcome-npc {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.tuto-welcome-avatar {
+  flex-shrink: 0;
+  width: 72px;
+  height: 72px;
+  border: 1px solid rgba(247, 204, 133, 0.3);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.tuto-welcome-content {
+  flex: 1;
+}
+.tuto-welcome-name {
+  display: block;
+  color: #ffd166;
+  font-size: 0.88rem;
+  margin-bottom: 8px;
+}
+.tuto-welcome-text {
+  min-height: 110px;
+  cursor: pointer;
+}
+.tuto-welcome-text p {
+  white-space: pre-line;
+  font-size: 0.85rem;
+  color: rgba(220, 207, 175, 0.9);
+  line-height: 1.55;
+  margin: 0;
+}
+.tuto-cursor {
+  display: inline-block;
+  animation: tuto-blink 0.65s step-end infinite;
+}
+@keyframes tuto-blink {
+  50% { opacity: 0; }
+}
+
+.tuto-tip-card {
+  position: fixed;
+  bottom: 72px;
+  right: 16px;
+  max-width: 270px;
+  background: rgba(6, 16, 26, 0.96);
+  border: 1px solid rgba(255, 220, 100, 0.38);
+  border-radius: 10px;
+  padding: 10px 12px;
+  z-index: 60;
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+.tuto-tip-card-inner {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex: 1;
+}
+.tuto-tip-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.tuto-tip-icon-img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  flex-shrink: 0;
+  image-rendering: pixelated;
+}
+.tuto-tip-sprite-wrap {
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.tuto-tip-sprite-img {
+  height: 32px;
+  width: auto;
+  image-rendering: pixelated;
+}
+.tuto-tip-title {
+  display: block;
+  color: #ffd166;
+  font-size: 0.84rem;
+  margin-bottom: 3px;
+}
+.tuto-tip-text {
+  color: rgba(220, 207, 175, 0.8);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  margin: 0;
+}
+.tuto-tip-close {
+  background: none;
+  border: none;
+  color: rgba(220, 207, 175, 0.45);
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.72rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.tuto-tip-close:hover {
+  color: rgba(220, 207, 175, 0.8);
+}
+.tuto-tip-slide-enter-active,
+.tuto-tip-slide-leave-active {
+  transition: all 0.3s ease;
+}
+.tuto-tip-slide-enter-from,
+.tuto-tip-slide-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
 }
 
 .combat-intro-overlay {
@@ -6208,6 +6712,15 @@ button.danger {
   background: linear-gradient(152deg, rgba(5, 18, 24, 0.98), rgba(48, 16, 10, 0.95));
   padding: 14px;
   box-shadow: 0 20px 44px rgba(0, 0, 0, 0.55);
+  transition: background 0.6s ease, border-color 0.6s ease;
+}
+.combat-modal.turn-player {
+  background: linear-gradient(152deg, rgba(5, 16, 36, 0.98), rgba(8, 22, 52, 0.96));
+  border-color: rgba(55, 95, 180, 0.45);
+}
+.combat-modal.turn-enemy {
+  background: linear-gradient(152deg, rgba(28, 5, 5, 0.98), rgba(42, 8, 8, 0.96));
+  border-color: rgba(180, 60, 60, 0.38);
 }
 
 .combat-modal-outro {
@@ -6366,6 +6879,10 @@ button.danger {
   display: grid;
   gap: 7px;
   min-width: 0;
+}
+
+.skills-panel-end-turn {
+  display: none;
 }
 
 .combat-actions-sub,
@@ -6798,6 +7315,20 @@ button.danger {
   animation: pulse-turn 1.3s ease-in-out infinite;
 }
 
+.combat-flee-desktop {
+  background: rgba(140, 40, 40, 0.28);
+  border: 1px solid rgba(210, 80, 80, 0.5);
+  color: #f0a8a8;
+  font-weight: 600;
+}
+.combat-flee-desktop:not(:disabled):hover {
+  background: rgba(170, 50, 50, 0.44);
+  border-color: rgba(230, 100, 100, 0.7);
+}
+.combat-flee-desktop:disabled {
+  opacity: 0.45;
+}
+
 @keyframes pulse-turn {
 
   0%,
@@ -7083,8 +7614,11 @@ button.danger {
 
 .harvest-result-modal ul {
   margin: 0 0 14px;
-  padding-left: 1.2em;
+  padding: 0;
   list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .harvest-result-modal ul li {
@@ -7299,10 +7833,13 @@ button.danger {
   border-radius: 8px;
   background: rgba(12, 28, 36, 0.5);
   border: 1px solid rgba(247, 204, 133, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .loot-materials-list li {
-  padding: 0.2rem 0;
+  padding: 0.1rem 0;
   font-size: 0.88rem;
 }
 
@@ -8163,10 +8700,14 @@ button.danger {
   }
 
   .mobile-menu-flee {
-    background: rgba(160, 50, 50, 0.2);
-    border-color: rgba(200, 80, 80, 0.35);
-    color: #e8a0a0;
+    background: rgba(160, 50, 50, 0.32);
+    border-color: rgba(220, 90, 90, 0.55);
+    color: #f0b0b0;
     min-height: 46px;
+    font-weight: 600;
+  }
+  .mobile-menu-flee:not(:disabled):hover {
+    background: rgba(180, 60, 60, 0.48);
   }
 
   /* Bouton retour */
@@ -8227,6 +8768,17 @@ button.danger {
   }
   .combat-actions-panel[data-mobile-panel="skills"] .panel-title {
     display: none;
+  }
+  .combat-actions-panel[data-mobile-panel="skills"] .skills-panel-end-turn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 48px;
+    flex-shrink: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border-radius: 10px;
   }
 
   /* --- Sous-panneau : Actions --- */
@@ -8298,6 +8850,19 @@ button.danger {
     gap: 6px;
     min-height: 0;
     overflow: hidden;
+    position: relative;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .combat-inventory-sub::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 52px;
+    background: linear-gradient(to bottom, transparent, rgba(10, 18, 26, 0.92));
+    pointer-events: none;
+    z-index: 2;
+    border-radius: 0 0 8px 8px;
   }
   .combat-actions-panel[data-mobile-panel="inventory"] .panel-title {
     display: none;
@@ -8329,10 +8894,15 @@ button.danger {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    flex: 1;
-    min-height: 0;
+    max-height: 190px;
     overflow-y: auto;
+    overflow-x: hidden;
     scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding-bottom: 18px;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid::-webkit-scrollbar {
+    display: none;
   }
   .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid-btn {
     min-height: 52px;
@@ -8677,6 +9247,36 @@ button.danger {
     font-size: 1.55rem;
     border-radius: 12px;
     padding: 0;
+  }
+
+  .mobile-materials {
+    width: 320px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 12px;
+    padding: 8px 6px 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    margin-top: 4px;
+  }
+
+  .mobile-material-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .mobile-material-label {
+    flex: 1;
+    font-size: 0.68rem;
+    color: #aaa;
+  }
+
+  .mobile-material-qty {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #e8d48b;
+    min-width: 18px;
+    text-align: right;
   }
 }
 
