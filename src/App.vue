@@ -5020,7 +5020,13 @@ onBeforeUnmount(() => {
                   <button
                     v-for="recipe in RECIPES.filter(r => craftFilter === 'all' || r.result.kind === craftFilter || r.result.slot === craftFilter)"
                     :key="recipe.id" :disabled="!canCraftRecipe(recipe)" @click="npcAction('craft', recipe.id)">
-                    Forger {{ recipe.name }} ({{ RARITIES[recipe.rarity].label }})
+                    <span class="craft-recipe-header">
+                      <img v-if="recipe.result.icon" :src="recipe.result.icon" alt="" class="craft-recipe-icon" />
+                      <span class="craft-recipe-name" :style="{ color: rarityColor(recipe.rarity) }">
+                        {{ recipe.name }}
+                        <span class="craft-recipe-rarity">({{ RARITIES[recipe.rarity].label }})</span>
+                      </span>
+                    </span>
                     <small>{{ recipe.description }}</small>
                     <small v-for="cost in recipeRequirementEntries(recipe)" :key="`cost-${recipe.id}-${cost.material}`"
                       :class="{ warning: !cost.enough }" class="craft-cost-row">
@@ -6326,6 +6332,34 @@ button.danger {
   display: flex;
   align-items: center;
   gap: 5px;
+}
+
+.craft-recipe-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.craft-recipe-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.craft-recipe-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+  flex: 1;
+}
+
+.craft-recipe-rarity {
+  font-weight: 400;
+  font-size: 0.78rem;
+  opacity: 0.8;
 }
 
 .craft-recipes-list {
