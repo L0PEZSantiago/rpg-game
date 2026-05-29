@@ -215,7 +215,7 @@ export const CONSUMABLES_SHOP = [
     name: 'Torche runique',
     price: 65,
     effect: 'vision_boost',
-    description: 'Augmente la visibilite pour 30 pas.',
+    description: '+1 case de vision pendant 14 pas.',
     stock: 2,
   },
 ]

@@ -990,7 +990,9 @@ export function isTileDiscovered(run, mapId, x, y) {
   if (isHardcoreFog(run) && mapId === run.world?.currentMapId) {
     const px = run.world.playerPosition?.x ?? 0
     const py = run.world.playerPosition?.y ?? 0
-    return Math.max(Math.abs(x - px), Math.abs(y - py)) <= 1
+    const boost = run.player?.visionBoostSteps ?? 0
+    const visRadius = boost > 0 ? 2 : 1
+    return Math.max(Math.abs(x - px), Math.abs(y - py)) <= visRadius
   }
   return ensureMapState(run, mapId).discovered.includes(toKey(x, y))
 }
@@ -999,9 +1001,10 @@ export function revealAround(run, mapId, x, y, radius = 2) {
   const map = currentMapById(mapId)
   const mapState = ensureMapState(run, mapId)
   if (isHardcoreFog(run)) {
+    const r = radius
     const keys = []
-    for (let dy = -1; dy <= 1; dy += 1) {
-      for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dy = -r; dy <= r; dy += 1) {
+      for (let dx = -r; dx <= r; dx += 1) {
         const tx = x + dx
         const ty = y + dy
         if (tx >= 0 && ty >= 0 && tx < map.width && ty < map.height) {
@@ -1838,7 +1841,7 @@ export function attemptMove(run, dx, dy, options = {}) {
 
   run.world.playerPosition = { x: nx, y: ny }
   const visionBoost = run.player.visionBoostSteps ?? 0
-  revealAround(run, map.id, nx, ny, visionBoost > 0 ? 4 : 2)
+  revealAround(run, map.id, nx, ny, visionBoost > 0 ? 3 : 2)
   if (visionBoost > 0) {
     run.player.visionBoostSteps = visionBoost - 1
   }
@@ -3308,8 +3311,8 @@ function applyConsumable(run, effect, itemRarity = null) {
     return true
   }
   if (effect === 'vision_boost') {
-    run.player.visionBoostSteps = (run.player.visionBoostSteps ?? 0) + 30
-    appendLog(run, 'Torche runique: visibilite augmentee pour 30 pas.')
+    run.player.visionBoostSteps = (run.player.visionBoostSteps ?? 0) + 14
+    appendLog(run, 'Torche runique : champ de vision élargi pour 14 pas.')
     return true
   }
   return false
