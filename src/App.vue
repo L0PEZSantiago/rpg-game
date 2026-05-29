@@ -97,6 +97,7 @@ const riddleModal = ref(null)
 const riddleFeedbackModal = ref(null)
 const lootModal = ref(null)
 const chestEvent = ref(null)
+const combatMobilePanel = ref(/** @type {null|'skills'|'actions'|'inventory'} */(null))
 let chestEventTimer = null
 const challengeModal = ref(/** @type {{ npcId: string, npcName: string, result: null | { won: boolean, playerRoll: number, npcRoll: number, gold: number, xp: number, penalty: number } } | null} */(null))
 const wanderingMerchantModal = ref(/** @type {{ npcId: string, npcName: string, portrait: string } | null} */(null))
@@ -1745,6 +1746,7 @@ watch(
     lastCombatTopLog.value = run.value?.eventLog?.[0] ?? ''
     lastPlayerDeaths.value = run.value?.player?.deaths ?? 0
     combatIntroActive.value = true
+    combatMobilePanel.value = null
     if (combatIntroTimer) window.clearTimeout(combatIntroTimer)
     combatIntroTimer = window.setTimeout(closeCombatIntro, 2800)
   },
@@ -4116,8 +4118,35 @@ onBeforeUnmount(() => {
           </header>
 
           <div class="combat-modal-body">
-            <section class="combat-actions-panel">
+            <section class="combat-actions-panel" :data-mobile-panel="combatMobilePanel ?? 'menu'">
               <template v-if="run.combat">
+
+                <!-- MENU PRINCIPAL MOBILE -->
+                <div class="combat-mobile-menu">
+                  <button class="mobile-menu-btn" @click="combatMobilePanel = 'skills'">
+                    <img src="/assets/Icons/skills.png" alt="" />
+                    <span>Compétences</span>
+                  </button>
+                  <button class="mobile-menu-btn mobile-menu-attack" :disabled="!normalAttackReady()" @click="useNormalAttack">
+                    <img src="/assets/Icons/sword.png" alt="" />
+                    <span>Attaque (2 PA)</span>
+                  </button>
+                  <button class="mobile-menu-btn" @click="combatMobilePanel = 'inventory'">
+                    <img src="/assets/Icons/potion.png" alt="" />
+                    <span>Inventaire</span>
+                  </button>
+                  <button class="mobile-menu-btn mobile-menu-endturn" :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }" :disabled="run.combat.actor !== 'player'" @click.prevent="endTurnAction">
+                    <span>Fin du tour</span>
+                  </button>
+                  <button class="mobile-menu-btn mobile-menu-flee" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">
+                    <span>Fuir ({{ fleeRate }}%)</span>
+                  </button>
+                </div>
+
+                <!-- BOUTON RETOUR MOBILE -->
+                <button class="combat-mobile-back" @click="combatMobilePanel = null">← Retour</button>
+
+                <!-- COMPÉTENCES -->
                 <div class="combat-skills-block">
                   <h3 class="panel-title">
                     <img src="/assets/Icons/skills.png" alt="" />
@@ -4145,50 +4174,54 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
+                <!-- ACTIONS + INVENTAIRE -->
                 <div class="combat-command-block">
-                  <h3 class="panel-title">
-                    <img src="/assets/Icons/sword.png" alt="" />
-                    Actions
-                  </h3>
-                  <div class="combat-actions-row">
-                    <button :disabled="!normalAttackReady()" @click="useNormalAttack">
-                      Attaque (2 PA)<kbd></kbd>
-                    </button>
-                    <button :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate
-                    }}%)</button>
-                    <button :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
-                      :disabled="run.combat.actor !== 'player'" type="button" @click.prevent="endTurnAction">
-                      Fin du tour
-                    </button>
+                  <div class="combat-actions-sub">
+                    <h3 class="panel-title">
+                      <img src="/assets/Icons/sword.png" alt="" />
+                      Actions
+                    </h3>
+                    <div class="combat-actions-row">
+                      <button :disabled="!normalAttackReady()" @click="useNormalAttack">
+                        Attaque (2 PA)<kbd></kbd>
+                      </button>
+                      <button class="combat-flee-desktop" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir ({{ fleeRate }}%)</button>
+                      <button :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
+                        :disabled="run.combat.actor !== 'player'" type="button" @click.prevent="endTurnAction">
+                        Fin du tour
+                      </button>
+                    </div>
                   </div>
 
-                  <h3 class="panel-title">
-                    <img src="/assets/Icons/potion.png" alt="" />
-                    Inventaire combat
-                  </h3>
-                  <div class="consumable-tabs">
-                    <button v-for="group in combatConsumableGroups" :key="`combat-consumable-tab-${group.id}`"
-                      class="consumable-tab" :class="{ active: combatActiveConsumableGroup?.id === group.id }"
-                      @click="selectCombatConsumableTab(group.id)">
-                      <img :src="group.icon" alt="" />
-                      <span>{{ group.label }}</span>
-                      <small>{{ group.items.length }}</small>
-                    </button>
-                  </div>
-                  <div class="potions-grid">
-                    <button v-for="item in combatActiveConsumableGroup?.items ?? []" :key="item.id"
-                      class="potions-grid-btn" :disabled="!canUseConsumable(item)"
-                      :title="consumableDisableReason(item)" @click="consumeItem(item.id)"
-                      @mouseenter="markInventoryItemSeen(item.id)">
-                      <img class="potions-grid-icon" :src="itemIcon(item)" alt="" />
-                      <span class="potions-grid-body">
-                        <span class="potions-grid-name" :style="{ color: rarityColor(item.rarity) }">{{ item.name }} x{{
-                          item.quantity }}</span>
-                        <span class="consumable-effect">{{ consumableDescription(item.effect, item) }}</span>
-                      </span>
-                      <span class="potions-grid-cost">2 PA</span>
-                    </button>
-                    <p v-if="!(combatActiveConsumableGroup?.items.length ?? 0)">Aucun objet dans cet onglet.</p>
+                  <div class="combat-inventory-sub">
+                    <h3 class="panel-title">
+                      <img src="/assets/Icons/potion.png" alt="" />
+                      Inventaire combat
+                    </h3>
+                    <div class="consumable-tabs">
+                      <button v-for="group in combatConsumableGroups" :key="`combat-consumable-tab-${group.id}`"
+                        class="consumable-tab" :class="{ active: combatActiveConsumableGroup?.id === group.id }"
+                        @click="selectCombatConsumableTab(group.id)">
+                        <img :src="group.icon" alt="" />
+                        <span>{{ group.label }}</span>
+                        <small>{{ group.items.length }}</small>
+                      </button>
+                    </div>
+                    <div class="potions-grid">
+                      <button v-for="item in combatActiveConsumableGroup?.items ?? []" :key="item.id"
+                        class="potions-grid-btn" :disabled="!canUseConsumable(item)"
+                        :title="consumableDisableReason(item)" @click="consumeItem(item.id)"
+                        @mouseenter="markInventoryItemSeen(item.id)">
+                        <img class="potions-grid-icon" :src="itemIcon(item)" alt="" />
+                        <span class="potions-grid-body">
+                          <span class="potions-grid-name" :style="{ color: rarityColor(item.rarity) }">{{ item.name }} x{{
+                            item.quantity }}</span>
+                          <span class="consumable-effect">{{ consumableDescription(item.effect, item) }}</span>
+                        </span>
+                        <span class="potions-grid-cost">2 PA</span>
+                      </button>
+                      <p v-if="!(combatActiveConsumableGroup?.items.length ?? 0)">Aucun objet dans cet onglet.</p>
+                    </div>
                   </div>
                 </div>
 
@@ -6335,6 +6368,16 @@ button.danger {
   min-width: 0;
 }
 
+.combat-actions-sub,
+.combat-inventory-sub {
+  display: contents;
+}
+
+.combat-mobile-menu,
+.combat-mobile-back {
+  display: none;
+}
+
 .skill-btn-name {
   display: block;
 }
@@ -8058,14 +8101,13 @@ button.danger {
     opacity: 0.62;
   }
 
+  /* === COMBAT ACTIONS PANEL — menu mobile === */
   .combat-actions-panel {
     order: 3;
-    display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(126px, 0.8fr);
-    grid-template-areas: "skills commands";
-    align-items: stretch;
-    gap: 6px;
+    display: flex;
+    flex-direction: column;
     padding: 6px;
+    gap: 6px;
     overflow: hidden;
   }
 
@@ -8075,109 +8117,253 @@ button.danger {
     overflow: hidden;
   }
 
-  .combat-skills-block {
-    grid-area: skills;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 4px;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .combat-command-block {
-    grid-area: commands;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-height: 0;
-    overflow: hidden;
-    position: relative;
-  }
-
-  .combat-command-block:has(.potions-grid > button)::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 28px;
-    background: linear-gradient(to bottom, transparent, rgba(10, 20, 28, 0.92));
-    pointer-events: none;
-    z-index: 1;
-  }
-
-  .combat-actions-panel .panel-title {
-    margin: 0;
-    gap: 4px;
-    font-size: 0.68rem;
-    line-height: 1.1;
-  }
-
-  .combat-actions-panel .panel-title img {
-    width: 13px;
-    height: 13px;
-  }
-
-  .combat-actions-row,
-  .skills-grid,
-  .potions-grid {
-    display: grid;
-    gap: 4px;
-    min-height: 0;
-  }
-
-  .combat-actions-row>button,
-  .skills-grid>button,
-  .potions-grid>button {
-    width: 100%;
-  }
-
-  .combat-actions-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .combat-actions-row button {
-    min-height: 44px;
-    padding: 6px 8px;
-    font-size: 0.78rem;
-    line-height: 1.2;
-  }
-
-  .combat-actions-row .end-turn-btn {
-    grid-column: 1 / -1;
-  }
-
-  .skills-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-rows: auto;
-    align-content: start;
-  }
-
-  .skills-grid button {
-    min-height: 58px;
-    padding: 5px;
-    font-size: 0.7rem;
-    line-height: 1.1;
-    overflow: hidden;
-  }
-
-  .skills-grid small {
+  /* Par défaut sur mobile : tout caché sauf le menu principal */
+  .combat-skills-block,
+  .combat-command-block,
+  .combat-mobile-back {
     display: none;
   }
 
-  .skill-btn-name,
-  .skill-btn-cost {
-    display: block;
+  /* Menu principal */
+  .combat-mobile-menu {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    flex: 1;
+    align-content: center;
   }
 
-  .skill-btn-cost {
-    margin-top: 2px;
-    font-size: 0.58rem;
-    line-height: 1.05;
+  .mobile-menu-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 74px;
+    padding: 12px 8px;
+    font-size: 0.92rem;
+    font-weight: 600;
+    border-radius: 10px;
+    width: 100%;
+    line-height: 1.2;
+  }
+
+  .mobile-menu-btn img {
+    width: 22px;
+    height: 22px;
+    object-fit: contain;
+  }
+
+  .mobile-menu-endturn,
+  .mobile-menu-flee {
+    grid-column: 1 / -1;
+    min-height: 54px;
+    flex-direction: row;
+    gap: 6px;
+  }
+
+  .mobile-menu-flee {
+    background: rgba(160, 50, 50, 0.2);
+    border-color: rgba(200, 80, 80, 0.35);
+    color: #e8a0a0;
+    min-height: 46px;
+  }
+
+  /* Bouton retour */
+  .combat-mobile-back {
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    font-size: 0.82rem;
+    min-height: 40px;
+    flex-shrink: 0;
+    width: 100%;
+    border-radius: 8px;
+  }
+
+  /* --- Sous-panneau : Compétences --- */
+  .combat-actions-panel[data-mobile-panel="skills"] .combat-mobile-menu {
+    display: none;
+  }
+  .combat-actions-panel[data-mobile-panel="skills"] .combat-mobile-back {
+    display: flex;
+  }
+  .combat-actions-panel[data-mobile-panel="skills"] .combat-skills-block {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 6px;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .combat-actions-panel[data-mobile-panel="skills"] .skills-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    flex: 1;
+    align-content: start;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .combat-actions-panel[data-mobile-panel="skills"] .skills-grid button {
+    min-height: 72px;
+    padding: 10px 8px;
+    font-size: 0.82rem;
+    line-height: 1.2;
+    overflow: hidden;
+  }
+  .combat-actions-panel[data-mobile-panel="skills"] .skills-grid small {
+    display: none;
+  }
+  .combat-actions-panel[data-mobile-panel="skills"] .skill-btn-name,
+  .combat-actions-panel[data-mobile-panel="skills"] .skill-btn-cost {
+    display: block;
+  }
+  .combat-actions-panel[data-mobile-panel="skills"] .skill-btn-cost {
+    margin-top: 3px;
+    font-size: 0.65rem;
     color: #d6c6a2;
     opacity: 0.86;
   }
+  .combat-actions-panel[data-mobile-panel="skills"] .panel-title {
+    display: none;
+  }
 
+  /* --- Sous-panneau : Actions --- */
+  .combat-actions-panel[data-mobile-panel="actions"] .combat-mobile-menu {
+    display: none;
+  }
+  .combat-actions-panel[data-mobile-panel="actions"] .combat-mobile-back {
+    display: flex;
+  }
+  .combat-actions-panel[data-mobile-panel="actions"] .combat-command-block {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 8px;
+    min-height: 0;
+  }
+  .combat-actions-panel[data-mobile-panel="actions"] .combat-actions-sub {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 8px;
+  }
+  .combat-actions-panel[data-mobile-panel="actions"] .combat-inventory-sub {
+    display: none;
+  }
+  .combat-actions-panel[data-mobile-panel="actions"] .combat-flee-desktop {
+    display: none;
+  }
+  .combat-actions-panel[data-mobile-panel="actions"] .combat-actions-row {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+  }
+  .combat-actions-panel[data-mobile-panel="actions"] .combat-actions-row button {
+    flex: 1;
+    min-height: 62px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 10px;
+    width: 100%;
+  }
+  .combat-actions-panel[data-mobile-panel="actions"] .panel-title {
+    display: none;
+  }
+
+  /* --- Sous-panneau : Inventaire --- */
+  .combat-actions-panel[data-mobile-panel="inventory"] .combat-mobile-menu {
+    display: none;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .combat-mobile-back {
+    display: flex;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .combat-command-block {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 6px;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .combat-actions-sub {
+    display: none;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .combat-inventory-sub {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 6px;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .panel-title {
+    display: none;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .consumable-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .consumable-tab {
+    min-height: 44px;
+    padding: 6px;
+    gap: 4px;
+    flex-direction: column;
+    font-size: 0.72rem;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .consumable-tab img {
+    width: 18px;
+    height: 18px;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .consumable-tab span {
+    display: block;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .consumable-tab small {
+    font-size: 0.62rem;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid-btn {
+    min-height: 52px;
+    padding: 8px 10px;
+    gap: 8px;
+    flex-shrink: 0;
+    border-radius: 8px;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid-icon {
+    width: 24px;
+    height: 24px;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid-name {
+    font-size: 0.78rem;
+    line-height: 1.1;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid .consumable-effect {
+    display: block;
+    font-size: 0.68rem;
+    opacity: 0.75;
+    margin-top: 2px;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid-cost {
+    font-size: 0.72rem;
+  }
+  .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid p {
+    margin: 0;
+    font-size: 0.78rem;
+  }
+
+  /* Scène de combat */
   .battle-stage {
     height: 100%;
     min-height: 0;
@@ -8186,78 +8372,6 @@ button.danger {
     gap: 5px;
     padding: 6px;
     border-radius: 8px;
-  }
-
-  .consumable-tabs {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 4px;
-    margin-bottom: 0;
-  }
-
-  .consumable-tab {
-    min-height: 28px;
-    padding: 3px;
-    gap: 2px;
-  }
-
-  .consumable-tab img {
-    width: 13px;
-    height: 13px;
-  }
-
-  .consumable-tab span {
-    display: none;
-  }
-
-  .consumable-tab small {
-    font-size: 0.6rem;
-  }
-
-  .potions-grid {
-    grid-template-columns: 1fr;
-    align-content: start;
-    max-height: 80px;
-    overflow-y: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-
-  .potions-grid::-webkit-scrollbar {
-    display: none;
-  }
-
-  .potions-grid-btn {
-    min-height: 42px;
-    padding: 5px 6px;
-    gap: 4px;
-  }
-
-  .potions-grid-icon {
-    width: 16px;
-    height: 16px;
-  }
-
-  .potions-grid-name {
-    font-size: 0.64rem;
-    line-height: 1.05;
-  }
-
-  .potions-grid .consumable-effect {
-    display: block;
-    font-size: 0.58rem;
-    opacity: 0.75;
-    line-height: 1.1;
-    margin-top: 1px;
-  }
-
-  .potions-grid-cost {
-    font-size: 0.58rem;
-  }
-
-  .potions-grid p {
-    margin: 0;
-    font-size: 0.68rem;
   }
 
   .battle-scene-topline {
