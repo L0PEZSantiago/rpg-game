@@ -672,6 +672,8 @@ function updateInventoryTooltipFromEvent(event) {
   }
 }
 
+let tooltipShownAt = 0
+
 function showInventoryItemTooltip(item, event = null) {
   if (!item?.id) {
     hideInventoryItemTooltip()
@@ -684,6 +686,7 @@ function showInventoryItemTooltip(item, event = null) {
   }
   hoveredInventoryItemId.value = item.id
   inventoryTooltip.visible = true
+  tooltipShownAt = Date.now()
   updateInventoryTooltipFromEvent(event)
 }
 
@@ -703,6 +706,7 @@ function showMerchantItemTooltip(item, event = null) {
   if (item?.kind !== 'equipment') return
   hoveredMerchantItem.value = item
   inventoryTooltip.visible = true
+  tooltipShownAt = Date.now()
   updateInventoryTooltipFromEvent(event)
 }
 
@@ -3804,7 +3808,15 @@ function keyHandler(event) {
   }
 }
 
+function onDocumentTouchStart() {
+  if (inventoryTooltip.visible && Date.now() - tooltipShownAt > 200) {
+    hideInventoryItemTooltip()
+    hideMerchantItemTooltip()
+  }
+}
+
 onMounted(async () => {
+  document.addEventListener('touchstart', onDocumentTouchStart, { passive: true })
   try {
     await initDatabase()
     dbReady.value = true
@@ -3825,6 +3837,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  document.removeEventListener('touchstart', onDocumentTouchStart)
   window.removeEventListener('keydown', keyHandler)
   if (combatIntroTimer) {
     window.clearTimeout(combatIntroTimer)
@@ -5210,11 +5223,6 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <!-- Mobile tooltip dismiss overlay -->
-    <div v-if="inventoryTooltip.visible" class="tooltip-dismiss-overlay"
-      @touchstart.prevent="hideInventoryItemTooltip(); hideMerchantItemTooltip()"
-      @click="hideInventoryItemTooltip(); hideMerchantItemTooltip()"></div>
-
     <!-- Tutorial NPC welcome dialogue (typewriter) -->
     <div v-if="tutorialIntroModal" class="overlay-meta tuto-welcome-overlay">
       <article class="meta-modal tuto-welcome-modal" @click.stop>
@@ -6462,19 +6470,6 @@ button.danger {
   pointer-events: none;
 }
 
-.tooltip-dismiss-overlay {
-  display: none;
-}
-
-@media (max-width: 760px) {
-  .tooltip-dismiss-overlay {
-    display: block;
-    position: fixed;
-    inset: 0;
-    z-index: 119;
-    background: transparent;
-  }
-}
 
 .compare-title {
   margin: 0;
