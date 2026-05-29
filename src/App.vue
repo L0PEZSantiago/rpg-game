@@ -4383,7 +4383,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <!-- BOUTON RETOUR MOBILE -->
-                <button class="combat-mobile-back" @click="combatMobilePanel = null">← Retour</button>
+                <button class="combat-mobile-back" @click="combatMobilePanel = null">←</button>
 
                 <!-- COMPÉTENCES -->
                 <div class="combat-skills-block">
@@ -8841,12 +8841,18 @@ button.danger {
   .combat-mobile-back {
     align-items: center;
     gap: 6px;
-    padding: 8px 12px;
+    padding: 8px 14px;
     font-size: 0.82rem;
+    font-weight: 700;
     min-height: 40px;
     flex-shrink: 0;
-    width: 100%;
+    width: fit-content;
+    padding: 8px 18px;
     border-radius: 8px;
+    background: rgba(30, 50, 80, 0.55);
+    border: 1px solid rgba(100, 150, 220, 0.45);
+    color: #90bfff;
+    font-size: 1.1rem;
   }
 
   /* --- Sous-panneau : Compétences --- */
