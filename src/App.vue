@@ -5021,7 +5021,7 @@ onBeforeUnmount(() => {
                     v-for="recipe in RECIPES.filter(r => craftFilter === 'all' || r.result.kind === craftFilter || r.result.slot === craftFilter)"
                     :key="recipe.id" :disabled="!canCraftRecipe(recipe)" @click="npcAction('craft', recipe.id)">
                     <span class="craft-recipe-header">
-                      <img v-if="recipe.result.icon" :src="recipe.result.icon" alt="" class="craft-recipe-icon" />
+                      <img :src="itemIcon(recipe.result)" alt="" class="craft-recipe-icon" />
                       <span class="craft-recipe-name" :style="{ color: rarityColor(recipe.rarity) }">
                         {{ recipe.name }}
                         <span class="craft-recipe-rarity">({{ RARITIES[recipe.rarity].label }})</span>
