@@ -5210,6 +5210,11 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <!-- Mobile tooltip dismiss overlay -->
+    <div v-if="inventoryTooltip.visible" class="tooltip-dismiss-overlay"
+      @touchstart.prevent="hideInventoryItemTooltip(); hideMerchantItemTooltip()"
+      @click="hideInventoryItemTooltip(); hideMerchantItemTooltip()"></div>
+
     <!-- Tutorial NPC welcome dialogue (typewriter) -->
     <div v-if="tutorialIntroModal" class="overlay-meta tuto-welcome-overlay">
       <article class="meta-modal tuto-welcome-modal" @click.stop>
@@ -6455,6 +6460,20 @@ button.danger {
   position: fixed;
   z-index: 120;
   pointer-events: none;
+}
+
+.tooltip-dismiss-overlay {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .tooltip-dismiss-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 119;
+    background: transparent;
+  }
 }
 
 .compare-title {
