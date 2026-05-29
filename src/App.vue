@@ -2822,15 +2822,15 @@ function startNewGame() {
 
 const TUTO_GUIDE_SPRITE = "/assets/Entities/Npc's/Wizzard/Idle/Idle-Sheet.png"
 
-const TUTORIAL_WELCOME =
-  'Bienvenue, aventurier ! Je suis le Guide Mystique, gardien de cette chambre d\'initiation.\n\n' +
-  'Explore les environs : des ressources à récolter, des coffres à ouvrir, et des ennemis qui patrouillent. ' +
-  'Approche-toi des objets ou appuie sur E pour interagir.\n\n' +
-  'Les ennemis apparaissent en rouge sur la carte et ont une portée d\'agro — approche-toi trop près et le combat s\'enclenche ! ' +
-  'En combat, dépense tes PA (Points d\'Action) pour agir à chaque tour.\n\n' +
-  'Le portail de sortie est verrouillé tant que le boss vit. Vaincs le Gardien du sceau pour l\'activer. Bonne chance !'
+const TUTORIAL_WELCOME_PAGES = [
+  'Bienvenue, aventurier ! Je suis le Guide Mystique, gardien de cette chambre d\'initiation.',
+  'Explore les environs : des ressources à récolter, des coffres à ouvrir, et des ennemis qui patrouillent. Approche-toi des objets ou appuie sur E pour interagir.',
+  'Les ennemis apparaissent en rouge sur la carte et ont une portée d\'agro — approche-toi trop près et le combat s\'enclenche ! En combat, dépense tes PA (Points d\'Action) pour agir à chaque tour.',
+  'Le portail de sortie est verrouillé tant que le boss vit. Vaincs le Gardien du sceau pour l\'activer. Bonne chance !',
+]
 
 const tutorialWelcomeText = ref('')
+const tutorialWelcomePage = ref(0)
 const tutorialTyping = ref(false)
 let tutorialWelcomeTimer = null
 
@@ -2838,12 +2838,13 @@ const tutorialTip = ref(null)
 const tutorialShownTips = reactive({ chest: false, resource: false, npc: false, portal: false })
 
 function startTutorialTypewriter() {
+  const page = TUTORIAL_WELCOME_PAGES[tutorialWelcomePage.value]
   tutorialWelcomeText.value = ''
   tutorialTyping.value = true
   let i = 0
   tutorialWelcomeTimer = setInterval(() => {
-    if (i < TUTORIAL_WELCOME.length) {
-      tutorialWelcomeText.value += TUTORIAL_WELCOME[i]
+    if (i < page.length) {
+      tutorialWelcomeText.value += page[i]
       i++
     } else {
       clearInterval(tutorialWelcomeTimer)
@@ -2859,14 +2860,29 @@ function skipTutorialWelcome() {
     tutorialWelcomeTimer = null
     tutorialTyping.value = false
   }
-  tutorialWelcomeText.value = TUTORIAL_WELCOME
+  tutorialWelcomeText.value = TUTORIAL_WELCOME_PAGES[tutorialWelcomePage.value]
+}
+
+function skipAllTutorialWelcome() {
+  if (tutorialWelcomeTimer) {
+    clearInterval(tutorialWelcomeTimer)
+    tutorialWelcomeTimer = null
+    tutorialTyping.value = false
+  }
+  tutorialIntroModal.value = false
 }
 
 function handleTutorialWelcomeBtn() {
   if (tutorialTyping.value) {
     skipTutorialWelcome()
-  } else {
+    return
+  }
+  const isLast = tutorialWelcomePage.value >= TUTORIAL_WELCOME_PAGES.length - 1
+  if (isLast) {
     tutorialIntroModal.value = false
+  } else {
+    tutorialWelcomePage.value++
+    startTutorialTypewriter()
   }
 }
 
@@ -2947,6 +2963,7 @@ function startTutorial() {
   tutorialShownTips.npc = false
   tutorialShownTips.portal = false
   tutorialTip.value = null
+  tutorialWelcomePage.value = 0
   tutorialIntroModal.value = true
   startTutorialTypewriter()
 }
@@ -4349,15 +4366,11 @@ onBeforeUnmount(() => {
 
                 <!-- MENU PRINCIPAL MOBILE -->
                 <div class="combat-mobile-menu">
-                  <button class="mobile-menu-btn" @click="combatMobilePanel = 'skills'">
+                  <button class="mobile-menu-btn mobile-menu-skills" @click="combatMobilePanel = 'skills'">
                     <img src="/assets/Icons/skills.png" alt="" />
                     <span>Compétences</span>
                   </button>
-                  <button class="mobile-menu-btn mobile-menu-attack" :disabled="!normalAttackReady()" @click="useNormalAttack">
-                    <img src="/assets/Icons/sword.png" alt="" />
-                    <span>Attaque (2 PA)</span>
-                  </button>
-                  <button class="mobile-menu-btn" @click="combatMobilePanel = 'inventory'">
+                  <button class="mobile-menu-btn mobile-menu-inventory" @click="combatMobilePanel = 'inventory'">
                     <img src="/assets/Icons/potion.png" alt="" />
                     <span>Inventaire</span>
                   </button>
@@ -4365,7 +4378,7 @@ onBeforeUnmount(() => {
                     <span>Fin du tour</span>
                   </button>
                   <button class="mobile-menu-btn mobile-menu-flee" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">
-                    <span>Fuir 2 PA ({{ fleeRate }}%)</span>
+                    <span>Fuir - 2 PA ({{ fleeRate }}%)</span>
                   </button>
                 </div>
 
@@ -4415,11 +4428,13 @@ onBeforeUnmount(() => {
                       <button :disabled="!normalAttackReady()" @click="useNormalAttack">
                         Attaque (2 PA)<kbd></kbd>
                       </button>
-                      <button class="combat-flee-desktop" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir 2 PA ({{ fleeRate }}% chance)</button>
-                      <button :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
-                        :disabled="run.combat.actor !== 'player'" type="button" @click.prevent="endTurnAction">
-                        Fin du tour
-                      </button>
+                      <div class="combat-endturn-flee-row">
+                        <button :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
+                          :disabled="run.combat.actor !== 'player'" type="button" @click.prevent="endTurnAction">
+                          Fin du tour
+                        </button>
+                        <button class="combat-flee-desktop" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir — 2 PA ({{ fleeRate }}%)</button>
+                      </div>
                     </div>
                   </div>
 
@@ -4463,6 +4478,12 @@ onBeforeUnmount(() => {
               </template>
             </section>
 
+            <button v-if="run.combat" class="combat-attack-standalone"
+              :disabled="!normalAttackReady()" @click="useNormalAttack">
+              <img src="/assets/Icons/sword.png" alt="" />
+              <span>Attaque (2 PA)</span>
+            </button>
+
             <section class="combat-scene-panel">
               <div class="battle-stage" :style="combatSceneStyle">
                 <div class="battle-scene-topline">
@@ -4498,9 +4519,6 @@ onBeforeUnmount(() => {
                     <div class="battle-ap-spotlight">
                       <img src="/assets/Icons/dagger.png" alt="" />
                       <p class="battle-ap-label">PA : {{ activeCombatView.playerAp }} / {{ stats.ap }}</p>
-                    </div>
-                    <div v-if="run.metadata?.isTutorial && run.combat" class="tuto-tip-bubble">
-                      PA = Points d'Action. Attaque normale (2 PA), compétences (coût variable). Quand tu n'as plus de PA, clique <strong>Fin du tour</strong>.
                     </div>
                   </div>
 
@@ -5185,7 +5203,7 @@ onBeforeUnmount(() => {
     </section>
 
     <!-- Tutorial NPC welcome dialogue (typewriter) -->
-    <div v-if="tutorialIntroModal" class="overlay-meta tuto-welcome-overlay" @click.self="handleTutorialWelcomeBtn">
+    <div v-if="tutorialIntroModal" class="overlay-meta tuto-welcome-overlay" @click.self="skipAllTutorialWelcome">
       <article class="meta-modal tuto-welcome-modal" @click.stop>
         <div class="tuto-welcome-npc">
           <div class="animated-avatar tuto-welcome-avatar">
@@ -5196,15 +5214,22 @@ onBeforeUnmount(() => {
           </div>
           <div class="tuto-welcome-content">
             <strong class="tuto-welcome-name">Guide Mystique</strong>
-            <div class="tuto-welcome-text" @click="skipTutorialWelcome">
+            <div class="tuto-welcome-text" @click="handleTutorialWelcomeBtn">
               <p>{{ tutorialWelcomeText }}<span v-if="tutorialTyping" class="tuto-cursor">|</span></p>
             </div>
           </div>
         </div>
-        <div class="row-actions">
-          <button class="primary" @click="handleTutorialWelcomeBtn">
-            {{ tutorialTyping ? 'Passer ▶' : 'Commencer l\'exploration' }}
-          </button>
+        <div class="tuto-welcome-footer">
+          <span class="tuto-welcome-dots">
+            <span v-for="(_, i) in TUTORIAL_WELCOME_PAGES" :key="i"
+              class="tuto-dot" :class="{ active: i === tutorialWelcomePage }"></span>
+          </span>
+          <div class="tuto-welcome-actions">
+            <button class="tuto-skip-btn" @click="skipAllTutorialWelcome">Passer</button>
+            <button class="primary" @click="handleTutorialWelcomeBtn">
+              {{ tutorialTyping ? 'Suite ▶' : tutorialWelcomePage < TUTORIAL_WELCOME_PAGES.length - 1 ? 'Suivant ▶' : 'Commencer l\'exploration' }}
+            </button>
+          </div>
         </div>
       </article>
     </div>
@@ -6471,7 +6496,7 @@ button.danger {
   transition: background 0.6s ease;
 }
 .overlay-combat[data-actor="player"] {
-  background: rgba(4, 12, 34, 0.92);
+  background: rgba(3, 8, 18, 0.92);
 }
 .overlay-combat[data-actor="enemy"] {
   background: rgba(30, 4, 4, 0.88);
@@ -6522,8 +6547,55 @@ button.danger {
   margin-bottom: 8px;
 }
 .tuto-welcome-text {
-  min-height: 110px;
+  min-height: 90px;
   cursor: pointer;
+}
+
+.tuto-welcome-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.tuto-welcome-dots {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.tuto-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  transition: background 0.2s;
+}
+
+.tuto-dot.active {
+  background: #ffd166;
+}
+
+.tuto-welcome-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tuto-skip-btn {
+  background: none;
+  border: none;
+  color: rgba(180, 160, 120, 0.7);
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.tuto-skip-btn:hover {
+  color: rgba(220, 200, 160, 0.9);
 }
 .tuto-welcome-text p {
   white-space: pre-line;
@@ -6715,8 +6787,8 @@ button.danger {
   transition: background 0.6s ease, border-color 0.6s ease;
 }
 .combat-modal.turn-player {
-  background: linear-gradient(152deg, rgba(5, 16, 36, 0.98), rgba(8, 22, 52, 0.96));
-  border-color: rgba(55, 95, 180, 0.45);
+  background: linear-gradient(152deg, rgba(4, 10, 20, 0.98), rgba(6, 14, 30, 0.97));
+  border-color: rgba(40, 70, 130, 0.35);
 }
 .combat-modal.turn-enemy {
   background: linear-gradient(152deg, rgba(28, 5, 5, 0.98), rgba(42, 8, 8, 0.96));
@@ -6905,7 +6977,8 @@ button.danger {
 
 .skill-btn-cd {
   display: inline-block;
-  margin-top: 2px;
+  margin-top: 0;
+  vertical-align: middle;
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 0.65rem;
@@ -6922,11 +6995,33 @@ button.danger {
   border-color: rgba(60, 200, 80, 0.35);
 }
 
-.combat-actions-row,
 .skills-grid,
 .potions-grid {
   display: grid;
   gap: 4px;
+}
+
+.combat-actions-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.combat-endturn-flee-row {
+  display: flex;
+  gap: 4px;
+}
+
+.combat-endturn-flee-row button:first-child {
+  flex: 1;
+}
+
+.combat-attack-standalone {
+  display: none;
+}
+
+.combat-flee-desktop {
+  flex: 0 0 38%;
 }
 
 .potions-grid-btn {
@@ -7145,34 +7240,36 @@ button.danger {
   margin-top: 7px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border: 1px solid rgba(108, 194, 244, 0.52);
+  gap: 7px;
+  border: 1px solid rgba(108, 194, 244, 0.75);
   border-radius: 999px;
-  padding: 4px 9px;
-  background: linear-gradient(130deg, rgba(17, 75, 110, 0.8), rgba(24, 46, 69, 0.78));
+  padding: 6px 14px;
+  background: linear-gradient(130deg, rgba(17, 75, 110, 0.92), rgba(24, 46, 69, 0.9));
+  box-shadow: 0 0 10px rgba(100, 190, 255, 0.2), inset 0 1px 0 rgba(255,255,255,0.07);
 }
 
 .battle-ap-spotlight img {
-  width: 14px;
-  height: 14px;
-  filter: brightness(1.35);
+  width: 17px;
+  height: 17px;
+  filter: brightness(1.5);
 }
 
 .battle-ap-spotlight.enemy {
-  border-color: rgba(244, 191, 112, 0.55);
-  background: linear-gradient(130deg, rgba(114, 65, 22, 0.82), rgba(62, 38, 19, 0.82));
+  border-color: rgba(244, 191, 112, 0.75);
+  background: linear-gradient(130deg, rgba(114, 65, 22, 0.92), rgba(62, 38, 19, 0.9));
+  box-shadow: 0 0 10px rgba(255, 190, 80, 0.18), inset 0 1px 0 rgba(255,255,255,0.07);
 }
 
 .battle-ap-label {
   margin: 0;
-  font-size: 0.95rem;
-  color: #8fd4ff;
+  font-size: 1.05rem;
+  color: #a8e0ff;
   font-weight: 800;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
 }
 
 .battle-ap-spotlight.enemy .battle-ap-label {
-  color: #ffd28b;
+  color: #ffe4a8;
 }
 
 .battle-actor {
@@ -8567,7 +8664,7 @@ button.danger {
     min-height: 0;
     max-height: none;
     margin: 0;
-    padding: 4px 4px 16px;
+    padding: 4px 4px 6px;
     border-radius: 0;
     overflow: hidden;
     display: grid;
@@ -8599,10 +8696,10 @@ button.danger {
   }
 
   .combat-modal-body {
-    margin-top: 6px;
+    margin-top: 4px;
     display: grid;
-    grid-template-rows: minmax(188px, 42dvh) auto minmax(0, 1fr);
-    gap: 6px;
+    grid-template-rows: minmax(160px, 32dvh) auto auto minmax(0, 1fr);
+    gap: 4px;
     min-height: 0;
   }
 
@@ -8617,6 +8714,27 @@ button.danger {
 
   .combat-log-panel {
     display: none;
+  }
+
+  .combat-attack-standalone {
+    order: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-direction: row;
+    padding: 6px 16px;
+    min-height: 40px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .combat-attack-standalone img {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
   }
 
   .combat-dialogue-panel {
@@ -8640,7 +8758,7 @@ button.danger {
 
   /* === COMBAT ACTIONS PANEL — menu mobile === */
   .combat-actions-panel {
-    order: 3;
+    order: 4;
     display: flex;
     flex-direction: column;
     padding: 6px;
@@ -8664,11 +8782,20 @@ button.danger {
   /* Menu principal */
   .combat-mobile-menu {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 38fr 62fr;
+    grid-template-areas:
+      "inventory skills"
+      "flee endturn";
     gap: 8px;
     flex: 1;
     align-content: center;
   }
+
+  .mobile-menu-attack   { grid-area: attack; }
+  .mobile-menu-skills   { grid-area: skills; }
+  .mobile-menu-inventory { grid-area: inventory; }
+  .mobile-menu-endturn  { grid-area: endturn; }
+  .mobile-menu-flee     { grid-area: flee; }
 
   .mobile-menu-btn {
     display: flex;
@@ -8693,7 +8820,6 @@ button.danger {
 
   .mobile-menu-endturn,
   .mobile-menu-flee {
-    grid-column: 1 / -1;
     min-height: 54px;
     flex-direction: row;
     gap: 6px;
@@ -8704,6 +8830,7 @@ button.danger {
     border-color: rgba(220, 90, 90, 0.55);
     color: #f0b0b0;
     min-height: 46px;
+    font-size: 0.8rem;
     font-weight: 600;
   }
   .mobile-menu-flee:not(:disabled):hover {
@@ -8761,7 +8888,9 @@ button.danger {
     display: block;
   }
   .combat-actions-panel[data-mobile-panel="skills"] .skill-btn-cost {
+    display: inline;
     margin-top: 3px;
+    margin-right: 6px;
     font-size: 0.65rem;
     color: #d6c6a2;
     opacity: 0.86;
@@ -8984,17 +9113,17 @@ button.danger {
 
   .battle-ap-spotlight {
     margin-top: 4px;
-    gap: 3px;
-    padding: 2px 6px;
+    gap: 5px;
+    padding: 4px 10px;
   }
 
   .battle-ap-spotlight img {
-    width: 10px;
-    height: 10px;
+    width: 13px;
+    height: 13px;
   }
 
   .battle-ap-label {
-    font-size: 0.64rem;
+    font-size: 0.78rem;
   }
 
   .battle-actor {
