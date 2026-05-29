@@ -4751,7 +4751,9 @@ onBeforeUnmount(() => {
           </header>
           <div class="loot-summary">
             <span v-if="lootModal.xp > 0" class="loot-badge">+{{ lootModal.xp }} XP</span>
-            <span class="loot-badge">+{{ lootModal.gold }} or</span>
+            <span v-if="lootModal.gold > 0" class="loot-badge loot-badge-gold">
+              +{{ lootModal.gold }}<img src="/assets/Icons/gold_coin.png" alt="or" class="loot-gold-icon" />
+            </span>
           </div>
           <section v-if="lootModal.materials?.length" class="loot-section">
             <h3 class="loot-section-title">Materiaux</h3>
@@ -5203,7 +5205,7 @@ onBeforeUnmount(() => {
     </section>
 
     <!-- Tutorial NPC welcome dialogue (typewriter) -->
-    <div v-if="tutorialIntroModal" class="overlay-meta tuto-welcome-overlay" @click.self="skipAllTutorialWelcome">
+    <div v-if="tutorialIntroModal" class="overlay-meta tuto-welcome-overlay">
       <article class="meta-modal tuto-welcome-modal" @click.stop>
         <div class="tuto-welcome-npc">
           <div class="animated-avatar tuto-welcome-avatar">
@@ -7903,13 +7905,22 @@ button.danger {
 }
 
 .loot-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 1px solid rgba(245, 206, 144, 0.35);
   border-radius: 999px;
   padding: 0.35rem 0.75rem;
   font-size: 0.9rem;
   background: rgba(16, 35, 44, 0.6);
   color: rgba(255, 248, 235, 0.95);
+}
+
+.loot-gold-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 
 .loot-section {
