@@ -3809,9 +3809,29 @@ function keyHandler(event) {
 }
 
 function onDocumentTouchStart() {
-  if (inventoryTooltip.visible && Date.now() - tooltipShownAt > 200) {
+  if (inventoryTooltip.visible) {
     hideInventoryItemTooltip()
     hideMerchantItemTooltip()
+  }
+}
+
+function handleInventoryItemTouch(item, event) {
+  if (event.target.closest('button')) return
+  event.stopPropagation()
+  if (inventoryTooltip.visible && hoveredInventoryItemId.value === item.id) {
+    hideInventoryItemTooltip()
+  } else {
+    showInventoryItemTooltip(item, event)
+  }
+}
+
+function handleMerchantItemTouch(item, event) {
+  if (event.target.closest('button')) return
+  event.stopPropagation()
+  if (inventoryTooltip.visible && hoveredMerchantItem.value?.id === item.id) {
+    hideMerchantItemTooltip()
+  } else {
+    showMerchantItemTooltip(item, event)
   }
 }
 
@@ -4673,7 +4693,8 @@ onBeforeUnmount(() => {
                 <li v-for="item in inventoryActiveGroup.items" :key="`modal-${inventoryActiveGroup.id}-${item.id}`"
                   @mouseenter="showInventoryItemTooltip(item, $event)" @mousemove="moveInventoryItemTooltip($event)"
                   @focusin="showInventoryItemTooltip(item, $event)" @mouseleave="hideInventoryItemTooltip"
-                  @focusout="hideInventoryItemTooltip">
+                  @focusout="hideInventoryItemTooltip"
+                  @touchstart="handleInventoryItemTouch(item, $event)">
                   <img class="item-icon" :src="itemIcon(item)" alt="item" />
                   <div class="item-main">
                     <div class="item-name-row">
@@ -4783,7 +4804,8 @@ onBeforeUnmount(() => {
             <ul class="loot-items">
               <li v-for="item in lootModal.items" :key="`loot-item-${item.id}`"
                 @mouseenter="showInventoryItemTooltip(item, $event)" @mouseleave="hideInventoryItemTooltip()"
-                @mousemove="moveInventoryItemTooltip($event)">
+                @mousemove="moveInventoryItemTooltip($event)"
+                @touchstart="handleInventoryItemTouch(item, $event)">
                 <img class="item-icon" :src="itemIcon(item)" alt="loot" />
                 <div class="item-main">
                   <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
@@ -4888,7 +4910,8 @@ onBeforeUnmount(() => {
               :class="{ 'merchant-item-sold': item.soldOut }"
               @mouseenter="showMerchantItemTooltip(item, $event)"
               @mousemove="moveInventoryItemTooltip($event)"
-              @mouseleave="hideMerchantItemTooltip()">
+              @mouseleave="hideMerchantItemTooltip()"
+              @touchstart="handleMerchantItemTouch(item, $event)">
               <img :src="itemIcon(item)" class="merchant-item-icon" alt="" />
               <div class="merchant-item-info">
                 <span class="merchant-item-name" :style="{ color: RARITIES[item.rarity]?.color }">{{ item.name }}</span>
