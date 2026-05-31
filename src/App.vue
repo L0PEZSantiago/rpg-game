@@ -9080,9 +9080,8 @@ button.danger {
   .combat-actions-panel[data-mobile-panel="inventory"] .combat-command-block {
     display: flex;
     flex-direction: column;
-    flex: 1;
+    flex: 0 0 auto;
     gap: 6px;
-    min-height: 0;
     overflow: hidden;
   }
   .combat-actions-panel[data-mobile-panel="inventory"] .combat-actions-sub {
@@ -9091,9 +9090,8 @@ button.danger {
   .combat-actions-panel[data-mobile-panel="inventory"] .combat-inventory-sub {
     display: flex;
     flex-direction: column;
-    flex: 1;
+    flex: 0 0 auto;
     gap: 6px;
-    min-height: 0;
     overflow: hidden;
     position: relative;
   }
