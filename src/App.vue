@@ -7703,20 +7703,13 @@ button.danger {
 }
 
 .combat-log-panel {
+  display: block;
   height: 220px;
   min-height: 220px;
   max-height: 220px;
-  overflow: hidden;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.combat-log-panel ul {
-  flex: 1;
-  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  flex-shrink: 0;
 }
 
 .combat-log-panel li {
@@ -8742,7 +8735,8 @@ button.danger {
     height: 160px;
     min-height: 160px;
     max-height: 160px;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
 
   .item-compare-tooltip.floating {
