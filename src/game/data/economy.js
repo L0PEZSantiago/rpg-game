@@ -152,7 +152,7 @@ export const RECIPES = [
       defense: 6,
       value: 420,
       rarity: 'legendary',
-      icon: '/assets/Weapons/Bone/Bone.png',
+      icon: '/assets/Icons/anneau.png',
     },
   },
 ]
@@ -281,9 +281,9 @@ export const LOOT_BASES = {
     { name: 'Armure nervuree', attack: 0, defense: 8, value: 110, icon: '/assets/Weapons/Hands/Hands.png' },
   ],
   trinket: [
-    { name: 'Talisman fendu', attack: 2, defense: 2, value: 70, icon: '/assets/Weapons/Bone/Bone.png' },
-    { name: 'Anneau de cendre', attack: 3, defense: 1, value: 84, icon: '/assets/Weapons/Bone/Bone.png' },
-    { name: 'Idole des ruines', attack: 4, defense: 2, value: 122, icon: '/assets/Weapons/Bone/Bone.png' },
+    { name: 'Talisman fendu', attack: 2, defense: 2, value: 70, icon: '/assets/Icons/anneau.png' },
+    { name: 'Anneau de cendre', attack: 3, defense: 1, value: 84, icon: '/assets/Icons/anneau.png' },
+    { name: 'Idole des ruines', attack: 4, defense: 2, value: 122, icon: '/assets/Icons/anneau.png' },
   ],
 }
 

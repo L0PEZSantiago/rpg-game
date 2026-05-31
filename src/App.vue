@@ -113,6 +113,9 @@ let merchantArrivalAutoCloseTimer = null
 const portalConfirmModal = ref(null)
 const tutorialIntroModal = ref(false)
 const tutorialEndModal = ref(false)
+const tutorialWarnModal = ref(false)
+const locationToast = ref('')
+let locationToastTimer = null
 const inventoryTab = ref('weapon')
 const combatConsumableTab = ref('regen')
 const inventoryTrackingPrimed = ref(false)
@@ -278,6 +281,7 @@ const merchantShopEntries = computed(() =>
     const remaining = limited ? run.value?.world?.shopStock?.[shop.id] ?? shop.stock ?? 0 : null
     return {
       ...shop,
+      kind: 'consumable',
       limited,
       remaining,
     }
@@ -324,7 +328,7 @@ const merchantIdleSprite = computed(() => {
 const INVENTORY_GROUP_DEFS = [
   { id: 'weapon', label: 'Armes', icon: '/assets/Icons/sword.png' },
   { id: 'armor', label: 'Armures', icon: '/assets/Icons/armor.png' },
-  { id: 'trinket', label: 'Babioles', icon: '/assets/Icons/dagger.png' },
+  { id: 'trinket', label: 'Anneaux', icon: '/assets/Icons/anneau.png' },
   { id: 'consumable', label: 'Consommables', icon: '/assets/Icons/potion.png' },
   { id: 'other', label: 'Divers', icon: '/assets/Icons/backpack.png' },
 ]
@@ -444,7 +448,7 @@ function inventoryTypeLabel(item) {
       return 'Categorie: Armure'
     }
     if (item.slot === 'trinket') {
-      return 'Categorie: Babiole'
+      return 'Categorie: Anneau'
     }
     return 'Categorie: Equipement'
   }
@@ -2503,8 +2507,23 @@ function itemIcon(item) {
     if (item.effect === 'mana_60') {
       return '/assets/Icons/mana_potion.png'
     }
-    if (item.effect === 'heal_50' || item.effect === 'heal_80' || item.effect === 'heal_45_mana_35') {
+    if (item.effect === 'heal_80') {
+      return '/assets/Icons/potion_de_soin_majeure.png'
+    }
+    if (item.effect === 'heal_45_mana_35') {
+      return '/assets/Icons/kit-de-recuperation.png'
+    }
+    if (item.effect === 'heal_50') {
       return '/assets/Icons/life_potion.png'
+    }
+    if (item.effect === 'buff_damage') {
+      return '/assets/Icons/fiole-de-furie.png'
+    }
+    if (item.effect === 'cleanse_and_guard') {
+      return '/assets/Icons/orbe_de_clarte.png'
+    }
+    if (item.effect === 'vision_boost') {
+      return '/assets/Icons/torche-runique.png'
     }
     return '/assets/Icons/potion.png'
   }
@@ -2525,7 +2544,7 @@ function itemIcon(item) {
     return '/assets/Icons/armor.png'
   }
   if (item.kind === 'equipment' && item.slot === 'trinket') {
-    return '/assets/Icons/skills.png'
+    return '/assets/Icons/anneau.png'
   }
   return item.icon || '/assets/Icons/backpack.png'
 }
@@ -2806,6 +2825,12 @@ function startMerchantTimerForMap(showArrival = true) {
   }, 5 * 60 * 1000)
 }
 
+function showLocationToast(mapName) {
+  if (locationToastTimer) clearTimeout(locationToastTimer)
+  locationToast.value = mapName
+  locationToastTimer = setTimeout(() => { locationToast.value = '' }, 3500)
+}
+
 function startNewGame() {
   run.value = createRun({
     name: creation.name,
@@ -2823,6 +2848,7 @@ function startNewGame() {
   startMerchantTimerForMap(false)
   setInfo('Nouvelle campagne lancee.')
   persistRun()
+  showLocationToast(activeMap.value?.name ?? '')
 }
 
 const TUTO_GUIDE_SPRITE = "/assets/Entities/Npc's/Wizzard/Idle/Idle-Sheet.png"
@@ -2986,6 +3012,7 @@ function startGameFromTutorial() {
   startMerchantTimerForMap(false)
   setInfo('Tutoriel termine ! Bonne aventure !')
   persistRun()
+  showLocationToast(activeMap.value?.name ?? '')
 }
 
 function returnToMenuFromTutorial() {
@@ -3994,9 +4021,20 @@ onBeforeUnmount(() => {
           <button class="primary" @click="startNewGame">Lancer la campagne</button>
           <button class="secondary" :disabled="!hasSave" @click="continueSavedGame">Continuer sauvegarde</button>
           <button class="danger" :disabled="!hasSave" @click="abandonAndDeleteSave">Effacer sauvegarde</button>
-          <button class="tutorial-btn" @click="startTutorial">Jouer le tutoriel</button>
+          <button class="tutorial-btn" @click="tutorialWarnModal = true">Jouer le tutoriel</button>
           <p v-if="saveTimestamp" class="save-ts">Derniere sauvegarde: {{ saveTimestamp }}</p>
         </article>
+
+        <div v-if="tutorialWarnModal" class="overlay-meta" @click="tutorialWarnModal = false">
+          <article class="meta-modal tutorial-warn-modal" @click.stop>
+            <h3>⚠ Attention</h3>
+            <p>Commencer le tutoriel <strong>effacera ta sauvegarde en cours</strong>. Cette action est irréversible.</p>
+            <div class="tutorial-warn-actions">
+              <button class="secondary" @click="tutorialWarnModal = false">Annuler</button>
+              <button class="danger" @click="tutorialWarnModal = false; startTutorial()">Lancer le tutoriel</button>
+            </div>
+          </article>
+        </div>
 
         <article class="card history-card">
           <h2>Historique des Runs</h2>
@@ -4054,6 +4092,13 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </header>
+
+      <Transition name="location-toast">
+        <div v-if="locationToast" class="location-toast" aria-live="polite">
+          <span class="location-toast-label">Vous êtes en</span>
+          <strong class="location-toast-name">{{ locationToast }}</strong>
+        </div>
+      </Transition>
 
       <div class="game-content">
         <div class="desktop-columns columns">
@@ -4175,7 +4220,7 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="equip-slot">
-                <h3>Bibelot</h3>
+                <h3>Anneau</h3>
                 <div v-if="run.player.equipment.trinket" class="equip-item">
                   <img :src="itemIcon(run.player.equipment.trinket)" alt="trinket" />
                   <div>
@@ -4191,7 +4236,7 @@ onBeforeUnmount(() => {
                     <button @click="unequipAction('trinket')">Retirer</button>
                   </div>
                 </div>
-                <p v-else>Aucun trinket equipe.</p>
+                <p v-else>Aucun anneau équipé.</p>
               </div>
             </div>
 
@@ -4396,7 +4441,7 @@ onBeforeUnmount(() => {
                   <button @click="unequipAction('trinket')">Retirer</button>
                 </div>
               </div>
-              <p v-else class="equip-empty">Aucun bibelot.</p>
+              <p v-else class="equip-empty">Aucun anneau.</p>
             </div>
           </div>
         </article>
@@ -4923,6 +4968,8 @@ onBeforeUnmount(() => {
         </article>
       </div>
 
+
+
       <div v-if="challengeModal" class="overlay-meta" @click="challengeModal = null">
         <article class="meta-modal challenge-modal" @click.stop>
           <button type="button" class="modal-x-btn" @click="challengeModal = null">✕</button>
@@ -5098,13 +5145,16 @@ onBeforeUnmount(() => {
             </button>
             <template v-if="currentNpc.role === 'merchant'">
               <button v-for="shop in merchantShopEntries" :key="shop.id" :disabled="shopItemDisabled(shop)"
-                @click="npcAction('buy', shop.id)">
-                <span class="no-wrap-line">
-                  Acheter {{ shop.name }} ({{ shop.price }} <img src="/assets/Icons/gold_coin.png" alt=""
-                    class="gold-btn-icon" />)
+                @click="npcAction('buy', shop.id)" class="shop-item-btn">
+                <img :src="itemIcon(shop)" alt="" class="shop-item-icon" />
+                <span class="shop-item-content">
+                  <span class="no-wrap-line">
+                    Acheter {{ shop.name }} ({{ shop.price }} <img src="/assets/Icons/gold_coin.png" alt=""
+                      class="gold-btn-icon" />)
+                  </span>
+                  <small>{{ shop.description }}</small>
+                  <small>{{ shopStockLabel(shop) }}</small>
                 </span>
-                <small>{{ shop.description }}</small>
-                <small>{{ shopStockLabel(shop) }}</small>
               </button>
             </template>
             <template v-if="currentNpc.role === 'craft'">
@@ -8184,6 +8234,26 @@ button.danger {
   opacity: 0.86;
 }
 
+.shop-item-btn {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+.shop-item-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  flex-shrink: 0;
+}
+.shop-item-content {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  text-align: left;
+}
+
 .warning {
   color: #ffb8a5;
 }
@@ -8612,6 +8682,76 @@ button.danger {
 
 .sell-confirm-actions .sell-ok:hover {
   background: rgba(180, 110, 60, 0.65);
+}
+
+
+.location-toast {
+  position: fixed;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: rgba(10, 16, 22, 0.82);
+  border: 1px solid rgba(240, 198, 123, 0.35);
+  border-radius: 8px;
+  padding: 8px 18px 9px;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+.location-toast-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(240, 198, 123, 0.6);
+}
+.location-toast-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #f0c67a;
+  letter-spacing: 0.02em;
+}
+.location-toast-enter-active {
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.location-toast-leave-active {
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.location-toast-enter-from,
+.location-toast-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(10px);
+}
+
+
+.tutorial-warn-modal {
+  width: min(340px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+.tutorial-warn-modal h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #f0c67a;
+}
+.tutorial-warn-modal p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+.tutorial-warn-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.tutorial-warn-actions button {
+  flex: 1;
+  max-width: 150px;
 }
 
 .skills-catalog {

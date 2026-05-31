@@ -66,7 +66,7 @@ export const PASSIVE_RESET_RULES = {
 const SLOT_DEFAULT_ICON = {
   weapon: '/assets/Weapons/Wood/Wood.png',
   armor: '/assets/Weapons/Hands/Hands.png',
-  trinket: '/assets/Weapons/Bone/Bone.png',
+  trinket: '/assets/Icons/anneau.png',
 }
 
 const STARTER_WEAPON_BY_CLASS = {
@@ -543,7 +543,7 @@ function createStarterInventory(selectedClass) {
       quantity: 1,
       rarity: 'common',
       value: 30,
-      icon: '/assets/Icons/potion.png',
+      icon: '/assets/Icons/torche-runique.png',
     },
     {
       id: uid('equipment'),
@@ -1595,7 +1595,7 @@ export function openNearbyChest(run) {
       appendLog(run, `Coffre béni ! Deux élixirs de mana vous attendent.`)
       chestEvent = { type: 'bonus', title: 'Énergie runique !', desc: `Des fioles d'énergie runique scintillent dans l'ombre. +2 Élixirs de mana.` }
     } else if (bonus === 'consumable_vision') {
-      addInventoryItem(run, { id: uid('consumable'), kind: 'consumable', name: 'Torche runique', effect: 'vision_boost', quantity: 2, rarity: 'common', value: 30, icon: '/assets/Icons/potion.png' })
+      addInventoryItem(run, { id: uid('consumable'), kind: 'consumable', name: 'Torche runique', effect: 'vision_boost', quantity: 2, rarity: 'common', value: 30, icon: '/assets/Icons/torche-runique.png' })
       appendLog(run, `Coffre béni ! Des torches runiques illuminent le coffre.`)
       chestEvent = { type: 'bonus', title: 'Torches runiques !', desc: `Deux torches runiques augmentent votre vision pour 30 pas chacune. +2 Torches runiques.` }
     } else if (bonus === 'damage_boost') {
