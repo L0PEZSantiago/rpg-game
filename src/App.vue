@@ -105,6 +105,7 @@ const challengeModal = ref(/** @type {{ npcId: string, npcName: string, result: 
 const wanderingMerchantModal = ref(/** @type {{ npcId: string, npcName: string, portrait: string } | null} */(null))
 const merchantArrivalModal = ref(/** @type {{ npcName: string } | null} */(null))
 const merchantDepartedModal = ref(/** @type {{ npcName: string } | null} */(null))
+const sellConfirmModal = ref(/** @type {{ type: 'sell-all' | 'sell-item', itemId?: string, label: string } | null} */(null))
 let merchantDepartureTimer = null
 let merchantMoveInterval = null
 let merchantDepartedAutoCloseTimer = null
@@ -3597,10 +3598,14 @@ function unequipAction(slot) {
   persistRun()
 }
 
-function sellAction(itemId) {
-  if (!run.value) {
-    return
-  }
+const HIGH_VALUE_RARITIES = new Set(['legendary', 'mythic'])
+
+function isHighValueItem(item) {
+  return HIGH_VALUE_RARITIES.has(item?.rarity)
+}
+
+function doSellItem(itemId) {
+  if (!run.value) return
   const result = sellItem(run.value, itemId)
   if (!result.ok) {
     setInfo(result.reason)
@@ -3610,10 +3615,8 @@ function sellAction(itemId) {
   persistRun()
 }
 
-function sellLootItem(itemId) {
-  if (!run.value || !lootModal.value) {
-    return
-  }
+function doSellLootItem(itemId) {
+  if (!run.value || !lootModal.value) return
   const result = sellItem(run.value, itemId)
   if (!result.ok) {
     setInfo(result.reason)
@@ -3622,6 +3625,26 @@ function sellLootItem(itemId) {
   lootModal.value.items = (lootModal.value.items ?? []).filter((item) => item.id !== itemId)
   playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
   persistRun()
+}
+
+function sellAction(itemId) {
+  if (!run.value) return
+  const item = run.value.player.inventory.find((i) => i.id === itemId)
+  if (item && isHighValueItem(item)) {
+    sellConfirmModal.value = { type: 'sell-item', itemId, label: item.name, rarity: item.rarity, icon: itemIcon(item) }
+    return
+  }
+  doSellItem(itemId)
+}
+
+function sellLootItem(itemId) {
+  if (!run.value || !lootModal.value) return
+  const item = (lootModal.value.items ?? []).find((i) => i.id === itemId)
+  if (item && isHighValueItem(item)) {
+    sellConfirmModal.value = { type: 'sell-loot-item', itemId, label: item.name, rarity: item.rarity, icon: itemIcon(item) }
+    return
+  }
+  doSellLootItem(itemId)
 }
 
 function equipLootItem(itemId) {
@@ -3638,17 +3661,13 @@ function equipLootItem(itemId) {
   persistRun()
 }
 
-function sellAllFromActiveCategory() {
-  if (!run.value || !inventoryActiveGroup.value?.items?.length) {
-    return
-  }
+function doSellAllFromActiveCategory() {
+  if (!run.value || !inventoryActiveGroup.value?.items?.length) return
   const ids = inventoryActiveGroup.value.items.map((item) => item.id)
   let soldCount = 0
   for (const itemId of ids) {
     const result = sellItem(run.value, itemId)
-    if (result.ok) {
-      soldCount += 1
-    }
+    if (result.ok) soldCount += 1
   }
   if (soldCount > 0) {
     setInfo(`${soldCount} objet(s) vendus.`)
@@ -3657,6 +3676,27 @@ function sellAllFromActiveCategory() {
     setInfo('Aucun objet vendu.')
   }
   persistRun()
+}
+
+function sellAllFromActiveCategory() {
+  if (!run.value || !inventoryActiveGroup.value?.items?.length) return
+  sellConfirmModal.value = {
+    type: 'sell-all',
+    label: inventoryActiveGroup.value.label,
+  }
+}
+
+function confirmSell() {
+  if (!sellConfirmModal.value) return
+  const { type, itemId } = sellConfirmModal.value
+  sellConfirmModal.value = null
+  if (type === 'sell-all') doSellAllFromActiveCategory()
+  else if (type === 'sell-item') doSellItem(itemId)
+  else if (type === 'sell-loot-item') doSellLootItem(itemId)
+}
+
+function cancelSell() {
+  sellConfirmModal.value = null
 }
 
 function unlockPassiveAction(passiveId) {
@@ -4669,13 +4709,8 @@ onBeforeUnmount(() => {
               <img src="/assets/Icons/backpack.png" alt="" />
               Inventaire
             </h2>
-            <div class="inventory-head-actions">
-              <p>{{ run.player.inventory.length }} objet(s)</p>
-              <button class="secondary" :disabled="!(inventoryActiveGroup?.items?.length ?? 0)"
-                @click="sellAllFromActiveCategory">
-                Tout vendre
-              </button>
-            </div>
+            <p class="inventory-count">{{ run.player.inventory.length }} objet(s)</p>
+            <button class="modal-x-btn" @click="inventoryModalOpen = false">✕</button>
           </header>
           <div v-if="inventoryGroups.length" class="inventory-groups">
             <div class="inventory-tabs">
@@ -4688,11 +4723,18 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <section v-if="inventoryActiveGroup" :key="`group-${inventoryActiveGroup.id}`" class="inventory-group">
-              <h3>
-                <img :src="inventoryActiveGroup.icon" alt="" />
-                {{ inventoryActiveGroup.label }}
-                <small>({{ inventoryActiveGroup.items.length }})</small>
-              </h3>
+              <div class="inventory-group-head">
+                <h3>
+                  <img :src="inventoryActiveGroup.icon" alt="" />
+                  {{ inventoryActiveGroup.label }}
+                  <small>({{ inventoryActiveGroup.items.length }})</small>
+                </h3>
+                <button class="secondary inventory-sell-all-btn"
+                  :disabled="!(inventoryActiveGroup?.items?.length ?? 0)"
+                  @click="sellAllFromActiveCategory">
+                  Tout vendre <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />
+                </button>
+              </div>
               <ul>
                 <li v-for="item in inventoryActiveGroup.items" :key="`modal-${inventoryActiveGroup.id}-${item.id}`"
                   @mouseenter="showInventoryItemTooltip(item, $event)" @mousemove="moveInventoryItemTooltip($event)"
@@ -4860,6 +4902,26 @@ onBeforeUnmount(() => {
           <div class="chest-event-desc">{{ chestEvent.desc }}</div>
         </div>
       </Transition>
+
+      <div v-if="sellConfirmModal" class="overlay-meta sell-confirm-overlay" @click="cancelSell">
+        <article class="meta-modal sell-confirm-modal" @click.stop>
+          <p v-if="sellConfirmModal.type === 'sell-all'">
+            Vendre tous les objets de la catégorie <strong>{{ sellConfirmModal.label }}</strong> ?
+          </p>
+          <div v-else class="sell-confirm-item">
+            <img :src="sellConfirmModal.icon" alt="" class="sell-confirm-icon" />
+            <p>
+              Vendre <strong :style="{ color: rarityColor(sellConfirmModal.rarity) }">{{ sellConfirmModal.label }}</strong> ?
+              <em :style="{ color: rarityColor(sellConfirmModal.rarity) }" class="sell-confirm-rarity">Rareté : {{ rarityLabel(sellConfirmModal.rarity) }}</em>
+              <span class="sell-confirm-warning">Cet objet est de grande valeur, cette action est irréversible.</span>
+            </p>
+          </div>
+          <div class="sell-confirm-actions">
+            <button class="sell-cancel" @click="cancelSell">Annuler</button>
+            <button class="sell-ok" @click="confirmSell">Confirmer</button>
+          </div>
+        </article>
+      </div>
 
       <div v-if="challengeModal" class="overlay-meta" @click="challengeModal = null">
         <article class="meta-modal challenge-modal" @click.stop>
@@ -7851,7 +7913,8 @@ button.danger {
 }
 
 .inventory-modal {
-  width: min(980px, calc(100vw - 32px));
+  width: min(600px, calc(100vw - 32px));
+  max-height: 70vh;
 }
 
 .inventory-modal-head {
@@ -7923,11 +7986,33 @@ button.danger {
   animation: new-badge-blink 1.2s ease-in-out infinite;
 }
 
+.inventory-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
 .inventory-group h3 {
-  margin: 0 0 7px;
+  margin: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.inventory-sell-all-btn {
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  flex-shrink: 0;
+}
+
+.inventory-count {
+  margin: 0;
+  font-size: 0.82rem;
+  opacity: 0.7;
+  flex: 1;
+  text-align: right;
 }
 
 .inventory-group h3 img {
@@ -8452,6 +8537,81 @@ button.danger {
 .modal-x-btn:hover {
   background: rgba(255, 255, 255, 0.13);
   color: #f3d98a;
+}
+
+.sell-confirm-modal {
+  width: min(360px, calc(100vw - 32px));
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sell-confirm-modal p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sell-confirm-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+}
+
+.sell-confirm-icon {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  flex-shrink: 0;
+}
+
+.sell-confirm-rarity {
+  font-size: 0.8rem;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.sell-confirm-warning {
+  font-size: 0.78rem;
+  color: #ffc48f;
+  opacity: 0.9;
+}
+
+.sell-confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.sell-confirm-actions button {
+  flex: 1;
+  max-width: 140px;
+}
+
+.sell-confirm-actions .sell-cancel {
+  background: rgba(80, 80, 90, 0.5);
+  border-color: rgba(160, 160, 170, 0.3);
+  color: #c8c4b8;
+}
+
+.sell-confirm-actions .sell-cancel:hover {
+  background: rgba(100, 100, 110, 0.6);
+}
+
+.sell-confirm-actions .sell-ok {
+  background: rgba(160, 90, 50, 0.5);
+  border-color: rgba(220, 140, 80, 0.45);
+  color: #f0c890;
+}
+
+.sell-confirm-actions .sell-ok:hover {
+  background: rgba(180, 110, 60, 0.65);
 }
 
 .skills-catalog {
