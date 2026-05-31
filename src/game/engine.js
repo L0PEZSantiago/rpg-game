@@ -1505,7 +1505,14 @@ export function openNearbyChest(run) {
     return { ok: true, chest, loots, gold: 0, materials: [], chestEvent: null }
   }
 
-  const chestType = weightedChoice(CHEST_TYPE_WEIGHTS)
+  const isSecretRoom = Boolean(map?.isSecretRoom)
+
+  const chestType = isSecretRoom
+    ? weightedChoice([
+        { value: 'normal', weight: 54 },
+        { value: 'bonus',  weight: 46 },
+      ])
+    : weightedChoice(CHEST_TYPE_WEIGHTS)
 
   if (chestType === 'trapped') {
     const trapTypes = ['poison_blade', 'gold_thief', 'curse', 'attack_debuff', 'xp_drain']
@@ -1551,16 +1558,27 @@ export function openNearbyChest(run) {
   }
 
   if (chestType === 'bonus') {
-    const bonus = weightedChoice([
-      { value: 'healing',           weight: 22 },
-      { value: 'consumable_heal',   weight: 22 },
-      { value: 'consumable_mana',   weight: 20 },
-      { value: 'damage_boost',      weight: 18 },
-      { value: 'xp_surge',          weight: 14 },
-      { value: 'consumable_vision', weight: 8 },
-      { value: 'teleport_room',     weight: 10 },
-      { value: 'revive_charm',      weight: 4 },
-    ])
+    const bonusPool = isSecretRoom
+      ? [
+          { value: 'healing',           weight: 22 },
+          { value: 'consumable_heal',   weight: 22 },
+          { value: 'consumable_mana',   weight: 20 },
+          { value: 'damage_boost',      weight: 18 },
+          { value: 'xp_surge',          weight: 18 },
+          { value: 'consumable_vision', weight: 12 },
+          { value: 'revive_charm',      weight: 8 },
+        ]
+      : [
+          { value: 'healing',           weight: 22 },
+          { value: 'consumable_heal',   weight: 22 },
+          { value: 'consumable_mana',   weight: 20 },
+          { value: 'damage_boost',      weight: 18 },
+          { value: 'xp_surge',          weight: 14 },
+          { value: 'consumable_vision', weight: 8 },
+          { value: 'teleport_room',     weight: 10 },
+          { value: 'revive_charm',      weight: 4 },
+        ]
+    const bonus = weightedChoice(bonusPool)
     let chestEvent
     if (bonus === 'healing') {
       const stats = derivedStats(run)
