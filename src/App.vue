@@ -4617,17 +4617,19 @@ onBeforeUnmount(() => {
             </section>
 
             <section class="combat-dialogue-panel" @click="skipCombatDialogue">
-              <div v-if="combatDialogueHistory.length" class="dialogue-history">
-                <p v-for="(entry, i) in combatDialogueHistory" :key="i"
-                  class="dialogue-line dialogue-old" :class="combatLogClasses(entry)">
-                  {{ entry }}
+              <div class="combat-dialogue-inner">
+                <div v-if="combatDialogueHistory.length" class="dialogue-history">
+                  <p v-for="(entry, i) in combatDialogueHistory" :key="i"
+                    class="dialogue-line dialogue-old" :class="combatLogClasses(entry)">
+                    {{ entry }}
+                  </p>
+                </div>
+                <p v-if="combatDialogueCurrent" class="dialogue-line dialogue-live"
+                  :class="combatLogClasses(combatDialogueCurrent)">
+                  {{ combatDialogueCurrent }}<span v-if="combatDialogueTyping" class="dialogue-cursor">▋</span>
                 </p>
+                <p v-else class="dialogue-waiting">...</p>
               </div>
-              <p v-if="combatDialogueCurrent" class="dialogue-line dialogue-live"
-                :class="combatLogClasses(combatDialogueCurrent)">
-                {{ combatDialogueCurrent }}<span v-if="combatDialogueTyping" class="dialogue-cursor">▋</span>
-              </p>
-              <p v-else class="dialogue-waiting">...</p>
             </section>
 
             <section class="combat-log-panel">
@@ -6944,13 +6946,24 @@ button.danger {
 
 .combat-dialogue-panel {
   border-color: rgba(240, 198, 123, 0.45);
+  position: relative;
+  height: 110px;
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.combat-dialogue-inner {
+  position: absolute;
+  inset: 0;
+  padding: 10px;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   gap: 5px;
-  min-height: 130px;
-  cursor: pointer;
-  user-select: none;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .combat-log-panel {
@@ -8835,12 +8848,12 @@ button.danger {
 
   .combat-dialogue-panel {
     order: 2;
-    min-height: 82px;
-    max-height: 130px;
-    padding: 8px 10px;
+    height: 90px;
     font-size: 0.78rem;
-    overflow: hidden;
-    cursor: pointer;
+  }
+
+  .combat-dialogue-inner {
+    padding: 8px 10px;
   }
 
   .combat-dialogue-panel .dialogue-line {
@@ -8961,10 +8974,11 @@ button.danger {
   .combat-actions-panel[data-mobile-panel="skills"] .combat-skills-block {
     display: flex;
     flex-direction: column;
-    flex: 1;
+    flex: 0 0 auto;
     gap: 6px;
     min-height: 0;
     overflow: hidden;
+    max-height: 220px;
   }
   .combat-actions-panel[data-mobile-panel="skills"] .skills-grid {
     display: grid;
