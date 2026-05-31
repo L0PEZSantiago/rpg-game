@@ -42,9 +42,18 @@ const CHEST_TYPE_WEIGHTS = [
 ]
 const SECRET_ROOM_IDS = ['secret_room_vault', 'secret_room_hollow', 'secret_room_sanctum']
 const CHALLENGER_NPC_SPAWN_CHANCE = 0.42
-const WANDERING_MERCHANT_SPAWN_CHANCE = 0.30
+const WANDERING_MERCHANT_SPAWN_CHANCE = 0.15
 const CHALLENGER_NAMES = ['Mercenaire Borgne', 'Duelliste des Ombres', 'Champion Errant', 'Vétéran des Ruines', 'Gladiateur Exilé']
 const WANDERING_MERCHANT_NAMES = ['Caravane Spectrale', 'Marchand Sans Visage', 'Trafiquant des Ombres', 'Colporteur Maudit']
+const UPGRADE_COSTS = [
+  { goldCost: 50,  materials: {},                                           successRate: 1.00 }, // +0 → +1
+  { goldCost: 120, materials: {},                                           successRate: 1.00 }, // +1 → +2
+  { goldCost: 250, materials: { ore: 2 },                                   successRate: 0.70 }, // +2 → +3
+  { goldCost: 400, materials: { boss_shard: 2 },                            successRate: 0.55 }, // +3 → +4
+  { goldCost: 600, materials: { boss_shard: 3, obsidian_fragment: 2 },      successRate: 0.40 }, // +4 → +5
+]
+const RARITY_UPGRADE_COST = { goldCost: 300, materials: { boss_shard: 4, ether_drop: 3 }, successRate: 0.60 }
+
 const SELL_PRICE_FACTOR = 0.12 // 12% du prix d'achat, pour changer la valeur de vente des objets
 const SELL_RARITY_MULTIPLIER = {
   common: 1,
@@ -396,8 +405,10 @@ function createMapState(mapId) {
     blocked.add(toKey(secretPortal.x, secretPortal.y))
   }
 
+  // Les maps de la progression principale n'ont plus de portail retour (le hub remplace ce besoin)
+  const isMainPathMap = MAP_ORDER.includes(mapId)
   let backPortal = null
-  if (map.backPortal) {
+  if (map.backPortal && !isMainPathMap) {
     const backCell = findNearestWalkable(map, transformedBack.x, transformedBack.y, blocked, tiles)
     backPortal = {
       ...map.backPortal,
@@ -411,7 +422,10 @@ function createMapState(mapId) {
 
   const pool = walkablePool(map, tiles, blocked)
 
-  const npcs = placeRandomizedEntities(map, tiles, map.npcs ?? [], pool, blocked, start, 1, (npc, cell) => ({
+  // Filtre les PNJ optionnels selon leur spawnChance (défaut 1.0 = toujours présent)
+  const eligibleNpcs = (map.npcs ?? []).filter((npc) => chance(npc.spawnChance ?? 1.0))
+
+  const npcs = placeRandomizedEntities(map, tiles, eligibleNpcs, pool, blocked, start, 1, (npc, cell) => ({
     ...npc,
     x: cell.x,
     y: cell.y,
@@ -573,8 +587,8 @@ function createShopStock() {
 export function createRun({ name, classId, difficulty }) {
   const selectedClass = classById(classId)
   const firstMapId = MAP_ORDER[0]
-  const maps = Object.fromEntries(mapEntries().map(([mapId]) => [mapId, createMapState(mapId)]))
-  const firstStart = maps[firstMapId]?.start ?? MAPS[firstMapId].start
+  const firstMapState = createMapState(firstMapId)
+  const firstStart = firstMapState.start ?? MAPS[firstMapId].start
 
   const run = {
     metadata: {
@@ -607,15 +621,17 @@ export function createRun({ name, classId, difficulty }) {
     },
     world: {
       currentMapId: firstMapId,
+      currentMapIndex: 0,
       returnMapId: null,
       playerPosition: { ...firstStart },
-      maps,
+      maps: { [firstMapId]: firstMapState },
       shopStock: createShopStock(),
     },
     combat: null,
     pendingLootModal: null,
     levelUpModal: null,
     eventLog: [],
+    phase: 'exploring',
     gameOver: false,
     hardcoreDeath: false,
     victory: false,
@@ -692,29 +708,34 @@ export function hydrateRun(rawSnapshot) {
   run.gameOver ??= false
   run.hardcoreDeath ??= false
   run.victory ??= false
+  run.phase ??= 'exploring'
+  run.world.currentMapIndex ??= MAP_ORDER.indexOf(run.world.currentMapId)
 
   ensurePlayerState(run)
   ensureShopStockState(run)
 
-  for (const [mapId] of mapEntries()) {
-    const state = ensureMapState(run, mapId)
-    state.tiles ??= [...MAPS[mapId].tiles]
-    state.start ??= { ...MAPS[mapId].start }
+  // N'hydrate que les maps déjà existantes dans la sauvegarde (pas de création lazily pour les maps non encore atteintes)
+  for (const mapId of Object.keys(run.world.maps ?? {})) {
+    const map = MAPS[mapId]
+    if (!map) continue
+    const state = run.world.maps[mapId]
+    state.tiles ??= [...map.tiles]
+    state.start ??= { ...map.start }
     if (state.exit == null) {
-      state.exit = MAPS[mapId].exit != null ? { ...MAPS[mapId].exit } : null
+      state.exit = map.exit != null ? { ...map.exit } : null
     }
-    state.secretPortal ??= MAPS[mapId].secretPortal ? { ...MAPS[mapId].secretPortal } : null
-    state.backPortal ??= MAPS[mapId].backPortal ? { ...MAPS[mapId].backPortal } : null
-    if (state.exit && MAPS[mapId].exit) {
-      state.exit.targetMapId = MAPS[mapId].exit.targetMapId
+    state.secretPortal ??= map.secretPortal ? { ...map.secretPortal } : null
+    state.backPortal ??= map.backPortal ? { ...map.backPortal } : null
+    if (state.exit && map.exit) {
+      state.exit.targetMapId = map.exit.targetMapId
     }
-    if (state.secretPortal && MAPS[mapId].secretPortal) {
-      state.secretPortal.targetMapId = MAPS[mapId].secretPortal.targetMapId
+    if (state.secretPortal && map.secretPortal) {
+      state.secretPortal.targetMapId = map.secretPortal.targetMapId
     }
-    if (state.backPortal && MAPS[mapId].backPortal) {
-      state.backPortal.targetMapId = MAPS[mapId].backPortal.targetMapId
+    if (state.backPortal && map.backPortal) {
+      state.backPortal.targetMapId = map.backPortal.targetMapId
     }
-    state.npcs ??= (MAPS[mapId].npcs ?? []).map((npc) => ({ ...npc }))
+    state.npcs ??= (map.npcs ?? []).map((npc) => ({ ...npc }))
     state.discovered ??= []
     state.resources ??= []
     state.chests ??= []
@@ -726,6 +747,8 @@ export function hydrateRun(rawSnapshot) {
     state.secretPortalRevealed ??= false
     state.noSpawnZones ??= []
   }
+  // S'assure que la map courante est toujours présente
+  ensureMapState(run, run.world.currentMapId)
 
   syncVitals(run, false)
   revealAround(run, run.world.currentMapId, run.world.playerPosition.x, run.world.playerPosition.y, 1)
@@ -1292,20 +1315,20 @@ export function harvestNearbyAllCharges(run) {
 function rarityWeights(isBoss) {
   if (isBoss) {
     return [
-      { value: 'common', weight: 20 },
-      { value: 'uncommon', weight: 20 },
-      { value: 'rare', weight: 20 },
-      { value: 'epic', weight: 16 },
-      { value: 'legendary', weight: 16 },
+      { value: 'common', weight: 26 },
+      { value: 'uncommon', weight: 26 },
+      { value: 'rare', weight: 22 },
+      { value: 'epic', weight: 14 },
+      { value: 'legendary', weight: 9 },
       { value: 'mythic', weight: BOSS_MYTHIC_WEIGHT },
     ]
   }
   return [
-    { value: 'common', weight: 56 },
-    { value: 'uncommon', weight: 23 },
-    { value: 'rare', weight: 11 },
-    { value: 'epic', weight: 6 },
-    { value: 'legendary', weight: 4 },
+    { value: 'common', weight: 68 },
+    { value: 'uncommon', weight: 20 },
+    { value: 'rare', weight: 8 },
+    { value: 'epic', weight: 3 },
+    { value: 'legendary', weight: 1 },
     { value: 'mythic', weight: 0 },
   ]
 }
@@ -1316,10 +1339,10 @@ function rarityRoll({ isBoss, bias }) {
     const index = RARITY_ORDER.indexOf(bias)
     base.forEach((entry, idx) => {
       if (idx >= index) {
-        entry.weight += isBoss ? 4 : 2
+        entry.weight += isBoss ? 2 : 1
       }
       if (idx < index - 1) {
-        entry.weight = Math.max(0, entry.weight - 3)
+        entry.weight = Math.max(0, entry.weight - 2)
       }
     })
   }
@@ -1817,6 +1840,14 @@ function portalAtPosition(run, mapState, x, y) {
   return null
 }
 
+function resolvePortal(run, portal, mapState) {
+  if (portal.type === 'exit' && MAP_ORDER.includes(run.world.currentMapId)) {
+    // Laisse l'UI proposer le choix : campement ou niveau suivant directement
+    return { ok: true, exitChoice: true }
+  }
+  return transitionToMap(run, portal.targetMapId)
+}
+
 export function usePortalAtPosition(run) {
   if (run.gameOver) {
     return { ok: false, reason: 'Partie terminee.' }
@@ -1835,7 +1866,7 @@ export function usePortalAtPosition(run) {
     appendLog(run, 'Sortie verrouillee: le boss de la zone est encore vivant.')
     return { ok: true, blockedExit: true }
   }
-  return transitionToMap(run, portal.targetMapId)
+  return resolvePortal(run, portal, mapState)
 }
 
 export function attemptMove(run, dx, dy, options = {}) {
@@ -1885,7 +1916,7 @@ export function attemptMove(run, dx, dy, options = {}) {
     if (deferPortalTransition) {
       return { ok: true, portalPrompt: portal }
     }
-    return transitionToMap(run, portal.targetMapId)
+    return resolvePortal(run, portal, mapState)
   }
 
   const chest = chestAtPosition(run, nx, ny)
@@ -3758,4 +3789,177 @@ export function buyWanderingItem(run, npcId, itemId) {
   addInventoryItem(run, itemCopy)
   appendLog(run, `Acheté ${item.name} au marchand pour ${item.merchantPrice} or.`)
   return { ok: true, item }
+}
+
+// ─── Hub inter-niveaux ────────────────────────────────────────────────────────
+
+export function enterHub(run) {
+  run.phase = 'hub'
+  const mapName = currentMap(run)?.name ?? 'zone inconnue'
+  appendLog(run, `Niveau terminé : ${mapName}. Vous vous reposez au campement.`)
+  return { ok: true, hub: true }
+}
+
+export function startNextLevel(run) {
+  const nextIndex = (run.world.currentMapIndex ?? 0) + 1
+  if (nextIndex >= MAP_ORDER.length) {
+    run.victory = true
+    run.gameOver = true
+    appendLog(run, `Victoire : ${run.player.name} referme la faille d\'onyx.`)
+    return { ok: true, ending: true }
+  }
+  const nextMapId = MAP_ORDER[nextIndex]
+  run.world.currentMapIndex = nextIndex
+  const nextState = ensureMapState(run, nextMapId)
+  run.world.currentMapId = nextMapId
+  run.world.playerPosition = { ...nextState.start }
+  run.phase = 'exploring'
+  revealAround(run, nextMapId, nextState.start.x, nextState.start.y, 2)
+  appendLog(run, `Arrivée dans ${MAPS[nextMapId].name}.`)
+  return { ok: true, mapId: nextMapId }
+}
+
+export function nextLevelInfo(run) {
+  const nextIndex = (run.world.currentMapIndex ?? 0) + 1
+  if (nextIndex >= MAP_ORDER.length) return null
+  const mapId = MAP_ORDER[nextIndex]
+  return { mapId, name: MAPS[mapId]?.name ?? mapId }
+}
+
+// ─── Nom affiché avec niveau d'amélioration ───────────────────────────────────
+
+export function itemDisplayName(item) {
+  if (!item) return ''
+  const level = item.enhancementLevel ?? 0
+  return level > 0 ? `${item.name} +${level}` : item.name
+}
+
+// ─── Forge d'amélioration ─────────────────────────────────────────────────────
+
+function findItemAnywhere(run, itemId) {
+  const inv = run.player.inventory.find((i) => i.id === itemId)
+  if (inv) return inv
+  for (const slot of ['weapon', 'armor', 'trinket']) {
+    if (run.player.equipment[slot]?.id === itemId) return run.player.equipment[slot]
+  }
+  return null
+}
+
+function applyEnhancementStats(item) {
+  const level = item.enhancementLevel ?? 0
+  const baseAtk = item.baseAttack ?? item.attack
+  const baseDef = item.baseDefense ?? item.defense
+  const atkBonus = item.slot === 'weapon' ? 2 : item.slot === 'trinket' ? 1 : 0
+  const defBonus = item.slot === 'armor' ? 2 : item.slot === 'trinket' ? 1 : 0
+  item.attack = baseAtk + atkBonus * level
+  item.defense = baseDef + defBonus * level
+}
+
+export function upgradeItem(run, itemId) {
+  const item = findItemAnywhere(run, itemId)
+  if (!item) return { ok: false, reason: 'Objet introuvable.' }
+  if (item.kind !== 'equipment') return { ok: false, reason: 'Seuls les équipements peuvent être améliorés.' }
+  const currentLevel = item.enhancementLevel ?? 0
+  if (currentLevel >= 5) return { ok: false, reason: 'Amélioration maximale (+5) atteinte.' }
+
+  const cost = UPGRADE_COSTS[currentLevel]
+  if (run.player.gold < cost.goldCost) {
+    return { ok: false, reason: `Or insuffisant — ${cost.goldCost} requis.` }
+  }
+  for (const [mat, qty] of Object.entries(cost.materials)) {
+    if ((run.player.materials[mat] ?? 0) < qty) {
+      return { ok: false, reason: `${qty}× ${MATERIAL_LABELS[mat]} requis.` }
+    }
+  }
+
+  run.player.gold -= cost.goldCost
+  for (const [mat, qty] of Object.entries(cost.materials)) {
+    run.player.materials[mat] -= qty
+  }
+
+  if (currentLevel === 0) {
+    item.baseAttack = item.attack
+    item.baseDefense = item.defense
+  }
+
+  if (chance(cost.successRate)) {
+    item.enhancementLevel = currentLevel + 1
+    applyEnhancementStats(item)
+    const name = itemDisplayName(item)
+    appendLog(run, `Forge réussie ! ${name} obtenu.`)
+    return { ok: true, success: true, newLevel: item.enhancementLevel }
+  } else {
+    item.enhancementLevel = Math.max(0, currentLevel - 1)
+    applyEnhancementStats(item)
+    const name = itemDisplayName(item)
+    appendLog(run, `Forge échouée — rétrogradé à ${name}.`)
+    return { ok: true, success: false, newLevel: item.enhancementLevel }
+  }
+}
+
+export function upgradeItemRarity(run, itemId) {
+  const item = findItemAnywhere(run, itemId)
+  if (!item) return { ok: false, reason: 'Objet introuvable.' }
+  if (item.kind !== 'equipment') return { ok: false, reason: 'Seuls les équipements peuvent être élevés en rareté.' }
+  if ((item.enhancementLevel ?? 0) < 5) return { ok: false, reason: "L'objet doit être +5 pour élever sa rareté." }
+
+  const currentRarityIndex = RARITY_ORDER.indexOf(item.rarity)
+  if (currentRarityIndex < 0 || currentRarityIndex >= RARITY_ORDER.length - 1) {
+    return { ok: false, reason: 'Rareté maximale atteinte (Mythique).' }
+  }
+
+  const cost = RARITY_UPGRADE_COST
+  if (run.player.gold < cost.goldCost) {
+    return { ok: false, reason: `Or insuffisant — ${cost.goldCost} requis.` }
+  }
+  for (const [mat, qty] of Object.entries(cost.materials)) {
+    if ((run.player.materials[mat] ?? 0) < qty) {
+      return { ok: false, reason: `${qty}× ${MATERIAL_LABELS[mat]} requis.` }
+    }
+  }
+
+  run.player.gold -= cost.goldCost
+  for (const [mat, qty] of Object.entries(cost.materials)) {
+    run.player.materials[mat] -= qty
+  }
+
+  if (chance(cost.successRate)) {
+    const oldRarity = RARITIES[item.rarity]
+    const newRarityId = RARITY_ORDER[currentRarityIndex + 1]
+    const newRarity = RARITIES[newRarityId]
+    const ratio = newRarity.powerMultiplier / oldRarity.powerMultiplier
+    item.rarity = newRarityId
+    item.baseAttack = Math.round((item.baseAttack ?? item.attack) * ratio)
+    item.baseDefense = Math.round((item.baseDefense ?? item.defense) * ratio)
+    applyEnhancementStats(item)
+    item.value = Math.round((item.value ?? 0) * newRarity.valueMultiplier / (oldRarity.valueMultiplier || 1))
+    appendLog(run, `Élévation réussie ! ${itemDisplayName(item)} est maintenant ${newRarity.label}.`)
+    return { ok: true, success: true, newRarity: newRarityId }
+  } else {
+    appendLog(run, "Élévation échouée — la rareté reste inchangée.")
+    return { ok: true, success: false }
+  }
+}
+
+export function upgradeCostInfo(run, itemId) {
+  const item = findItemAnywhere(run, itemId)
+  if (!item || item.kind !== 'equipment') return null
+  const level = item.enhancementLevel ?? 0
+  if (level >= 5) return null
+  const cost = UPGRADE_COSTS[level]
+  const canAfford = run.player.gold >= cost.goldCost &&
+    Object.entries(cost.materials).every(([mat, qty]) => (run.player.materials[mat] ?? 0) >= qty)
+  return { ...cost, canAfford }
+}
+
+export function rarityUpgradeCostInfo(run, itemId) {
+  const item = findItemAnywhere(run, itemId)
+  if (!item || item.kind !== 'equipment') return null
+  if ((item.enhancementLevel ?? 0) < 5) return null
+  const currentRarityIndex = RARITY_ORDER.indexOf(item.rarity)
+  if (currentRarityIndex >= RARITY_ORDER.length - 1) return null
+  const cost = RARITY_UPGRADE_COST
+  const canAfford = run.player.gold >= cost.goldCost &&
+    Object.entries(cost.materials).every(([mat, qty]) => (run.player.materials[mat] ?? 0) >= qty)
+  return { ...cost, canAfford, nextRarity: RARITY_ORDER[currentRarityIndex + 1] }
 }

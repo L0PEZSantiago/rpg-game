@@ -1290,6 +1290,10 @@ function mapTreeEffectToBonuses(effect = {}) {
       addBonus(out, 'speedPercent', scaled)
       continue
     }
+    if (key === 'speedFlat') {
+      addBonus(out, 'speedFlat', scaled)
+      continue
+    }
     if (key === 'critChancePct' || key === 'magicCritChancePct' || key === 'bonusCritChanceConditionalPct') {
       addBonus(out, 'critChanceFlat', scaled)
       continue
@@ -1408,6 +1412,9 @@ function summarizeBonusesLines(bonuses) {
   }
   if (bonuses.defensePercent) {
     lines.push(`DEF +${formatPct(bonuses.defensePercent)}%`)
+  }
+  if (bonuses.speedFlat) {
+    lines.push(`Vitesse +${bonuses.speedFlat}`)
   }
   if (bonuses.speedPercent) {
     lines.push(`Vitesse +${formatPct(bonuses.speedPercent)}%`)

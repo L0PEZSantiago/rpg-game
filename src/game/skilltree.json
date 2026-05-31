@@ -97,7 +97,7 @@
             "name": "Tir Rapide",
             "description": "Tempo et efficacité.",
             "passives": [
-              { "id": "arc_rapid_01", "name": "Vivacité", "effect": { "speedPct": 2 } },
+              { "id": "arc_rapid_01", "name": "Vivacité", "effect": { "speedFlat": 2 } },
               { "id": "arc_rapid_02", "name": "Tir précis", "effect": { "basicAttackDamagePct": 2 } },
               { "id": "arc_rapid_03", "name": "Force de bras", "effect": { "atkPct": 1 } },
               { "id": "arc_rapid_04", "name": "Flux de mana", "effect": { "manaRegenPct": 2 } },
@@ -109,7 +109,7 @@
                 "id": "arc_rapid_09",
                 "name": "Pluie de Flèches",
                 "tier": "major",
-                "effect": { "damagePct": 5, "speedPct": 5 }
+                "effect": { "damagePct": 5, "speedFlat": 5 }
               }
             ]
           },

@@ -30,6 +30,7 @@ import {
   dismissLevelUpModal,
   endPlayerTurn,
   enemyAtPosition,
+  enterHub,
   equipItem,
   fleeCombat,
   getFleeChance,
@@ -40,12 +41,16 @@ import {
   healAtNpc,
   hydrateRun,
   isTileDiscovered,
+  itemDisplayName,
   moveEnemyTo,
   nearbyChest,
   nearbyNpc,
   nearbyResource,
+  nextLevelInfo,
   openNearbyChest,
   performChallengeRoll,
+  rarityUpgradeCostInfo,
+  startNextLevel,
   stepWanderingNpcs,
   playerNormalAttack,
   playerUseSkill,
@@ -57,6 +62,9 @@ import {
   sellItem,
   sellValueForItem,
   startCombat,
+  upgradeCostInfo,
+  upgradeItem,
+  upgradeItemRarity,
   usePortalAtPosition,
   unequipItem,
   unlockPassive,
@@ -118,6 +126,11 @@ const locationToast = ref('')
 let locationToastTimer = null
 const inventoryTab = ref('weapon')
 const combatConsumableTab = ref('regen')
+const hubTab = ref('character')
+const forgeSelectedItemId = ref(null)
+const forgeResult = ref(null)
+let forgeResultTimer = null
+const exitChoiceModal = ref(false)
 const inventoryTrackingPrimed = ref(false)
 const inventorySnapshot = ref(new Map())
 const newInventoryItems = reactive({})
@@ -343,6 +356,37 @@ const INVENTORY_TOOLTIP_WIDTH = 304
 const INVENTORY_TOOLTIP_HEIGHT = 192
 const INVENTORY_TOOLTIP_GAP = 16
 const INVENTORY_TOOLTIP_PAD = 10
+
+const isInHub = computed(() => run.value?.phase === 'hub')
+const hubNextLevel = computed(() => (run.value ? nextLevelInfo(run.value) : null))
+const forgeSelectedItem = computed(() => {
+  if (!run.value || !forgeSelectedItemId.value) return null
+  const inv = run.value.player.inventory.find((i) => i.id === forgeSelectedItemId.value)
+  if (inv) return inv
+  for (const slot of ['weapon', 'armor', 'trinket']) {
+    if (run.value.player.equipment[slot]?.id === forgeSelectedItemId.value) return run.value.player.equipment[slot]
+  }
+  return null
+})
+const forgeUpgradeCost = computed(() =>
+  run.value && forgeSelectedItemId.value ? upgradeCostInfo(run.value, forgeSelectedItemId.value) : null,
+)
+const forgeRarityUpgradeCost = computed(() =>
+  run.value && forgeSelectedItemId.value ? rarityUpgradeCostInfo(run.value, forgeSelectedItemId.value) : null,
+)
+const hubEquipmentItems = computed(() => {
+  if (!run.value) return []
+  const items = []
+  for (const slot of ['weapon', 'armor', 'trinket']) {
+    const eq = run.value.player.equipment[slot]
+    if (eq) items.push({ ...eq, _isEquipped: true })
+  }
+  return items
+})
+const hubInventoryEquipment = computed(() => {
+  if (!run.value) return []
+  return run.value.player.inventory.filter((i) => i.kind === 'equipment')
+})
 
 function consumableGroupIdFromEffect(effect) {
   if (effect === 'heal_50' || effect === 'heal_80' || effect === 'mana_60' || effect === 'heal_45_mana_35') {
@@ -3015,6 +3059,71 @@ function startGameFromTutorial() {
   showLocationToast(activeMap.value?.name ?? '')
 }
 
+function chooseExitCampement() {
+  if (!run.value) return
+  exitChoiceModal.value = false
+  enterHub(run.value)
+  playUiSound(UI_SOUND_BANK.portal, 0.3)
+  persistRun()
+}
+
+function chooseExitNextLevel() {
+  if (!run.value) return
+  exitChoiceModal.value = false
+  const result = startNextLevel(run.value)
+  if (result.ending) { persistRun(); return }
+  hubTab.value = 'character'
+  forgeSelectedItemId.value = null
+  forgeResult.value = null
+  syncMapPlayerToRun()
+  npcOpen.value = false
+  challengeModal.value = null
+  wanderingMerchantModal.value = null
+  closeMetaModals()
+  playUiSound(UI_SOUND_BANK.portal, 0.3)
+  startMerchantTimerForMap(false)
+  showLocationToast(activeMap.value?.name ?? '')
+  persistRun()
+}
+
+function handleGoToNextLevel() {
+  if (!run.value) return
+  const result = startNextLevel(run.value)
+  if (result.ending) {
+    persistRun()
+    return
+  }
+  hubTab.value = 'character'
+  forgeSelectedItemId.value = null
+  forgeResult.value = null
+  syncMapPlayerToRun()
+  npcOpen.value = false
+  challengeModal.value = null
+  wanderingMerchantModal.value = null
+  closeMetaModals()
+  startMerchantTimerForMap(false)
+  showLocationToast(activeMap.value?.name ?? '')
+  persistRun()
+}
+
+function handleForgeUpgrade() {
+  if (!run.value || !forgeSelectedItemId.value) return
+  clearTimeout(forgeResultTimer)
+  const result = upgradeItem(run.value, forgeSelectedItemId.value)
+  forgeResult.value = result
+  forgeResultTimer = setTimeout(() => { forgeResult.value = null }, 3500)
+  persistRun()
+}
+
+function handleForgeRarityUpgrade() {
+  if (!run.value || !forgeSelectedItemId.value) return
+  clearTimeout(forgeResultTimer)
+  const result = upgradeItemRarity(run.value, forgeSelectedItemId.value)
+  forgeResult.value = result
+  forgeResultTimer = setTimeout(() => { forgeResult.value = null }, 3500)
+  persistRun()
+}
+
 function returnToMenuFromTutorial() {
   tutorialEndModal.value = false
   clearSnapshot()
@@ -3118,13 +3227,20 @@ function confirmPortalMove() {
     }
   } else if (result.blockedExit) {
     setInfo('Sortie verrouillee: boss encore vivant.')
+  } else if (result.exitChoice) {
+    // Propose le choix : campement ou niveau suivant
+    exitChoiceModal.value = true
+    persistRun()
+    return
+  } else if (result.hub) {
+    playUiSound(UI_SOUND_BANK.portal, 0.3)
   } else {
     syncMapPlayerToRun()
     playUiSound(UI_SOUND_BANK.portal, 0.3)
     startMerchantTimerForMap(true)
+    scheduleEnemyTurn()
   }
   persistRun()
-  scheduleEnemyTurn()
 }
 
 function cancelPortalMove() {
@@ -4049,6 +4165,280 @@ onBeforeUnmount(() => {
           <button class="secondary" @click="exportSqliteBase64">Copier export SQLite (base64)</button>
           <p v-if="exportMessage" class="export-message">{{ exportMessage }}</p>
         </article>
+      </div>
+    </section>
+
+    <section v-else-if="isInHub" class="hub-screen">
+      <!-- En-tête hub -->
+      <header class="hub-header card">
+        <div class="hub-header-left">
+          <h1 class="hub-title">Campement</h1>
+          <p class="hub-subtitle">Niveau {{ run.world.currentMapIndex }} terminé — prépare-toi pour la suite</p>
+        </div>
+        <button class="hub-depart-btn" @click="handleGoToNextLevel">
+          {{ hubNextLevel ? `Partir vers ${hubNextLevel.name}` : "Fin de l'aventure" }}
+          <span>→</span>
+        </button>
+      </header>
+
+      <!-- Onglets principaux -->
+      <nav class="hub-tabs">
+        <button class="hub-tab-btn" :class="{ active: hubTab === 'character' }" @click="hubTab = 'character'">Personnage</button>
+        <button class="hub-tab-btn" :class="{ active: hubTab === 'inventory' }" @click="hubTab = 'inventory'">Inventaire</button>
+        <button class="hub-tab-btn" :class="{ active: hubTab === 'forge' }" @click="hubTab = 'forge'">Forge</button>
+        <button class="hub-tab-btn" :class="{ active: hubTab === 'consumables' }" @click="hubTab = 'consumables'">Consommables</button>
+      </nav>
+
+      <div class="hub-tab-content">
+        <!-- ── Tab : Personnage ─────────────────────────────────── -->
+        <div v-if="hubTab === 'character'" class="hub-char-tab">
+          <div class="hub-char-top card">
+            <!-- Portrait animé -->
+            <div class="hub-portrait-clip">
+              <img class="animated-avatar-strip" :src="playerIdleSprite" alt="personnage"
+                :style="animatedSpriteStripStyle(playerIdleSprite, 4, 1)" />
+            </div>
+            <div class="hub-char-identity">
+              <h2 class="hub-char-name">{{ run.player.name }}</h2>
+              <p class="hub-char-class">{{ currentClass?.name }} — Niveau {{ run.player.level }}</p>
+              <p class="hub-char-xp">XP {{ run.player.xp }} / {{ run.player.nextXp }}</p>
+            </div>
+            <div class="hub-char-vitals">
+              <div class="hub-vital-row">
+                <span class="hub-vital-label">PV</span>
+                <div class="hub-vital-bar-wrap"><div class="hub-vital-bar hub-bar-hp"
+                  :style="{ width: Math.round(run.player.hp / stats.maxHp * 100) + '%' }"></div></div>
+                <span class="hub-vital-val">{{ run.player.hp }}/{{ stats.maxHp }}</span>
+              </div>
+              <div class="hub-vital-row">
+                <span class="hub-vital-label">Mana</span>
+                <div class="hub-vital-bar-wrap"><div class="hub-vital-bar hub-bar-mp"
+                  :style="{ width: Math.round(run.player.mana / stats.maxMana * 100) + '%' }"></div></div>
+                <span class="hub-vital-val">{{ run.player.mana }}/{{ stats.maxMana }}</span>
+              </div>
+              <div class="hub-stat-pills">
+                <span class="hub-pill">⚔️ {{ stats.attack }}</span>
+                <span class="hub-pill">🛡️ {{ stats.defense }}</span>
+                <span class="hub-pill hub-pill-gold">💰 {{ run.player.gold }} or</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Équipement actuel -->
+          <div class="hub-equip-row">
+            <div v-for="slot in ['weapon','armor','trinket']" :key="slot"
+              class="hub-equip-card card"
+              :class="{ 'hub-equip-selected': run.player.equipment[slot]?.id === forgeSelectedItemId }"
+              @click="if(run.player.equipment[slot]) { forgeSelectedItemId = run.player.equipment[slot].id; hubTab = 'forge' }">
+              <img :src="run.player.equipment[slot] ? itemIcon(run.player.equipment[slot]) : '/assets/Icons/backpack.png'"
+                class="hub-equip-icon" alt="" />
+              <div class="hub-equip-info">
+                <span v-if="run.player.equipment[slot]" class="hub-equip-name"
+                  :style="{ color: RARITIES[run.player.equipment[slot].rarity]?.color }">
+                  {{ itemDisplayName(run.player.equipment[slot]) }}
+                </span>
+                <span v-else class="hub-equip-empty">Aucun {{ slot === 'weapon' ? 'arme' : slot === 'armor' ? 'armure' : 'anneau' }}</span>
+                <span v-if="run.player.equipment[slot]" class="hub-equip-stats">
+                  <template v-if="run.player.equipment[slot].attack > 0">⚔️ {{ run.player.equipment[slot].attack }} </template>
+                  <template v-if="run.player.equipment[slot].defense > 0">🛡️ {{ run.player.equipment[slot].defense }}</template>
+                </span>
+              </div>
+              <span v-if="run.player.equipment[slot]" class="hub-forge-hint">Forger →</span>
+            </div>
+          </div>
+
+          <!-- Matériaux -->
+          <div class="hub-mats-section card">
+            <h3 class="hub-section-title">Matériaux</h3>
+            <div class="hub-mats-grid">
+              <div v-for="(qty, mat) in run.player.materials" :key="mat" v-show="qty > 0" class="hub-mat-entry">
+                <span class="material-icon material-icon-sm" :style="materialIconStyle(mat)"></span>
+                <span class="hub-mat-name">{{ MATERIAL_LABELS[mat] }}</span>
+                <span class="hub-mat-qty">{{ qty }}</span>
+              </div>
+              <span v-if="Object.values(run.player.materials).every(q => q === 0)" class="hub-empty-inline">Aucun matériau.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Tab : Inventaire ────────────────────────────────── -->
+        <div v-else-if="hubTab === 'inventory'" class="hub-inv-tab">
+          <p v-if="hubInventoryEquipment.length === 0" class="hub-empty">Aucun équipement dans l'inventaire.</p>
+          <div class="hub-inv-grid">
+            <div v-for="item in hubInventoryEquipment" :key="item.id"
+              class="hub-inv-card card" :class="{ 'hub-inv-selected': item.id === forgeSelectedItemId }">
+              <img :src="itemIcon(item)" class="hub-inv-icon" alt="" />
+              <div class="hub-inv-info">
+                <span class="hub-inv-name" :style="{ color: RARITIES[item.rarity]?.color }">
+                  {{ itemDisplayName(item) }}
+                </span>
+                <span class="hub-inv-stats">
+                  <template v-if="item.attack > 0">⚔️ {{ item.attack }} </template>
+                  <template v-if="item.defense > 0">🛡️ {{ item.defense }}</template>
+                  <span v-if="(item.enhancementLevel ?? 0) > 0" class="hub-enhance-badge">+{{ item.enhancementLevel }}</span>
+                </span>
+                <span class="hub-inv-rarity" :style="{ color: RARITIES[item.rarity]?.color }">
+                  {{ RARITIES[item.rarity]?.label }}
+                </span>
+              </div>
+              <div class="hub-inv-actions">
+                <button class="hub-action-btn hub-btn-equip"
+                  @click="equipItem(run.value, item.id); persistRun()">Équiper</button>
+                <button class="hub-action-btn hub-btn-forge"
+                  @click="forgeSelectedItemId = item.id; hubTab = 'forge'">Forger</button>
+                <button class="hub-action-btn hub-btn-sell"
+                  @click="sellItem(run.value, item.id); persistRun()">
+                  {{ sellValueForItem(run.value, item) }} or
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Tab : Forge ────────────────────────────────────── -->
+        <div v-else-if="hubTab === 'forge'" class="hub-forge-tab">
+          <!-- Sélecteur d'objet -->
+          <div class="hub-forge-selector card">
+            <h3 class="hub-section-title">Choisir un équipement</h3>
+            <div class="hub-forge-item-list">
+              <button v-for="eq in [...hubEquipmentItems, ...hubInventoryEquipment]" :key="eq.id"
+                class="hub-forge-item-btn" :class="{ selected: eq.id === forgeSelectedItemId }"
+                @click="forgeSelectedItemId = eq.id; forgeResult = null">
+                <img :src="itemIcon(eq)" class="hub-forge-item-icon" alt="" />
+                <span class="hub-forge-item-label" :style="{ color: RARITIES[eq.rarity]?.color }">
+                  {{ itemDisplayName(eq) }}
+                </span>
+                <span v-if="eq._isEquipped" class="hub-equipped-tag">équipé</span>
+              </button>
+              <p v-if="hubEquipmentItems.length === 0 && hubInventoryEquipment.length === 0" class="hub-empty">
+                Aucun équipement disponible.
+              </p>
+            </div>
+          </div>
+
+          <!-- Détail forge -->
+          <div v-if="forgeSelectedItem" class="hub-forge-detail card">
+            <div class="hub-forge-item-header">
+              <img :src="itemIcon(forgeSelectedItem)" class="hub-forge-detail-icon" alt="" />
+              <div>
+                <div class="hub-forge-item-name" :style="{ color: RARITIES[forgeSelectedItem.rarity]?.color }">
+                  {{ itemDisplayName(forgeSelectedItem) }}
+                </div>
+                <div class="hub-forge-item-rarity" :style="{ color: RARITIES[forgeSelectedItem.rarity]?.color }">
+                  {{ RARITIES[forgeSelectedItem.rarity]?.label }}
+                </div>
+              </div>
+            </div>
+
+            <div class="hub-forge-stats">
+              <span v-if="forgeSelectedItem.attack > 0" class="hub-pill">⚔️ {{ forgeSelectedItem.attack }}</span>
+              <span v-if="forgeSelectedItem.defense > 0" class="hub-pill">🛡️ {{ forgeSelectedItem.defense }}</span>
+            </div>
+
+            <!-- Indicateur niveau +0 à +5 -->
+            <div class="hub-forge-levels">
+              <span v-for="n in 5" :key="n"
+                class="hub-forge-level-pip"
+                :class="{ filled: n <= (forgeSelectedItem.enhancementLevel ?? 0) }">+{{ n }}</span>
+            </div>
+
+            <!-- Coût amélioration -->
+            <div v-if="forgeUpgradeCost" class="hub-forge-cost-block">
+              <h4 class="hub-forge-cost-title">→ +{{ (forgeSelectedItem.enhancementLevel ?? 0) + 1 }}</h4>
+              <div class="hub-forge-cost-lines">
+                <span class="hub-forge-cost-line"
+                  :class="run.player.gold >= forgeUpgradeCost.goldCost ? 'cost-ok' : 'cost-missing'">
+                  💰 {{ forgeUpgradeCost.goldCost }} or
+                  <span class="cost-owned">({{ run.player.gold }} possédé)</span>
+                </span>
+                <span v-for="(qty, mat) in forgeUpgradeCost.materials" :key="mat" class="hub-forge-cost-line"
+                  :class="(run.player.materials[mat] ?? 0) >= qty ? 'cost-ok' : 'cost-missing'">
+                  <span class="material-icon material-icon-sm" :style="materialIconStyle(mat)"></span>
+                  {{ qty }}× {{ MATERIAL_LABELS[mat] }}
+                  <span class="cost-owned">({{ run.player.materials[mat] ?? 0 }} possédé)</span>
+                </span>
+              </div>
+              <div class="hub-forge-success-rate"
+                :class="forgeUpgradeCost.successRate >= 1 ? 'rate-sure' : forgeUpgradeCost.successRate >= 0.6 ? 'rate-good' : 'rate-risky'">
+                {{ forgeUpgradeCost.successRate >= 1 ? 'Succès garanti' : `${Math.round(forgeUpgradeCost.successRate * 100)}% de réussite` }}
+              </div>
+              <p v-if="forgeUpgradeCost.successRate < 1" class="hub-forge-fail-warn">
+                Échec → rétrogradé d'un niveau
+              </p>
+              <button class="hub-forge-btn" :disabled="!forgeUpgradeCost.canAfford" @click="handleForgeUpgrade">
+                Améliorer
+              </button>
+            </div>
+            <p v-else-if="(forgeSelectedItem.enhancementLevel ?? 0) >= 5" class="hub-forge-max">
+              ✦ Amélioration maximale (+5) atteinte
+            </p>
+
+            <!-- Élévation de rareté -->
+            <div v-if="forgeRarityUpgradeCost" class="hub-forge-cost-block hub-rarity-upgrade">
+              <h4 class="hub-forge-cost-title"
+                :style="{ color: RARITIES[forgeRarityUpgradeCost.nextRarity]?.color }">
+                Élever → {{ RARITIES[forgeRarityUpgradeCost.nextRarity]?.label }}
+              </h4>
+              <div class="hub-forge-cost-lines">
+                <span class="hub-forge-cost-line"
+                  :class="run.player.gold >= forgeRarityUpgradeCost.goldCost ? 'cost-ok' : 'cost-missing'">
+                  💰 {{ forgeRarityUpgradeCost.goldCost }} or
+                  <span class="cost-owned">({{ run.player.gold }} possédé)</span>
+                </span>
+                <span v-for="(qty, mat) in forgeRarityUpgradeCost.materials" :key="mat" class="hub-forge-cost-line"
+                  :class="(run.player.materials[mat] ?? 0) >= qty ? 'cost-ok' : 'cost-missing'">
+                  <span class="material-icon material-icon-sm" :style="materialIconStyle(mat)"></span>
+                  {{ qty }}× {{ MATERIAL_LABELS[mat] }}
+                  <span class="cost-owned">({{ run.player.materials[mat] ?? 0 }} possédé)</span>
+                </span>
+              </div>
+              <div class="hub-forge-success-rate rate-risky">
+                {{ Math.round(forgeRarityUpgradeCost.successRate * 100) }}% de réussite
+              </div>
+              <p class="hub-forge-fail-warn">Échec → rareté inchangée, coûts perdus</p>
+              <button class="hub-forge-btn hub-rarity-btn" :disabled="!forgeRarityUpgradeCost.canAfford"
+                @click="handleForgeRarityUpgrade">
+                Élever la rareté
+              </button>
+            </div>
+
+            <!-- Résultat -->
+            <Transition name="forge-result">
+              <div v-if="forgeResult" class="hub-forge-result"
+                :class="forgeResult.success ? 'forge-success' : (forgeResult.ok ? 'forge-fail' : 'forge-error')">
+                <span v-if="!forgeResult.ok">{{ forgeResult.reason }}</span>
+                <span v-else-if="forgeResult.success">✓ Succès !</span>
+                <span v-else>✗ Échec — rétrogradé</span>
+              </div>
+            </Transition>
+          </div>
+          <div v-else class="hub-forge-placeholder card">
+            Sélectionne un équipement dans la liste pour le forger.
+          </div>
+        </div>
+
+        <!-- ── Tab : Consommables ─────────────────────────────── -->
+        <div v-else-if="hubTab === 'consumables'" class="hub-cons-tab">
+          <p v-if="run.player.inventory.filter(i=>i.kind==='consumable').length === 0" class="hub-empty">
+            Aucun consommable en stock.
+          </p>
+          <div class="hub-inv-grid">
+            <div v-for="item in run.player.inventory.filter(i => i.kind === 'consumable')" :key="item.id"
+              class="hub-inv-card card">
+              <img :src="itemIcon(item)" class="hub-inv-icon" alt="" />
+              <div class="hub-inv-info">
+                <span class="hub-inv-name">{{ item.name }}</span>
+                <span class="hub-inv-stats">{{ item.description ?? '' }}</span>
+              </div>
+              <div class="hub-inv-actions">
+                <button class="hub-action-btn hub-btn-sell"
+                  @click="sellItem(run.value, item.id); persistRun()">
+                  {{ sellValueForItem(run.value, item) }} or
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -5094,6 +5484,27 @@ onBeforeUnmount(() => {
             <button class="primary" @click="confirmPortalMove">Prendre le portail</button>
             <button class="secondary" @click="run?.metadata?.isTutorial ? returnToMenuFromTutorial() : cancelPortalMove()">
               {{ run?.metadata?.isTutorial ? 'Retour au menu' : 'Rester ici' }}
+            </button>
+          </div>
+        </article>
+      </div>
+
+      <div v-if="exitChoiceModal" class="overlay-meta">
+        <article class="meta-modal exit-choice-modal" @click.stop>
+          <header>
+            <h2 class="exit-choice-title">Zone terminée</h2>
+            <p class="exit-choice-sub">Le boss est vaincu. Que fais-tu ?</p>
+          </header>
+          <div class="exit-choice-btns">
+            <button class="exit-choice-btn exit-btn-camp" @click="chooseExitCampement">
+              <span class="exit-choice-icon">🏕️</span>
+              <span class="exit-choice-label">Campement</span>
+              <span class="exit-choice-desc">Gérer l'inventaire, forger, se préparer</span>
+            </button>
+            <button class="exit-choice-btn exit-btn-next" @click="chooseExitNextLevel">
+              <span class="exit-choice-icon">⚔️</span>
+              <span class="exit-choice-label">Avancer directement</span>
+              <span class="exit-choice-desc" v-if="hubNextLevel">Partir vers {{ hubNextLevel.name }}</span>
             </button>
           </div>
         </article>
@@ -10286,5 +10697,475 @@ button.danger {
 }
 .merchant-buy-btn:not(:disabled):hover {
   background: rgba(120, 95, 30, 0.8);
+}
+
+/* ── Modal choix sortie donjon ── */
+.exit-choice-modal {
+  max-width: 420px;
+  width: 100%;
+}
+.exit-choice-title {
+  margin: 0 0 4px;
+  font-size: 1.2rem;
+  color: #fcd596;
+}
+.exit-choice-sub {
+  margin: 0;
+  font-size: 0.84rem;
+  color: rgba(255,217,156,0.5);
+}
+.exit-choice-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+.exit-choice-btn {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,217,156,0.22);
+  background: rgba(255,255,255,0.04);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.14s, background 0.14s;
+  width: 100%;
+}
+.exit-choice-btn:hover {
+  background: rgba(255,217,156,0.08);
+  border-color: rgba(255,217,156,0.45);
+}
+.exit-choice-icon {
+  grid-row: 1 / 3;
+  font-size: 1.6rem;
+  line-height: 1;
+}
+.exit-choice-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fcd596;
+}
+.exit-choice-desc {
+  font-size: 0.78rem;
+  color: rgba(255,217,156,0.45);
+}
+.exit-btn-camp:hover  { border-color: rgba(100,200,120,0.5); background: rgba(40,120,60,0.12); }
+.exit-btn-next:hover  { border-color: rgba(200,100,60,0.5); background: rgba(120,40,20,0.12); }
+
+/* ═══════════════════════════════════════════════
+   HUB INTER-NIVEAUX
+   ═══════════════════════════════════════════════ */
+.hub-screen {
+  max-width: 1500px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── En-tête ── */
+.hub-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.hub-title {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #fcd596;
+  letter-spacing: 0.06em;
+}
+.hub-subtitle {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  color: rgba(255,217,156,0.55);
+}
+.hub-depart-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #8b5e14, #d4a020);
+  color: #1a0e00;
+  border: 1px solid rgba(255,217,156,0.5);
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 0.15s;
+  white-space: nowrap;
+}
+.hub-depart-btn:hover { filter: brightness(1.14); }
+
+/* ── Onglets ── */
+.hub-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.hub-tab-btn {
+  padding: 9px 18px;
+  background: transparent;
+  color: rgba(255,217,156,0.5);
+  border: 1px solid rgba(255,217,156,0.18);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.hub-tab-btn:hover { background: rgba(255,217,156,0.08); color: #fcd596; }
+.hub-tab-btn.active {
+  background: linear-gradient(140deg, rgba(11,24,30,0.9), rgba(53,28,10,0.85));
+  color: #fcd596;
+  border-color: rgba(255,217,156,0.42);
+}
+
+/* ── Contenu onglet (scroll) ── */
+.hub-tab-content {
+  overflow-y: auto;
+}
+
+/* ── Utilitaires ── */
+.hub-section-title {
+  margin: 0 0 10px;
+  font-size: 0.82rem;
+  color: rgba(255,217,156,0.55);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.hub-empty {
+  color: rgba(255,217,156,0.3);
+  font-style: italic;
+  text-align: center;
+  padding: 28px 16px;
+}
+.hub-empty-inline { color: rgba(255,217,156,0.3); font-style: italic; font-size: 0.82rem; }
+.hub-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: rgba(255,217,156,0.08);
+  border: 1px solid rgba(255,217,156,0.2);
+  border-radius: 20px;
+  font-size: 0.82rem;
+  color: #e8dcc8;
+}
+.hub-pill-gold { color: #fcd596; border-color: rgba(255,217,156,0.4); }
+.hub-enhance-badge {
+  background: #c89a20;
+  color: #1a0e00;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.hub-forge-hint {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: rgba(255,217,156,0.35);
+}
+.hub-equipped-tag {
+  margin-left: auto;
+  font-size: 0.68rem;
+  color: #fcd596;
+  background: rgba(255,217,156,0.12);
+  border: 1px solid rgba(255,217,156,0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+/* ────────────────────────────────────────────────
+   TAB PERSONNAGE
+   ──────────────────────────────────────────────── */
+.hub-char-tab { display: flex; flex-direction: column; gap: 14px; }
+
+.hub-char-top {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+/* Portrait animé */
+.hub-portrait-clip {
+  width: 56px;
+  height: 72px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(8,18,25,0.9);
+  flex-shrink: 0;
+  image-rendering: pixelated;
+}
+
+.hub-char-identity {
+  min-width: 140px;
+}
+.hub-char-name {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #fcd596;
+}
+.hub-char-class {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  color: rgba(255,217,156,0.6);
+}
+.hub-char-xp {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  color: rgba(255,217,156,0.4);
+}
+
+.hub-char-vitals {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+}
+.hub-vital-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+}
+.hub-vital-label { width: 34px; color: rgba(255,217,156,0.55); flex-shrink: 0; }
+.hub-vital-bar-wrap {
+  flex: 1;
+  height: 8px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.hub-vital-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.hub-bar-hp { background: linear-gradient(90deg, #c84040, #e05050); }
+.hub-bar-mp { background: linear-gradient(90deg, #3050b8, #4060e0); }
+.hub-vital-val { width: 68px; text-align: right; font-size: 0.76rem; color: #e8dcc8; }
+.hub-stat-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Équipement en ligne */
+.hub-equip-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.hub-equip-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.hub-equip-card:hover { border-color: rgba(255,217,156,0.42); }
+.hub-equip-selected { border-color: #c89a20 !important; }
+.hub-equip-icon { width: 36px; height: 36px; object-fit: contain; flex-shrink: 0; image-rendering: pixelated; }
+.hub-equip-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hub-equip-name { font-size: 0.82rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-equip-empty { font-size: 0.78rem; color: rgba(255,217,156,0.25); font-style: italic; }
+.hub-equip-stats { font-size: 0.72rem; color: rgba(255,217,156,0.5); }
+
+/* Matériaux */
+.hub-mats-section {}
+.hub-mats-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.hub-mat-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+}
+.hub-mat-name { color: rgba(255,217,156,0.55); }
+.hub-mat-qty { font-weight: 700; color: #fcd596; }
+
+/* ────────────────────────────────────────────────
+   TAB INVENTAIRE & CONSOMMABLES
+   ──────────────────────────────────────────────── */
+.hub-inv-tab, .hub-cons-tab { display: flex; flex-direction: column; gap: 10px; }
+.hub-inv-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hub-inv-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.hub-inv-card.hub-inv-selected { border-color: #c89a20; }
+.hub-inv-icon { width: 38px; height: 38px; object-fit: contain; flex-shrink: 0; image-rendering: pixelated; }
+.hub-inv-info { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.hub-inv-name { font-size: 0.88rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-inv-stats { font-size: 0.75rem; color: rgba(255,217,156,0.55); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.hub-inv-rarity { font-size: 0.72rem; }
+.hub-inv-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+.hub-action-btn {
+  padding: 5px 11px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  font-size: 0.76rem;
+  cursor: pointer;
+  font-weight: 600;
+  transition: filter 0.12s;
+}
+.hub-action-btn:hover { filter: brightness(1.18); }
+.hub-btn-equip { background: #1a4a80; color: #a0d0ff; border-color: rgba(100,180,255,0.3); }
+.hub-btn-forge { background: #5a2a08; color: #ffcc80; border-color: rgba(255,160,60,0.3); }
+.hub-btn-sell  { background: rgba(255,217,156,0.07); color: rgba(255,217,156,0.6); border-color: rgba(255,217,156,0.2); }
+
+/* ────────────────────────────────────────────────
+   TAB FORGE
+   ──────────────────────────────────────────────── */
+.hub-forge-tab {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+.hub-forge-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hub-forge-item-list { display: flex; flex-direction: column; gap: 5px; }
+.hub-forge-item-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px solid rgba(255,217,156,0.18);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+  width: 100%;
+}
+.hub-forge-item-btn:hover { background: rgba(255,217,156,0.06); border-color: rgba(255,217,156,0.32); }
+.hub-forge-item-btn.selected { background: rgba(200,154,32,0.12); border-color: #c89a20; }
+.hub-forge-item-icon { width: 30px; height: 30px; object-fit: contain; flex-shrink: 0; image-rendering: pixelated; }
+.hub-forge-item-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.hub-forge-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.hub-forge-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  color: rgba(255,217,156,0.28);
+  font-style: italic;
+}
+.hub-forge-item-header { display: flex; align-items: center; gap: 12px; }
+.hub-forge-detail-icon { width: 48px; height: 48px; object-fit: contain; border-radius: 6px; image-rendering: pixelated; }
+.hub-forge-item-name { font-size: 1rem; font-weight: 700; }
+.hub-forge-item-rarity { font-size: 0.78rem; }
+.hub-forge-stats { display: flex; gap: 8px; flex-wrap: wrap; }
+.hub-forge-levels { display: flex; gap: 6px; flex-wrap: wrap; }
+.hub-forge-level-pip {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  background: rgba(255,255,255,0.04);
+  color: rgba(255,217,156,0.25);
+  border: 1px solid rgba(255,217,156,0.12);
+  transition: background 0.15s, color 0.15s;
+}
+.hub-forge-level-pip.filled {
+  background: rgba(200,154,32,0.25);
+  color: #fcd596;
+  border-color: rgba(200,154,32,0.6);
+}
+.hub-forge-cost-block {
+  border: 1px solid rgba(255,217,156,0.18);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(255,255,255,0.03);
+}
+.hub-forge-cost-title { margin: 0; font-size: 0.88rem; color: #fcd596; }
+.hub-forge-cost-lines { display: flex; flex-direction: column; gap: 5px; }
+.hub-forge-cost-line { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #e8dcc8; }
+.cost-ok   { color: #e8dcc8; }
+.cost-missing { color: #e07050; }
+.cost-owned {
+  margin-left: 2px;
+  font-size: 0.74rem;
+  color: rgba(255,217,156,0.4);
+}
+.hub-forge-success-rate {
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 5px;
+  display: inline-block;
+  align-self: flex-start;
+}
+.rate-sure  { background: rgba(60,180,60,0.15); color: #70e870; border: 1px solid rgba(60,180,60,0.3); }
+.rate-good  { background: rgba(60,160,220,0.15); color: #70d0f0; border: 1px solid rgba(60,160,220,0.3); }
+.rate-risky { background: rgba(220,80,40,0.15); color: #f09060; border: 1px solid rgba(220,80,40,0.3); }
+.hub-forge-fail-warn { margin: 0; font-size: 0.74rem; color: rgba(255,217,156,0.4); }
+.hub-forge-btn {
+  padding: 9px 20px;
+  background: linear-gradient(135deg, #5a2a08, #8b4a14);
+  color: #fcd596;
+  border: 1px solid rgba(255,180,60,0.35);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: filter 0.12s;
+}
+.hub-forge-btn:hover:not(:disabled) { filter: brightness(1.18); }
+.hub-forge-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+.hub-rarity-upgrade { border-color: rgba(160,80,230,0.35); }
+.hub-rarity-btn { background: linear-gradient(135deg, #3a0870, #6020b0); border-color: rgba(160,80,230,0.5); }
+.hub-forge-max { margin: 0; font-size: 0.82rem; color: #fcd596; font-style: italic; }
+
+.hub-forge-result {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-align: center;
+}
+.forge-success { background: rgba(40,160,40,0.15); color: #70e870; border: 1px solid rgba(40,160,40,0.35); }
+.forge-fail    { background: rgba(200,50,30,0.15); color: #f07050; border: 1px solid rgba(200,50,30,0.3); }
+.forge-error   { background: rgba(180,100,20,0.15); color: #f0b060; border: 1px solid rgba(180,100,20,0.3); }
+.forge-result-enter-active, .forge-result-leave-active { transition: opacity 0.3s; }
+.forge-result-enter-from, .forge-result-leave-to { opacity: 0; }
+
+/* ── Responsive mobile ── */
+@media (max-width: 640px) {
+  .hub-equip-row { grid-template-columns: 1fr; }
+  .hub-forge-tab { grid-template-columns: 1fr; }
+  .hub-char-top { flex-direction: column; align-items: flex-start; }
+  .hub-depart-btn { width: 100%; justify-content: center; }
+  .hub-header { flex-direction: column; align-items: flex-start; }
 }
 </style>
