@@ -9115,13 +9115,12 @@ button.danger {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    flex: 1;
-    min-height: 0;
+    max-height: 116px;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-width: none;
     -ms-overflow-style: none;
-    align-content: start;
+    flex-shrink: 0;
   }
   .combat-actions-panel[data-mobile-panel="inventory"] .potions-grid::-webkit-scrollbar {
     display: none;
