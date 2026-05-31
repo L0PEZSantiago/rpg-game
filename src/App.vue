@@ -4631,13 +4631,15 @@ onBeforeUnmount(() => {
             </section>
 
             <section class="combat-log-panel">
-              <h3>Journal du combat</h3>
-              <ul>
-                <li v-for="(entry, index) in combatLogEntries" :key="`combat-${index}-${entry}`"
-                  :class="combatLogClasses(entry)">
-                  {{ entry }}
-                </li>
-              </ul>
+              <div class="combat-log-inner">
+                <h3>Journal du combat</h3>
+                <ul>
+                  <li v-for="(entry, index) in combatLogEntries" :key="`combat-${index}-${entry}`"
+                    :class="combatLogClasses(entry)">
+                    {{ entry }}
+                  </li>
+                </ul>
+              </div>
             </section>
           </div>
         </article>
@@ -7704,12 +7706,19 @@ button.danger {
 
 .combat-log-panel {
   display: block;
+  position: relative;
   height: 220px;
-  min-height: 220px;
-  max-height: 220px;
+  overflow: hidden;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.combat-log-inner {
+  position: absolute;
+  inset: 0;
+  padding: 10px;
   overflow-y: auto;
   overflow-x: hidden;
-  flex-shrink: 0;
 }
 
 .combat-log-panel li {
@@ -8733,10 +8742,6 @@ button.danger {
   .combat-log-panel {
     order: 4;
     height: 160px;
-    min-height: 160px;
-    max-height: 160px;
-    overflow-y: auto;
-    overflow-x: hidden;
   }
 
   .item-compare-tooltip.floating {
