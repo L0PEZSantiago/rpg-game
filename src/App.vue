@@ -46,6 +46,7 @@ import {
   nearbyChest,
   nearbyNpc,
   nearbyResource,
+  navigateToMap,
   nextLevelInfo,
   openNearbyChest,
   performChallengeRoll,
@@ -130,7 +131,7 @@ const hubTab = ref('character')
 const forgeSelectedItemId = ref(null)
 const forgeResult = ref(null)
 let forgeResultTimer = null
-const exitChoiceModal = ref(false)
+const exitChoiceModal = ref(/** @type {{ portalType: 'exit'|'secret', targetMapId: string|null, currentMapId: string } | null} */(null))
 const inventoryTrackingPrimed = ref(false)
 const inventorySnapshot = ref(new Map())
 const newInventoryItems = reactive({})
@@ -3060,16 +3061,35 @@ function startGameFromTutorial() {
 }
 
 function chooseExitCampement() {
-  if (!run.value) return
-  exitChoiceModal.value = false
-  enterHub(run.value)
+  if (!run.value || !exitChoiceModal.value) return
+  const modal = exitChoiceModal.value
+  exitChoiceModal.value = null
+  // Pour un portail secret : la destination du hub est la zone secrète elle-même
+  const returnMapId = modal.portalType === 'secret' ? modal.targetMapId : null
+  enterHub(run.value, returnMapId)
   playUiSound(UI_SOUND_BANK.portal, 0.3)
   persistRun()
 }
 
 function chooseExitNextLevel() {
-  if (!run.value) return
-  exitChoiceModal.value = false
+  if (!run.value || !exitChoiceModal.value) return
+  const modal = exitChoiceModal.value
+  exitChoiceModal.value = null
+
+  if (modal.portalType === 'secret' && modal.targetMapId) {
+    // Aller directement dans la zone secrète
+    const result = navigateToMap(run.value, modal.targetMapId)
+    if (result.ok) {
+      syncMapPlayerToRun()
+      playUiSound(UI_SOUND_BANK.portal, 0.3)
+      startMerchantTimerForMap(true)
+      showLocationToast(activeMap.value?.name ?? '')
+    }
+    persistRun()
+    return
+  }
+
+  // Portail de sortie normal → niveau suivant
   const result = startNextLevel(run.value)
   if (result.ending) { persistRun(); return }
   hubTab.value = 'character'
@@ -3111,6 +3131,9 @@ function handleForgeUpgrade() {
   clearTimeout(forgeResultTimer)
   const result = upgradeItem(run.value, forgeSelectedItemId.value)
   forgeResult.value = result
+  if (result.ok && result.success) {
+    playUiSound(UI_SOUND_BANK.craft, 0.35)
+  }
   forgeResultTimer = setTimeout(() => { forgeResult.value = null }, 3500)
   persistRun()
 }
@@ -3228,8 +3251,11 @@ function confirmPortalMove() {
   } else if (result.blockedExit) {
     setInfo('Sortie verrouillee: boss encore vivant.')
   } else if (result.exitChoice) {
-    // Propose le choix : campement ou niveau suivant
-    exitChoiceModal.value = true
+    exitChoiceModal.value = {
+      portalType: result.portalType,
+      targetMapId: result.targetMapId ?? null,
+      currentMapId: run.value.world.currentMapId,
+    }
     persistRun()
     return
   } else if (result.hub) {
@@ -3275,7 +3301,13 @@ function handleMove(dx, dy) {
       animateMapPlayerMove(from, to)
     }
     if (result.portalPrompt) {
-      portalConfirmModal.value = portalModalFromPrompt(result.portalPrompt)
+      if (result.portalPrompt.type === 'secret') {
+        // Portail secret → sauter la confirmation, afficher directement le choix campement/direct
+        portalConfirmModal.value = portalModalFromPrompt(result.portalPrompt)
+        confirmPortalMove()
+      } else {
+        portalConfirmModal.value = portalModalFromPrompt(result.portalPrompt)
+      }
     }
     if (result.blockedExit) {
       setInfo('Sortie verrouillee: boss encore vivant.')
@@ -4176,7 +4208,10 @@ onBeforeUnmount(() => {
           <p class="hub-subtitle">Niveau {{ run.world.currentMapIndex }} terminé — prépare-toi pour la suite</p>
         </div>
         <button class="hub-depart-btn" @click="handleGoToNextLevel">
-          {{ hubNextLevel ? `Partir vers ${hubNextLevel.name}` : "Fin de l'aventure" }}
+          <template v-if="hubNextLevel">
+            {{ hubNextLevel.isReturn ? `Aller dans ${hubNextLevel.name}` : `Partir vers ${hubNextLevel.name}` }}
+          </template>
+          <template v-else>Fin de l'aventure</template>
           <span>→</span>
         </button>
       </header>
@@ -4283,12 +4318,12 @@ onBeforeUnmount(() => {
               </div>
               <div class="hub-inv-actions">
                 <button class="hub-action-btn hub-btn-equip"
-                  @click="equipItem(run.value, item.id); persistRun()">Équiper</button>
+                  @click="equipItem(run, item.id); persistRun()">Équiper</button>
                 <button class="hub-action-btn hub-btn-forge"
                   @click="forgeSelectedItemId = item.id; hubTab = 'forge'">Forger</button>
                 <button class="hub-action-btn hub-btn-sell"
-                  @click="sellItem(run.value, item.id); persistRun()">
-                  {{ sellValueForItem(run.value, item) }} or
+                  @click="sellItem(run, item.id); persistRun()">
+                  <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
                 </button>
               </div>
             </div>
@@ -4432,8 +4467,8 @@ onBeforeUnmount(() => {
               </div>
               <div class="hub-inv-actions">
                 <button class="hub-action-btn hub-btn-sell"
-                  @click="sellItem(run.value, item.id); persistRun()">
-                  {{ sellValueForItem(run.value, item) }} or
+                  @click="sellItem(run, item.id); persistRun()">
+                  <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
                 </button>
               </div>
             </div>
@@ -4577,7 +4612,7 @@ onBeforeUnmount(() => {
                   <img :src="itemIcon(run.player.equipment.weapon)" alt="arme" />
                   <div>
                     <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">
-                      {{ run.player.equipment.weapon.name }}
+                      {{ itemDisplayName(run.player.equipment.weapon) }}
                     </strong>
                     <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0
                     }}</p>
@@ -4596,7 +4631,7 @@ onBeforeUnmount(() => {
                   <img :src="itemIcon(run.player.equipment.armor)" alt="armure" />
                   <div>
                     <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">
-                      {{ run.player.equipment.armor.name }}
+                      {{ itemDisplayName(run.player.equipment.armor) }}
                     </strong>
                     <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0
                     }}
@@ -4615,7 +4650,7 @@ onBeforeUnmount(() => {
                   <img :src="itemIcon(run.player.equipment.trinket)" alt="trinket" />
                   <div>
                     <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">
-                      {{ run.player.equipment.trinket.name }}
+                      {{ itemDisplayName(run.player.equipment.trinket) }}
                     </strong>
                     <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ??
                       0
@@ -4789,7 +4824,7 @@ onBeforeUnmount(() => {
                 <img :src="itemIcon(run.player.equipment.weapon)" alt="arme" />
                 <div>
                   <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">{{
-                    run.player.equipment.weapon.name }}</strong>
+                    itemDisplayName(run.player.equipment.weapon) }}</strong>
                   <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0
                     }}</p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{ bonus
@@ -4805,7 +4840,7 @@ onBeforeUnmount(() => {
                 <img :src="itemIcon(run.player.equipment.armor)" alt="armure" />
                 <div>
                   <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">{{
-                    run.player.equipment.armor.name }}</strong>
+                    itemDisplayName(run.player.equipment.armor) }}</strong>
                   <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0 }}
                   </p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus
@@ -4821,7 +4856,7 @@ onBeforeUnmount(() => {
                 <img :src="itemIcon(run.player.equipment.trinket)" alt="trinket" />
                 <div>
                   <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">{{
-                    run.player.equipment.trinket.name }}</strong>
+                    itemDisplayName(run.player.equipment.trinket) }}</strong>
                   <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ?? 0
                     }}
                   </p>
@@ -5179,7 +5214,7 @@ onBeforeUnmount(() => {
                   <img class="item-icon" :src="itemIcon(item)" alt="item" />
                   <div class="item-main">
                     <div class="item-name-row">
-                      <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
+                      <strong :style="{ color: rarityColor(item.rarity) }">{{ itemDisplayName(item) }}</strong>
                       <span v-if="itemIsNew(item.id)" class="new-badge">Nouveau</span>
                     </div>
                     <p :class="item.rarity">{{ rarityLabel(item.rarity) }}</p>
@@ -5289,7 +5324,7 @@ onBeforeUnmount(() => {
                 @touchstart="handleInventoryItemTouch(item, $event)">
                 <img class="item-icon" :src="itemIcon(item)" alt="loot" />
                 <div class="item-main">
-                  <strong :style="{ color: rarityColor(item.rarity) }">{{ item.name }}</strong>
+                  <strong :style="{ color: rarityColor(item.rarity) }">{{ itemDisplayName(item) }}</strong>
                   <p class="loot-item-rarity" :style="{ color: rarityColor(item.rarity) }">{{ rarityLabel(item.rarity)
                   }}</p>
                   <p>{{ inventoryTypeLabel(item) }}</p>
@@ -5489,22 +5524,44 @@ onBeforeUnmount(() => {
         </article>
       </div>
 
-      <div v-if="exitChoiceModal" class="overlay-meta">
+      <div v-if="exitChoiceModal" class="overlay-meta" @click="exitChoiceModal = null">
         <article class="meta-modal exit-choice-modal" @click.stop>
           <header>
-            <h2 class="exit-choice-title">Zone terminée</h2>
-            <p class="exit-choice-sub">Le boss est vaincu. Que fais-tu ?</p>
+            <h2 class="exit-choice-title">
+              {{ exitChoiceModal.portalType === 'secret' ? 'Zone secrète' : 'Zone terminée' }}
+            </h2>
+            <p class="exit-choice-sub">
+              {{ exitChoiceModal.portalType === 'secret'
+                ? 'Un passage caché s\'ouvre. Que fais-tu ?'
+                : 'Le boss est vaincu. Que fais-tu ?' }}
+            </p>
           </header>
           <div class="exit-choice-btns">
             <button class="exit-choice-btn exit-btn-camp" @click="chooseExitCampement">
               <span class="exit-choice-icon">🏕️</span>
               <span class="exit-choice-label">Campement</span>
-              <span class="exit-choice-desc">Gérer l'inventaire, forger, se préparer</span>
+              <span class="exit-choice-desc">
+                {{ exitChoiceModal.portalType === 'secret'
+                  ? 'Se préparer avant d\'entrer (retour sur la zone ensuite)'
+                  : 'Gérer l\'inventaire, forger, se préparer' }}
+              </span>
             </button>
             <button class="exit-choice-btn exit-btn-next" @click="chooseExitNextLevel">
               <span class="exit-choice-icon">⚔️</span>
-              <span class="exit-choice-label">Avancer directement</span>
-              <span class="exit-choice-desc" v-if="hubNextLevel">Partir vers {{ hubNextLevel.name }}</span>
+              <span class="exit-choice-label">
+                {{ exitChoiceModal.portalType === 'secret' ? 'Entrer directement' : 'Avancer directement' }}
+              </span>
+              <span class="exit-choice-desc" v-if="exitChoiceModal.portalType !== 'secret' && hubNextLevel">
+                Partir vers {{ hubNextLevel.name }}
+              </span>
+              <span class="exit-choice-desc" v-else-if="exitChoiceModal.portalType === 'secret'">
+                Plonger dans la zone secrète maintenant
+              </span>
+            </button>
+            <button class="exit-choice-btn exit-btn-stay" @click="exitChoiceModal = null">
+              <span class="exit-choice-icon">↩️</span>
+              <span class="exit-choice-label">Rester ici</span>
+              <span class="exit-choice-desc">Continuer à explorer la zone</span>
             </button>
           </div>
         </article>
@@ -10756,6 +10813,8 @@ button.danger {
 }
 .exit-btn-camp:hover  { border-color: rgba(100,200,120,0.5); background: rgba(40,120,60,0.12); }
 .exit-btn-next:hover  { border-color: rgba(200,100,60,0.5); background: rgba(120,40,20,0.12); }
+.exit-btn-stay { opacity: 0.7; }
+.exit-btn-stay:hover  { border-color: rgba(255,217,156,0.3); background: rgba(255,217,156,0.05); opacity: 1; }
 
 /* ═══════════════════════════════════════════════
    HUB INTER-NIVEAUX
@@ -11028,7 +11087,8 @@ button.danger {
 .hub-action-btn:hover { filter: brightness(1.18); }
 .hub-btn-equip { background: #1a4a80; color: #a0d0ff; border-color: rgba(100,180,255,0.3); }
 .hub-btn-forge { background: #5a2a08; color: #ffcc80; border-color: rgba(255,160,60,0.3); }
-.hub-btn-sell  { background: rgba(255,217,156,0.07); color: rgba(255,217,156,0.6); border-color: rgba(255,217,156,0.2); }
+.hub-btn-sell  { background: rgba(255,217,156,0.07); color: rgba(255,217,156,0.6); border-color: rgba(255,217,156,0.2); display: flex; align-items: center; gap: 4px; }
+.hub-gold-icon { width: 14px; height: 14px; object-fit: contain; flex-shrink: 0; }
 
 /* ────────────────────────────────────────────────
    TAB FORGE

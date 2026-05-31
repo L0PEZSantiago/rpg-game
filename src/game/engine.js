@@ -709,6 +709,7 @@ export function hydrateRun(rawSnapshot) {
   run.hardcoreDeath ??= false
   run.victory ??= false
   run.phase ??= 'exploring'
+  run.hubReturnMapId ??= null
   run.world.currentMapIndex ??= MAP_ORDER.indexOf(run.world.currentMapId)
 
   ensurePlayerState(run)
@@ -1842,8 +1843,10 @@ function portalAtPosition(run, mapState, x, y) {
 
 function resolvePortal(run, portal, mapState) {
   if (portal.type === 'exit' && MAP_ORDER.includes(run.world.currentMapId)) {
-    // Laisse l'UI proposer le choix : campement ou niveau suivant directement
-    return { ok: true, exitChoice: true }
+    return { ok: true, exitChoice: true, portalType: 'exit' }
+  }
+  if (portal.type === 'secret') {
+    return { ok: true, exitChoice: true, portalType: 'secret', targetMapId: portal.targetMapId }
   }
   return transitionToMap(run, portal.targetMapId)
 }
@@ -3793,14 +3796,38 @@ export function buyWanderingItem(run, npcId, itemId) {
 
 // ─── Hub inter-niveaux ────────────────────────────────────────────────────────
 
-export function enterHub(run) {
+export function enterHub(run, returnToMapId = null) {
   run.phase = 'hub'
+  run.hubReturnMapId = returnToMapId ?? null
   const mapName = currentMap(run)?.name ?? 'zone inconnue'
-  appendLog(run, `Niveau terminé : ${mapName}. Vous vous reposez au campement.`)
+  if (returnToMapId) {
+    appendLog(run, `Campement. Prépare-toi avant de continuer.`)
+  } else {
+    appendLog(run, `Niveau terminé : ${mapName}. Vous vous reposez au campement.`)
+  }
   return { ok: true, hub: true }
 }
 
 export function startNextLevel(run) {
+  // Mode retour : l'joueur venait d'un portail secret → retour sur la map d'origine
+  if (run.hubReturnMapId) {
+    const targetMapId = run.hubReturnMapId
+    const targetMap = MAPS[targetMapId]
+    const originMapId = run.world.currentMapId
+    run.hubReturnMapId = null
+    run.phase = 'exploring'
+    // Zone secrète : mémoriser l'origine pour que le portail de retour fonctionne
+    if (targetMap?.isSecret || targetMap?.isSecretRoom) {
+      run.world.returnMapId = originMapId
+    }
+    const targetState = ensureMapState(run, targetMapId)
+    run.world.currentMapId = targetMapId
+    run.world.playerPosition = { ...targetState.start }
+    revealAround(run, targetMapId, targetState.start.x, targetState.start.y, 2)
+    appendLog(run, `Arrivée dans ${targetMap?.name ?? targetMapId}.`)
+    return { ok: true, mapId: targetMapId }
+  }
+
   const nextIndex = (run.world.currentMapIndex ?? 0) + 1
   if (nextIndex >= MAP_ORDER.length) {
     run.victory = true
@@ -3820,10 +3847,18 @@ export function startNextLevel(run) {
 }
 
 export function nextLevelInfo(run) {
+  if (run.hubReturnMapId) {
+    const mapId = run.hubReturnMapId
+    return { mapId, name: MAPS[mapId]?.name ?? mapId, isReturn: true }
+  }
   const nextIndex = (run.world.currentMapIndex ?? 0) + 1
   if (nextIndex >= MAP_ORDER.length) return null
   const mapId = MAP_ORDER[nextIndex]
-  return { mapId, name: MAPS[mapId]?.name ?? mapId }
+  return { mapId, name: MAPS[mapId]?.name ?? mapId, isReturn: false }
+}
+
+export function navigateToMap(run, mapId) {
+  return transitionToMap(run, mapId)
 }
 
 // ─── Nom affiché avec niveau d'amélioration ───────────────────────────────────
