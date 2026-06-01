@@ -34,6 +34,7 @@ export const MATERIAL_LABELS = {
   ether_drop: 'Goutte d\'ether',
   bone_dust: 'Poussière osseuse',
   boss_shard: 'Eclat de boss',
+  misty_heart: 'Cœur brumeux',
 }
 
 export const RECIPES = [
@@ -153,6 +154,67 @@ export const RECIPES = [
       value: 420,
       rarity: 'legendary',
       icon: '/assets/Icons/anneau.png',
+    },
+  },
+  // ── Recettes de camp (consommables et utilitaires) ────────────────────────
+  {
+    id: 'recipe_health_potion',
+    name: 'Potion de soin',
+    rarity: 'common',
+    description: 'Récupère 50% des PV en combat.',
+    category: 'camp',
+    materials: { herb: 3, resin: 1 },
+    result: {
+      kind: 'consumable',
+      name: 'Potion de soin',
+      effect: 'heal_50',
+      icon: '/assets/Icons/life_potion.png',
+      quantity: 1,
+    },
+  },
+  {
+    id: 'recipe_mana_elixir',
+    name: 'Élixir de mana',
+    rarity: 'common',
+    description: 'Restaure 60% du mana en combat.',
+    category: 'camp',
+    materials: { herb: 2, ether_drop: 2 },
+    result: {
+      kind: 'consumable',
+      name: 'Élixir de mana',
+      effect: 'mana_60',
+      icon: '/assets/Icons/mana_potion.png',
+      quantity: 1,
+    },
+  },
+  {
+    id: 'recipe_torch',
+    name: 'Torche',
+    rarity: 'common',
+    description: 'Éclaire les zones sombres.',
+    category: 'camp',
+    materials: { wood: 2, resin: 1 },
+    result: {
+      kind: 'consumable',
+      name: 'Torche',
+      effect: 'torch',
+      icon: '/assets/Icons/torche-runique.png',
+      quantity: 2,
+    },
+  },
+  {
+    id: 'recipe_campfire',
+    name: 'Feu de camp',
+    rarity: 'common',
+    description: 'Restaure tous les PV et tout le mana au camp.',
+    category: 'camp',
+    materials: { wood: 3, resin: 2 },
+    result: {
+      kind: 'consumable',
+      name: 'Feu de camp',
+      effect: 'campfire',
+      icon: '/assets/Icons/firecamp.png',
+      quantity: 1,
     },
   },
 ]

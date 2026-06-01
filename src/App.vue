@@ -128,6 +128,7 @@ let locationToastTimer = null
 const inventoryTab = ref('weapon')
 const combatConsumableTab = ref('regen')
 const hubTab = ref('character')
+const invSubTab = ref('equipment')
 const forgeSelectedItemId = ref(null)
 const forgeResult = ref(null)
 let forgeResultTimer = null
@@ -389,6 +390,44 @@ const hubInventoryEquipment = computed(() => {
   return run.value.player.inventory.filter((i) => i.kind === 'equipment')
 })
 
+const transcendableItems = computed(() => {
+  if (!run.value) return []
+  const all = [
+    ...hubEquipmentItems.value,
+    ...hubInventoryEquipment.value,
+  ]
+  return all.filter(item => {
+    if ((item.enhancementLevel ?? 0) < 5) return false
+    const idx = RARITY_ORDER.indexOf(item.rarity)
+    return idx >= 0 && idx < RARITY_ORDER.length - 1
+  })
+})
+
+function nextRarityFor(item) {
+  const idx = RARITY_ORDER.indexOf(item.rarity)
+  return RARITY_ORDER[idx + 1] ?? item.rarity
+}
+
+function canTranscendItem(item) {
+  if (!run.value) return false
+  const next = nextRarityFor(item)
+  if (next === 'mythic') return (run.value.player.materials.misty_heart ?? 0) >= 1
+  return true
+}
+
+function handleTranscendItem(itemId) {
+  if (!run.value) return
+  const result = upgradeItemRarity(run.value, itemId)
+  if (!result.ok) {
+    setInfo(result.reason)
+  } else {
+    forgeResult.value = result
+    clearTimeout(forgeResultTimer)
+    forgeResultTimer = setTimeout(() => { forgeResult.value = null }, 3500)
+  }
+  persistRun()
+}
+
 function consumableGroupIdFromEffect(effect) {
   if (effect === 'heal_50' || effect === 'heal_80' || effect === 'mana_60' || effect === 'heal_45_mana_35') {
     return 'regen'
@@ -633,6 +672,37 @@ function recipeRequirementEntries(recipe) {
 
 function canCraftRecipe(recipe) {
   return Boolean(run.value) && canCraft(run.value, recipe.id)
+}
+
+const campfireCount = computed(() => {
+  if (!run.value) return 0
+  const item = run.value.player.inventory.find(i => i.kind === 'consumable' && i.effect === 'campfire')
+  return item?.quantity ?? 0
+})
+
+function handleHubUseCampfire() {
+  if (!run.value) return
+  const item = run.value.player.inventory.find(i => i.kind === 'consumable' && i.effect === 'campfire')
+  if (!item) return
+  const result = useConsumable(run.value, item.id)
+  if (!result.ok) setInfo(result.reason)
+  persistRun()
+}
+
+function handleHubUseConsumable(itemId) {
+  if (!run.value) return
+  const result = useConsumable(run.value, itemId)
+  if (!result.ok) setInfo(result.reason)
+  persistRun()
+}
+
+function handleHubCraft(recipeId) {
+  if (!run.value) return
+  const result = craftItem(run.value, recipeId)
+  if (!result.ok) {
+    setInfo(result.reason)
+  }
+  persistRun()
 }
 
 function shopItemDisabled(shop) {
@@ -909,11 +979,20 @@ const MATERIAL_ICONS = {
   herb:               { col: 1, row: 1 },
   bone_dust:          { col: 2, row: 1 },
   boss_shard:         { col: 3, row: 1 },
+  misty_heart:        { path: '/assets/Icons/coeur_brumeux.png' },
 }
 
 function materialIconStyle(key) {
   const icon = MATERIAL_ICONS[key]
   if (!icon) return {}
+  if (icon.path) {
+    return {
+      backgroundImage: `url('${icon.path}')`,
+      backgroundSize: 'contain',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat',
+    }
+  }
   const xPct = icon.col === 0 ? 0 : (icon.col / 3) * 100
   const yPct = icon.row === 0 ? 0 : 100
   return {
@@ -1048,6 +1127,52 @@ const combatEnemyManaPercent = computed(() =>
   ratioPercent(activeCombatView.value?.enemyMana ?? 0, activeCombatView.value?.enemyStats?.maxMana ?? 0),
 )
 const combatEnemyHasMana = computed(() => (activeCombatView.value?.enemyStats?.maxMana ?? 0) > 0)
+
+const EFFECT_LABEL_MAP = {
+  buff: {
+    attackPercent: { label: 'ATK↑', cls: 'eff-buff' },
+    defensePercent: { label: 'DEF↑', cls: 'eff-buff' },
+    critChance: { label: 'CRIT↑', cls: 'eff-buff' },
+    critDamage: { label: 'CRIT DMG↑', cls: 'eff-buff' },
+    dodge: { label: 'ESQ↑', cls: 'eff-buff' },
+    dodgeChance: { label: 'ESQ↑', cls: 'eff-buff' },
+  },
+  debuff: {
+    attackPercent: { label: 'ATK↓', cls: 'eff-debuff' },
+    defensePercent: { label: 'DEF↓', cls: 'eff-debuff' },
+    enemyAttackPercent: { label: 'ATK↓', cls: 'eff-debuff' },
+    enemyDefensePercent: { label: 'DEF↓', cls: 'eff-debuff' },
+    enemyApPenalty: { label: 'PA↓', cls: 'eff-debuff' },
+    stun: { label: 'Étourdi', cls: 'eff-status' },
+    sleep: { label: 'Dort', cls: 'eff-status' },
+    fear: { label: 'Peur', cls: 'eff-status' },
+    topple: { label: 'Renversé', cls: 'eff-status' },
+    nextAttackMissChance: { label: 'Aveugle', cls: 'eff-debuff' },
+  },
+  guard: { label: 'Garde', cls: 'eff-guard' },
+  shield: { label: 'Bouclier', cls: 'eff-guard' },
+  dot: { label: 'Saignement', cls: 'eff-dot' },
+}
+
+function effectPills(effects) {
+  if (!effects) return []
+  return effects
+    .filter(e => e.turns > 0 || e.type === 'guard' || e.type === 'shield' || e.type === 'dot')
+    .map(e => {
+      let meta
+      if (e.type === 'buff' || e.type === 'debuff') {
+        meta = EFFECT_LABEL_MAP[e.type]?.[e.stat]
+      } else {
+        meta = EFFECT_LABEL_MAP[e.type]
+      }
+      if (!meta) return null
+      return { id: e.id, label: meta.label, cls: meta.cls, turns: e.turns }
+    })
+    .filter(Boolean)
+}
+
+const playerEffectPills = computed(() => effectPills(run.value?.combat?.playerEffects))
+const enemyEffectPills = computed(() => effectPills(run.value?.combat?.enemyEffects))
 const combatSpriteScale = computed(() => {
   const playerIdle = combatSpriteSet.player.idle ?? ''
   const playerScale = playerIdle.includes('/Body_A/Animations/') ? 1.34 : 1
@@ -2643,7 +2768,20 @@ function combatLogClasses(entry) {
       text.includes('ralentissement') ||
       text.includes('renverse') ||
       text.includes('desorientation') ||
-      text.includes('affaiblissement'),
+      text.includes('affaiblissement') ||
+      text.includes('étourdi') ||
+      text.includes('dort') ||
+      text.includes('peur') ||
+      text.includes('téléporte') ||
+      text.includes('sommeil'),
+    'log-buff':
+      text.includes('buff') ||
+      text.includes('bouclier') ||
+      text.includes('garde') ||
+      text.includes('renforcé') ||
+      text.includes('renforcee') ||
+      text.includes('prépare') ||
+      text.includes('prochain combat'),
   }
 }
 
@@ -4218,10 +4356,21 @@ onBeforeUnmount(() => {
 
       <!-- Onglets principaux -->
       <nav class="hub-tabs">
-        <button class="hub-tab-btn" :class="{ active: hubTab === 'character' }" @click="hubTab = 'character'">Personnage</button>
-        <button class="hub-tab-btn" :class="{ active: hubTab === 'inventory' }" @click="hubTab = 'inventory'">Inventaire</button>
-        <button class="hub-tab-btn" :class="{ active: hubTab === 'forge' }" @click="hubTab = 'forge'">Forge</button>
-        <button class="hub-tab-btn" :class="{ active: hubTab === 'consumables' }" @click="hubTab = 'consumables'">Consommables</button>
+        <button class="hub-tab-btn" :class="{ active: hubTab === 'character' }" @click="hubTab = 'character'">
+          <img src="/assets/Icons/armor.png" alt="" class="hub-tab-icon" /> Personnage
+        </button>
+        <button class="hub-tab-btn" :class="{ active: hubTab === 'inventory' }" @click="hubTab = 'inventory'">
+          <img src="/assets/Icons/backpack.png" alt="" class="hub-tab-icon" /> Inventaire
+        </button>
+        <button class="hub-tab-btn" :class="{ active: hubTab === 'forge' }" @click="hubTab = 'forge'">
+          <img src="/assets/Icons/dagger.png" alt="" class="hub-tab-icon" /> Forge
+        </button>
+        <button class="hub-tab-btn" :class="{ active: hubTab === 'transcendance' }" @click="hubTab = 'transcendance'">
+          <img src="/assets/Icons/anneau.png" alt="" class="hub-tab-icon" /> Transcendance
+        </button>
+        <button class="hub-tab-btn" :class="{ active: hubTab === 'craft' }" @click="hubTab = 'craft'">
+          <img src="/assets/Icons/life_potion.png" alt="" class="hub-tab-icon" /> Provisions
+        </button>
       </nav>
 
       <div class="hub-tab-content">
@@ -4265,7 +4414,7 @@ onBeforeUnmount(() => {
               class="hub-equip-card card"
               :class="{ 'hub-equip-selected': run.player.equipment[slot]?.id === forgeSelectedItemId }"
               @click="if(run.player.equipment[slot]) { forgeSelectedItemId = run.player.equipment[slot].id; hubTab = 'forge' }">
-              <img :src="run.player.equipment[slot] ? itemIcon(run.player.equipment[slot]) : '/assets/Icons/backpack.png'"
+              <img v-if="run.player.equipment[slot]" :src="itemIcon(run.player.equipment[slot])"
                 class="hub-equip-icon" alt="" />
               <div class="hub-equip-info">
                 <span v-if="run.player.equipment[slot]" class="hub-equip-name"
@@ -4280,6 +4429,27 @@ onBeforeUnmount(() => {
               </div>
               <span v-if="run.player.equipment[slot]" class="hub-forge-hint">Forger →</span>
             </div>
+          </div>
+
+          <!-- Se reposer -->
+          <div class="hub-rest-section card">
+            <div class="hub-rest-header">
+              <img src="/assets/Icons/firecamp.png" alt="" class="hub-rest-icon" />
+              <div>
+                <h3 class="hub-section-title">Se reposer</h3>
+                <p class="hub-rest-status">
+                  <template v-if="campfireCount > 0">
+                    <span class="hub-rest-available">{{ campfireCount }} feu de camp disponible{{ campfireCount > 1 ? 's' : '' }}</span>
+                  </template>
+                  <template v-else>
+                    <span class="hub-rest-unavailable">Aucun feu de camp — fabriquez-en dans l'onglet Craft</span>
+                  </template>
+                </p>
+              </div>
+            </div>
+            <button class="hub-craft-btn" :disabled="campfireCount === 0" @click="handleHubUseCampfire">
+              Se reposer (PV + Mana complets)
+            </button>
           </div>
 
           <!-- Matériaux -->
@@ -4298,6 +4468,13 @@ onBeforeUnmount(() => {
 
         <!-- ── Tab : Inventaire ────────────────────────────────── -->
         <div v-else-if="hubTab === 'inventory'" class="hub-inv-tab">
+          <div class="hub-sub-tabs">
+            <button class="hub-sub-tab-btn" :class="{ active: invSubTab === 'equipment' }" @click="invSubTab = 'equipment'">Équipement</button>
+            <button class="hub-sub-tab-btn" :class="{ active: invSubTab === 'consumables' }" @click="invSubTab = 'consumables'">Consommables</button>
+          </div>
+
+          <!-- Sous-onglet : Équipement -->
+          <template v-if="invSubTab === 'equipment'">
           <p v-if="hubInventoryEquipment.length === 0" class="hub-empty">Aucun équipement dans l'inventaire.</p>
           <div class="hub-inv-grid">
             <div v-for="item in hubInventoryEquipment" :key="item.id"
@@ -4328,6 +4505,33 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
+          </template>
+
+          <!-- Sous-onglet : Consommables -->
+          <template v-else-if="invSubTab === 'consumables'">
+          <p v-if="run.player.inventory.filter(i=>i.kind==='consumable').length === 0" class="hub-empty">
+            Aucun consommable en stock.
+          </p>
+          <div class="hub-inv-grid">
+            <div v-for="item in run.player.inventory.filter(i => i.kind === 'consumable')" :key="item.id"
+              class="hub-inv-card card">
+              <img :src="itemIcon(item)" class="hub-inv-icon" alt="" />
+              <div class="hub-inv-info">
+                <span class="hub-inv-name">{{ item.name }}</span>
+                <span class="hub-inv-stats">{{ item.description ?? '' }}</span>
+                <span class="hub-inv-qty">x{{ item.quantity ?? 1 }}</span>
+              </div>
+              <div class="hub-inv-actions">
+                <button class="hub-action-btn hub-btn-equip"
+                  @click="handleHubUseConsumable(item.id)">Utiliser</button>
+                <button class="hub-action-btn hub-btn-sell"
+                  @click="sellItem(run, item.id); persistRun()">
+                  <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
+                </button>
+              </div>
+            </div>
+          </div>
+          </template>
         </div>
 
         <!-- ── Tab : Forge ────────────────────────────────────── -->
@@ -4408,14 +4612,14 @@ onBeforeUnmount(() => {
               ✦ Amélioration maximale (+5) atteinte
             </p>
 
-            <!-- Élévation de rareté -->
+            <!-- Transcendance -->
             <div v-if="forgeRarityUpgradeCost" class="hub-forge-cost-block hub-rarity-upgrade">
               <h4 class="hub-forge-cost-title"
                 :style="{ color: RARITIES[forgeRarityUpgradeCost.nextRarity]?.color }">
-                Élever → {{ RARITIES[forgeRarityUpgradeCost.nextRarity]?.label }}
+                ✦ Transcendance → {{ RARITIES[forgeRarityUpgradeCost.nextRarity]?.label }}
               </h4>
               <div class="hub-forge-cost-lines">
-                <span class="hub-forge-cost-line"
+                <span v-if="forgeRarityUpgradeCost.goldCost > 0" class="hub-forge-cost-line"
                   :class="run.player.gold >= forgeRarityUpgradeCost.goldCost ? 'cost-ok' : 'cost-missing'">
                   💰 {{ forgeRarityUpgradeCost.goldCost }} or
                   <span class="cost-owned">({{ run.player.gold }} possédé)</span>
@@ -4426,14 +4630,13 @@ onBeforeUnmount(() => {
                   {{ qty }}× {{ MATERIAL_LABELS[mat] }}
                   <span class="cost-owned">({{ run.player.materials[mat] ?? 0 }} possédé)</span>
                 </span>
+                <span v-if="Object.keys(forgeRarityUpgradeCost.materials).length === 0 && forgeRarityUpgradeCost.goldCost === 0"
+                  class="hub-forge-cost-line cost-ok">Gratuit</span>
               </div>
-              <div class="hub-forge-success-rate rate-risky">
-                {{ Math.round(forgeRarityUpgradeCost.successRate * 100) }}% de réussite
-              </div>
-              <p class="hub-forge-fail-warn">Échec → rareté inchangée, coûts perdus</p>
+              <div class="hub-forge-success-rate rate-sure">Succès garanti</div>
               <button class="hub-forge-btn hub-rarity-btn" :disabled="!forgeRarityUpgradeCost.canAfford"
                 @click="handleForgeRarityUpgrade">
-                Élever la rareté
+                Transcender
               </button>
             </div>
 
@@ -4452,25 +4655,79 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- ── Tab : Consommables ─────────────────────────────── -->
-        <div v-else-if="hubTab === 'consumables'" class="hub-cons-tab">
-          <p v-if="run.player.inventory.filter(i=>i.kind==='consumable').length === 0" class="hub-empty">
-            Aucun consommable en stock.
+        <!-- ── Tab : Transcendance ───────────────────────────── -->
+        <div v-else-if="hubTab === 'transcendance'" class="hub-transcendance-tab">
+          <p class="hub-craft-intro">Élevez la rareté d'un équipement +5. Gratuit — sauf vers le rang Mythique (requiert un Cœur brumeux).</p>
+
+          <p v-if="transcendableItems.length === 0" class="hub-empty">
+            Aucun équipement au niveau +5. Améliorez vos objets à la Forge d'abord.
           </p>
-          <div class="hub-inv-grid">
-            <div v-for="item in run.player.inventory.filter(i => i.kind === 'consumable')" :key="item.id"
-              class="hub-inv-card card">
-              <img :src="itemIcon(item)" class="hub-inv-icon" alt="" />
-              <div class="hub-inv-info">
-                <span class="hub-inv-name">{{ item.name }}</span>
-                <span class="hub-inv-stats">{{ item.description ?? '' }}</span>
+
+          <div v-else class="hub-transcendance-list">
+            <div v-for="item in transcendableItems" :key="item.id" class="hub-transcendance-card card">
+              <div class="hub-transcendance-header">
+                <img :src="itemIcon(item)" alt="" class="hub-transcendance-icon" />
+                <div class="hub-transcendance-info">
+                  <span class="hub-transcendance-name" :style="{ color: RARITIES[item.rarity]?.color }">
+                    {{ itemDisplayName(item) }}
+                  </span>
+                  <span class="hub-transcendance-rarity">
+                    <span :style="{ color: RARITIES[item.rarity]?.color }">{{ RARITIES[item.rarity]?.label }}</span>
+                    →
+                    <span :style="{ color: RARITIES[nextRarityFor(item)]?.color }">{{ RARITIES[nextRarityFor(item)]?.label }}</span>
+                  </span>
+                  <span v-if="item._isEquipped" class="hub-equipped-tag">équipé</span>
+                </div>
               </div>
-              <div class="hub-inv-actions">
-                <button class="hub-action-btn hub-btn-sell"
-                  @click="sellItem(run, item.id); persistRun()">
-                  <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
-                </button>
+
+              <!-- Coût -->
+              <div class="hub-transcendance-cost">
+                <template v-if="nextRarityFor(item) === 'mythic'">
+                  <span class="hub-craft-cost-pill"
+                    :class="(run.player.materials.misty_heart ?? 0) >= 1 ? 'cost-ok' : 'cost-missing'">
+                    <span class="material-icon material-icon-sm" :style="materialIconStyle('misty_heart')"></span>
+                    1× Cœur brumeux
+                    <small>({{ run.player.materials.misty_heart ?? 0 }} possédé)</small>
+                  </span>
+                </template>
               </div>
+
+              <button class="hub-craft-btn"
+                :disabled="!canTranscendItem(item)"
+                @click="handleTranscendItem(item.id)">
+                ✦ Transcender
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Tab : Craft (camp) ────────────────────────────── -->
+        <div v-else-if="hubTab === 'craft'" class="hub-craft-tab">
+          <p class="hub-craft-intro">Fabriquez des consommables et objets utilitaires au camp.</p>
+          <div class="hub-craft-list">
+            <div v-for="recipe in RECIPES.filter(r => r.category === 'camp')" :key="recipe.id"
+              class="hub-craft-card card">
+              <div class="hub-craft-header">
+                <img :src="recipe.result.icon || '/assets/Icons/potion.png'" alt="" class="hub-craft-icon" />
+                <div>
+                  <span class="hub-craft-name">{{ recipe.name }}</span>
+                  <span class="hub-craft-desc">{{ recipe.description }}</span>
+                </div>
+              </div>
+              <div class="hub-craft-costs">
+                <span v-for="(qty, mat) in recipe.materials" :key="mat"
+                  class="hub-craft-cost-pill"
+                  :class="(run.player.materials[mat] ?? 0) >= qty ? 'cost-ok' : 'cost-missing'">
+                  <span class="material-icon material-icon-sm" :style="materialIconStyle(mat)"></span>
+                  {{ qty }}× {{ MATERIAL_LABELS[mat] }}
+                  <small>({{ run.player.materials[mat] ?? 0 }})</small>
+                </span>
+              </div>
+              <button class="hub-craft-btn"
+                :disabled="!canCraftRecipe(recipe)"
+                @click="handleHubCraft(recipe.id)">
+                Fabriquer <template v-if="recipe.result.quantity > 1">×{{ recipe.result.quantity }}</template>
+              </button>
             </div>
           </div>
         </div>
@@ -5063,6 +5320,11 @@ onBeforeUnmount(() => {
                       <img src="/assets/Icons/dagger.png" alt="" />
                       <p class="battle-ap-label">PA : {{ activeCombatView.playerAp }} / {{ stats.ap }}</p>
                     </div>
+                    <div v-if="playerEffectPills.length" class="battle-effect-pills">
+                      <span v-for="pill in playerEffectPills" :key="pill.id" class="battle-effect-pill" :class="pill.cls">
+                        {{ pill.label }}<small v-if="pill.turns > 0"> {{ pill.turns }}</small>
+                      </span>
+                    </div>
                   </div>
 
                   <div class="battle-actor player" :data-state="combatPlayerState">
@@ -5105,6 +5367,11 @@ onBeforeUnmount(() => {
                       <img src="/assets/Icons/dagger.png" alt="" />
                       <p class="battle-ap-label">PA : {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap
                         }}</p>
+                    </div>
+                    <div v-if="enemyEffectPills.length" class="battle-effect-pills">
+                      <span v-for="pill in enemyEffectPills" :key="pill.id" class="battle-effect-pill" :class="pill.cls">
+                        {{ pill.label }}<small v-if="pill.turns > 0"> {{ pill.turns }}</small>
+                      </span>
                     </div>
                   </div>
 
@@ -5638,7 +5905,7 @@ onBeforeUnmount(() => {
               <div class="craft-recipes-wrap">
                 <div class="craft-recipes-list">
                   <button
-                    v-for="recipe in RECIPES.filter(r => craftFilter === 'all' || r.result.kind === craftFilter || r.result.slot === craftFilter)"
+                    v-for="recipe in RECIPES.filter(r => !r.category && (craftFilter === 'all' || r.result.kind === craftFilter || r.result.slot === craftFilter))"
                     :key="recipe.id" :disabled="!canCraftRecipe(recipe)" @click="npcAction('craft', recipe.id)">
                     <span class="craft-recipe-header">
                       <img :src="itemIcon(recipe.result)" alt="" class="craft-recipe-icon" />
@@ -7940,6 +8207,56 @@ button.danger {
   color: #ffe4a8;
 }
 
+.battle-effect-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.battle-effect-pill {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 8px;
+  letter-spacing: 0.02em;
+}
+
+.battle-effect-pill small {
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+.eff-buff {
+  background: rgba(80, 200, 120, 0.25);
+  border: 1px solid rgba(80, 200, 120, 0.6);
+  color: #7fffb0;
+}
+
+.eff-debuff {
+  background: rgba(220, 80, 80, 0.22);
+  border: 1px solid rgba(220, 80, 80, 0.55);
+  color: #ff9090;
+}
+
+.eff-status {
+  background: rgba(180, 100, 220, 0.22);
+  border: 1px solid rgba(180, 100, 220, 0.55);
+  color: #d8a0ff;
+}
+
+.eff-guard {
+  background: rgba(80, 160, 220, 0.22);
+  border: 1px solid rgba(80, 160, 220, 0.55);
+  color: #90d0ff;
+}
+
+.eff-dot {
+  background: rgba(220, 140, 60, 0.22);
+  border: 1px solid rgba(220, 140, 60, 0.55);
+  color: #ffbb70;
+}
+
 .battle-actor {
   position: relative;
   width: clamp(112px, 16.4vw, 220px);
@@ -8347,6 +8664,12 @@ button.danger {
 .combat-log-panel li.log-status {
   color: #d3b2ff;
 }
+
+.combat-log-panel li.log-buff {
+  color: #7fffb0;
+}
+
+.dialogue-line.log-buff { color: #7fffb0; }
 
 .overlay-meta {
   display: flex;
@@ -11038,6 +11361,45 @@ button.danger {
 .hub-equip-empty { font-size: 0.78rem; color: rgba(255,217,156,0.25); font-style: italic; }
 .hub-equip-stats { font-size: 0.72rem; color: rgba(255,217,156,0.5); }
 
+/* Se reposer */
+.hub-rest-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.hub-rest-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hub-rest-icon {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.hub-rest-header .hub-section-title {
+  margin: 0 0 3px;
+}
+
+.hub-rest-status {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.hub-rest-available {
+  color: #7fffb0;
+}
+
+.hub-rest-unavailable {
+  color: rgba(255, 220, 160, 0.45);
+  font-style: italic;
+}
+
 /* Matériaux */
 .hub-mats-section {}
 .hub-mats-grid {
@@ -11058,6 +11420,205 @@ button.danger {
    TAB INVENTAIRE & CONSOMMABLES
    ──────────────────────────────────────────────── */
 .hub-inv-tab, .hub-cons-tab { display: flex; flex-direction: column; gap: 10px; }
+
+.hub-sub-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.hub-sub-tab-btn {
+  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid rgba(255, 200, 120, 0.25);
+  border-radius: 6px;
+  color: rgba(255, 220, 160, 0.6);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.hub-sub-tab-btn:hover { background: rgba(255,217,156,0.08); color: #fcd596; }
+.hub-sub-tab-btn.active {
+  background: rgba(252, 196, 95, 0.15);
+  color: #fcd596;
+  border-color: rgba(252, 196, 95, 0.5);
+}
+
+.hub-inv-qty {
+  font-size: 0.75rem;
+  color: rgba(255, 220, 160, 0.55);
+}
+
+/* Hub tab icon */
+.hub-tab-icon {
+  width: 18px;
+  height: 18px;
+  vertical-align: middle;
+  margin-right: 5px;
+  opacity: 0.85;
+  image-rendering: pixelated;
+}
+
+/* ── TAB TRANSCENDANCE ── */
+.hub-transcendance-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hub-transcendance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hub-transcendance-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.hub-transcendance-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.hub-transcendance-icon {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+
+.hub-transcendance-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hub-transcendance-name {
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.hub-transcendance-rarity {
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hub-transcendance-cost {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* ── TAB CRAFT (CAMP) ── */
+.hub-craft-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hub-craft-intro {
+  font-size: 0.82rem;
+  color: rgba(255, 220, 160, 0.6);
+  margin: 0;
+}
+
+.hub-craft-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hub-craft-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+}
+
+.hub-craft-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hub-craft-icon {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.hub-craft-name {
+  display: block;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: #fcd596;
+}
+
+.hub-craft-desc {
+  display: block;
+  font-size: 0.78rem;
+  color: rgba(255, 220, 160, 0.6);
+}
+
+.hub-craft-costs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.hub-craft-cost-pill {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hub-craft-cost-pill.cost-ok {
+  background: rgba(80, 200, 120, 0.15);
+  border: 1px solid rgba(80, 200, 120, 0.4);
+  color: #7fffb0;
+}
+
+.hub-craft-cost-pill.cost-missing {
+  background: rgba(220, 80, 80, 0.12);
+  border: 1px solid rgba(220, 80, 80, 0.35);
+  color: #ff9090;
+}
+
+.hub-craft-cost-pill small {
+  opacity: 0.7;
+}
+
+.hub-craft-btn {
+  align-self: flex-start;
+  padding: 7px 16px;
+  background: linear-gradient(135deg, #5a3a10, #3a1e08);
+  border: 1px solid rgba(252, 196, 95, 0.4);
+  border-radius: 6px;
+  color: #fcd596;
+  font-size: 0.83rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.hub-craft-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #7a5020, #5a2e10);
+}
+
+.hub-craft-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .hub-inv-grid {
   display: flex;
   flex-direction: column;

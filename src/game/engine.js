@@ -45,14 +45,54 @@ const CHALLENGER_NPC_SPAWN_CHANCE = 0.42
 const WANDERING_MERCHANT_SPAWN_CHANCE = 0.15
 const CHALLENGER_NAMES = ['Mercenaire Borgne', 'Duelliste des Ombres', 'Champion Errant', 'Vétéran des Ruines', 'Gladiateur Exilé']
 const WANDERING_MERCHANT_NAMES = ['Caravane Spectrale', 'Marchand Sans Visage', 'Trafiquant des Ombres', 'Colporteur Maudit']
-const UPGRADE_COSTS = [
-  { goldCost: 50,  materials: {},                                           successRate: 1.00 }, // +0 → +1
-  { goldCost: 120, materials: {},                                           successRate: 1.00 }, // +1 → +2
-  { goldCost: 250, materials: { ore: 2 },                                   successRate: 0.70 }, // +2 → +3
-  { goldCost: 400, materials: { boss_shard: 2 },                            successRate: 0.55 }, // +3 → +4
-  { goldCost: 600, materials: { boss_shard: 3, obsidian_fragment: 2 },      successRate: 0.40 }, // +4 → +5
-]
-const RARITY_UPGRADE_COST = { goldCost: 300, materials: { boss_shard: 4, ether_drop: 3 }, successRate: 0.60 }
+const UPGRADE_COSTS_BY_RARITY = {
+  common: [
+    { goldCost: 15,  materials: {},              successRate: 1.00 },
+    { goldCost: 25,  materials: {},              successRate: 1.00 },
+    { goldCost: 40,  materials: {},              successRate: 0.90 },
+    { goldCost: 60,  materials: {},              successRate: 0.80 },
+    { goldCost: 80,  materials: {},              successRate: 0.70 },
+  ],
+  uncommon: [
+    { goldCost: 25,  materials: {},              successRate: 1.00 },
+    { goldCost: 45,  materials: {},              successRate: 1.00 },
+    { goldCost: 70,  materials: {},              successRate: 0.85 },
+    { goldCost: 100, materials: {},              successRate: 0.70 },
+    { goldCost: 140, materials: {},              successRate: 0.60 },
+  ],
+  rare: [
+    { goldCost: 40,  materials: {},              successRate: 1.00 },
+    { goldCost: 80,  materials: {},              successRate: 1.00 },
+    { goldCost: 140, materials: {},              successRate: 0.80 },
+    { goldCost: 220, materials: {},              successRate: 0.65 },
+    { goldCost: 320, materials: { ore: 1 },      successRate: 0.50 },
+  ],
+  epic: [
+    { goldCost: 50,  materials: {},              successRate: 1.00 },
+    { goldCost: 120, materials: {},              successRate: 1.00 },
+    { goldCost: 200, materials: { ore: 2 },      successRate: 0.75 },
+    { goldCost: 320, materials: { boss_shard: 1 }, successRate: 0.60 },
+    { goldCost: 450, materials: { boss_shard: 2, obsidian_fragment: 1 }, successRate: 0.45 },
+  ],
+  legendary: [
+    { goldCost: 50,  materials: {},              successRate: 1.00 },
+    { goldCost: 120, materials: {},              successRate: 1.00 },
+    { goldCost: 250, materials: { ore: 2 },      successRate: 0.70 },
+    { goldCost: 400, materials: { boss_shard: 2 }, successRate: 0.55 },
+    { goldCost: 600, materials: { boss_shard: 3, obsidian_fragment: 2 }, successRate: 0.40 },
+  ],
+  mythic: [
+    { goldCost: 60,  materials: {},              successRate: 1.00 },
+    { goldCost: 150, materials: {},              successRate: 1.00 },
+    { goldCost: 300, materials: { ore: 3 },      successRate: 0.70 },
+    { goldCost: 500, materials: { boss_shard: 3 }, successRate: 0.55 },
+    { goldCost: 750, materials: { boss_shard: 4, obsidian_fragment: 3 }, successRate: 0.40 },
+  ],
+}
+// Fallback for unknown rarities
+const UPGRADE_COSTS = UPGRADE_COSTS_BY_RARITY.legendary
+
+const CHEST_MISTY_HEART_CHANCE = 0.03
 
 const SELL_PRICE_FACTOR = 0.12 // 12% du prix d'achat, pour changer la valeur de vente des objets
 const SELL_RARITY_MULTIPLIER = {
@@ -64,6 +104,7 @@ const SELL_RARITY_MULTIPLIER = {
   mythic: 1.3,
 }
 const ENEMY_GOLD_REWARD_FACTOR = 0.12 // 0.72 / 6
+const BOSS_GOLD_MULTIPLIER = 6
 const CRAFT_COST_MULTIPLIER = 1.4
 const PASSIVE_RESET_COST = 200
 const PASSIVE_RESET_LIMIT = 1
@@ -164,6 +205,8 @@ function createMaterialBag() {
   for (const key of Object.keys(MATERIAL_LABELS)) {
     bag[key] = 0
   }
+  // Ensure misty_heart exists even if not yet in saved states
+  bag.misty_heart ??= 0
   return bag
 }
 
@@ -1666,7 +1709,13 @@ export function openNearbyChest(run) {
   const materialQty = randomInt(1, 3)
   addMaterial(run, chestMaterial, materialQty)
   const materials = [{ material: chestMaterial, quantity: materialQty }]
-  appendLog(run, `Coffre ouvert: +${gold} or, +${MATERIAL_LABELS[chestMaterial]}, loot ${loots.map((item) => item.name).join(', ')}.`)
+  if (chance(CHEST_MISTY_HEART_CHANCE)) {
+    addMaterial(run, 'misty_heart', 1)
+    materials.push({ material: 'misty_heart', quantity: 1 })
+    appendLog(run, `Coffre ouvert: +${gold} or, +${MATERIAL_LABELS[chestMaterial]}, +Cœur brumeux, loot ${loots.map((item) => item.name).join(', ')}.`)
+  } else {
+    appendLog(run, `Coffre ouvert: +${gold} or, +${MATERIAL_LABELS[chestMaterial]}, loot ${loots.map((item) => item.name).join(', ')}.`)
+  }
   return { ok: true, chest, loots, gold, materials, chestEvent: null }
 }
 
@@ -1743,7 +1792,8 @@ function resolveEnemyDeath(run, enemyRef) {
   const template = enemyById(enemy.templateId)
   const difficulty = difficultyFor(run)
   const xp = Math.floor((template?.xpReward ?? 50) * difficulty.xpMultiplier)
-  const gold = Math.max(1, Math.floor((template?.goldReward ?? 20) * difficulty.lootMultiplier * ENEMY_GOLD_REWARD_FACTOR))
+  const bossMultiplier = enemy.isBoss ? BOSS_GOLD_MULTIPLIER : 1
+  const gold = Math.max(1, Math.floor((template?.goldReward ?? 20) * difficulty.lootMultiplier * ENEMY_GOLD_REWARD_FACTOR * bossMultiplier))
 
   run.player.gold += gold
   grantXp(run, xp)
@@ -2162,12 +2212,19 @@ function applySkillStatusEffect(run, side, statusEffect, attacker, defender, tar
     return null
   }
 
-  const chanceToApply = statusChance(run, side, attacker, defender, statusEffect.chance ?? 0.2)
+  const battle = run.combat
+  const isBossTarget = side === 'player' && battle?.enemyIsBoss
+  const baseChance = (isBossTarget && statusEffect.bossChance != null)
+    ? statusEffect.bossChance
+    : (statusEffect.chance ?? 0.2)
+  const chanceToApply = statusChance(run, side, attacker, defender, baseChance)
   if (!chance(chanceToApply)) {
     return null
   }
 
-  const turns = statusEffect.turns ?? 1
+  const minTurns = statusEffect.minTurns ?? statusEffect.turns ?? 1
+  const maxTurns = statusEffect.maxTurns ?? statusEffect.turns ?? 1
+  const turns = minTurns === maxTurns ? minTurns : randomInt(minTurns, maxTurns)
   const value = statusEffect.value ?? 1
   if (statusEffect.kind === 'disorient') {
     targetEffects.push({
@@ -2275,9 +2332,15 @@ function startTurn(run) {
     } else if (sleepEffect) {
       battle.playerAp = 0
       appendLog(run, `${run.player.name} dort et ne peut pas agir.`)
-    } else if (fearEffect && chance(fearEffect.value ?? 0.5)) {
+    } else if (fearEffect && !chance(fearEffect.value ?? 0.5)) {
       battle.playerAp = 0
-      appendLog(run, `${run.player.name} est paralysé par la peur.`)
+      const selfDmg = Math.max(1, Math.floor(stats.attack * 0.4))
+      run.player.hp = clamp(run.player.hp - selfDmg, 0, stats.maxHp)
+      appendLog(run, `${run.player.name} cède à la peur et se blesse (${selfDmg} dégâts) !`)
+      if (run.player.hp <= 0) {
+        resolvePlayerDeath(run)
+        return
+      }
     }
 
     const dotDamage = battle.playerEffects
@@ -2318,9 +2381,15 @@ function startTurn(run) {
   } else if (enemySleepEffect) {
     battle.enemyAp = 0
     appendLog(run, `${battle.enemyName} dort et ne peut pas agir.`)
-  } else if (enemyFearEffect && chance(enemyFearEffect.value ?? 0.5)) {
+  } else if (enemyFearEffect && !chance(enemyFearEffect.value ?? 0.5)) {
     battle.enemyAp = 0
-    appendLog(run, `${battle.enemyName} est paralysé par la peur.`)
+    const enemySelfDmg = Math.max(1, Math.floor((battle.enemyStats.attack ?? 5) * 0.4))
+    battle.enemyHp = clamp(battle.enemyHp - enemySelfDmg, 0, battle.enemyStats.maxHp)
+    appendLog(run, `${battle.enemyName} cède à la peur et se blesse (${enemySelfDmg} dégâts) !`)
+    if (battle.enemyHp <= 0) {
+      finishCombatVictory(run)
+      return
+    }
   }
 
   const dotDamage = battle.enemyEffects
@@ -2365,7 +2434,7 @@ function endTurn(run) {
     }
 
     const endStats = derivedStats(run)
-    run.player.mana = clamp(run.player.mana + Math.max(2, endStats.manaRegenFlat), 0, endStats.maxMana)
+    run.player.mana = clamp(run.player.mana + 2 + endStats.manaRegenFlat, 0, endStats.maxMana)
     battle.actor = 'enemy'
   } else {
     battle.enemyEffects = reduceEffects(battle.enemyEffects)
@@ -2709,7 +2778,39 @@ function applySkill(run, side, skill) {
   } else if (skill.effect === 'guard') {
     const effects = side === 'player' ? battle.playerEffects : battle.enemyEffects
     effects.push({ id: uid('guard'), type: 'guard', value: 1, turns: 1 })
-    text += ' Posture de garde active : le prochain coup est réduit à 25%.'
+    text += ' Posture de garde : prochain coup réduit à 25%.'
+    if (skill.buffType && skill.buffValue && skill.buffTurns) {
+      effects.push({
+        id: uid('buff'),
+        type: 'buff',
+        stat: skill.buffType,
+        value: skill.buffValue,
+        turns: skill.buffTurns,
+      })
+      text += ` +${Math.round(skill.buffValue * 100)}% résistance pendant ${skill.buffTurns} tours.`
+    }
+  } else if (skill.effect === 'flee') {
+    if (side === 'player') {
+      const manaCost = skillManaCostFor('player', skill, playerStats)
+      battle.playerAp = Math.max(0, battle.playerAp - skill.apCost)
+      run.player.mana = clamp(run.player.mana - manaCost, 0, playerStats.maxMana)
+      battle.playerCooldowns[skill.id] = skillCooldownFor('player', skill, playerStats)
+    }
+    const fleeChance = skill.fleeChance ?? 0.5
+    if (chance(fleeChance)) {
+      persistBattleEnemy(run)
+      run.combat = null
+      appendLog(run, `${actorName} se téléporte hors du combat !`)
+      return { ok: true, finished: false, fled: true }
+    }
+    appendLog(run, `${actorName} tente de se téléporter... mais échoue !`)
+    return { ok: true, finished: false }
+  } else if (skill.effect === 'sleep_cast') {
+    const targetEffects = side === 'player' ? battle.enemyEffects : battle.playerEffects
+    if (skill.statusEffect) {
+      const statusText = applySkillStatusEffect(run, side, skill.statusEffect, attacker, defender, targetEffects, targetName)
+      if (statusText) text += ` ${statusText}`
+    }
   } else if (skill.effect === 'buff') {
     const effects = side === 'player' ? battle.playerEffects : battle.enemyEffects
     const buffType = skill.buffType ?? 'attackPercent'
@@ -2731,7 +2832,15 @@ function applySkill(run, side, skill) {
     }
     restoredAp = Math.max(0, Math.floor(skill.restoreAp ?? 0))
     if (buffType !== 'apOnly') {
-      text += ` Buff ${buffType === 'dodge' ? 'esquive' : buffType} actif.`
+      const BUFF_LABELS = {
+        attackPercent: 'Attaque',
+        defensePercent: 'Défense',
+        critChance: 'Critique',
+        critDamage: 'Dégâts critiques',
+        damagePercent: 'Dégâts',
+        dodge: 'Esquive',
+      }
+      text += ` Buff ${BUFF_LABELS[buffType] ?? buffType} actif (${skill.buffTurns ?? 2} tours).`
     }
     if (restoredAp > 0) {
       text += ` +${restoredAp} PA.`
@@ -2766,7 +2875,7 @@ function applySkill(run, side, skill) {
       value: skill.debuffValue ?? 0.15,
       turns: skill.debuffTurns ?? 2,
     })
-    text += debuffType === 'enemyApPenalty' || debuffType === 'enemyMpPenalty' ? ` ${targetName} perdra des PA.` : ' Debuff applique.'
+    text += debuffType === 'enemyApPenalty' || debuffType === 'enemyMpPenalty' ? ` ${targetName} perdra des PA.` : ` ${targetName} subit un affaiblissement.`
 
     if (skill.statusEffect) {
       const statusText = applySkillStatusEffect(run, side, skill.statusEffect, attacker, defender, effects, targetName)
@@ -3211,7 +3320,8 @@ export function endPlayerTurn(run) {
   const stats = derivedStats(run)
   if (stats.lifeRegenFlat > 0) {
     const before = run.player.hp
-    run.player.hp = clamp(run.player.hp + stats.lifeRegenFlat, 0, stats.maxHp)
+    const regenAmount = Math.floor(stats.lifeRegenFlat * (1 + (stats.healingDonePercent ?? 0)))
+    run.player.hp = clamp(run.player.hp + regenAmount, 0, stats.maxHp)
     const gained = run.player.hp - before
     if (gained > 0) {
       appendLog(run, `Régénération: +${gained} PV.`)
@@ -3293,6 +3403,10 @@ function consumableUsageBlockReason(run, effect) {
   if (effect === 'heal_45_mana_35' && run.player.hp >= stats.maxHp && run.player.mana >= stats.maxMana) {
     return 'PV et mana déjà au maximum.'
   }
+  if (effect === 'campfire') {
+    if (run.combat) return 'Le feu de camp ne peut être utilisé qu\'en dehors du combat.'
+    if (run.player.hp >= stats.maxHp && run.player.mana >= stats.maxMana) return 'PV et mana déjà au maximum.'
+  }
 
   return ''
 }
@@ -3362,9 +3476,17 @@ function applyConsumable(run, effect, itemRarity = null) {
     }
     return true
   }
-  if (effect === 'vision_boost') {
+  if (effect === 'vision_boost' || effect === 'torch') {
     run.player.visionBoostSteps = (run.player.visionBoostSteps ?? 0) + 14
-    appendLog(run, 'Torche runique : champ de vision élargi pour 14 pas.')
+    appendLog(run, 'Torche : champ de vision élargi pour 14 pas.')
+    return true
+  }
+  if (effect === 'campfire') {
+    if (run.combat) return false
+    const stats = derivedStats(run)
+    run.player.hp = stats.maxHp
+    run.player.mana = stats.maxMana
+    appendLog(run, 'Feu de camp : PV et mana entièrement restaurés.')
     return true
   }
   return false
@@ -3528,7 +3650,7 @@ export function craftItem(run, recipeId) {
       quantity: recipe.result.quantity,
       rarity: recipe.rarity,
       value: 30,
-      icon: '/assets/Weapons/Hands/Hands.png',
+      icon: recipe.result.icon ?? '/assets/Icons/potion.png',
     })
   } else {
     const rarityData = RARITIES[recipe.result.rarity]
@@ -3772,6 +3894,18 @@ export function getWanderingMerchantStock(run, npcId) {
       item.soldOut = false
       return item
     })
+    // Ajoute un Cœur brumeux en vente (prix entre 800 et 1200 or)
+    npc.stock.push({
+      id: uid('misty_heart_sale'),
+      kind: 'material',
+      name: 'Cœur brumeux',
+      icon: '/assets/Icons/coeur_brumeux.png',
+      description: 'Nécessaire pour la Transcendance vers le rang Mythique.',
+      materialKey: 'misty_heart',
+      quantity: 1,
+      merchantPrice: randomInt(800, 1200),
+      soldOut: false,
+    })
   }
   return npc.stock
 }
@@ -3786,6 +3920,11 @@ export function buyWanderingItem(run, npcId, itemId) {
   if (run.player.gold < item.merchantPrice) return { ok: false, reason: `Il faut ${item.merchantPrice} or pour cet article.` }
   run.player.gold -= item.merchantPrice
   item.soldOut = true
+  if (item.materialKey) {
+    addMaterial(run, item.materialKey, item.quantity ?? 1)
+    appendLog(run, `Acheté ${item.name} au marchand pour ${item.merchantPrice} or.`)
+    return { ok: true, item, isMaterial: true }
+  }
   const itemCopy = { ...item }
   delete itemCopy.merchantPrice
   delete itemCopy.soldOut
@@ -3890,6 +4029,11 @@ function applyEnhancementStats(item) {
   item.defense = baseDef + defBonus * level
 }
 
+function upgradeCostsForItem(item) {
+  const rarity = item.rarity ?? 'common'
+  return UPGRADE_COSTS_BY_RARITY[rarity] ?? UPGRADE_COSTS
+}
+
 export function upgradeItem(run, itemId) {
   const item = findItemAnywhere(run, itemId)
   if (!item) return { ok: false, reason: 'Objet introuvable.' }
@@ -3897,7 +4041,7 @@ export function upgradeItem(run, itemId) {
   const currentLevel = item.enhancementLevel ?? 0
   if (currentLevel >= 5) return { ok: false, reason: 'Amélioration maximale (+5) atteinte.' }
 
-  const cost = UPGRADE_COSTS[currentLevel]
+  const cost = upgradeCostsForItem(item)[currentLevel]
   if (run.player.gold < cost.goldCost) {
     return { ok: false, reason: `Or insuffisant — ${cost.goldCost} requis.` }
   }
@@ -3932,6 +4076,15 @@ export function upgradeItem(run, itemId) {
   }
 }
 
+function rarityUpgradeCost(item) {
+  const currentRarityIndex = RARITY_ORDER.indexOf(item.rarity ?? 'common')
+  const nextRarityId = RARITY_ORDER[currentRarityIndex + 1]
+  if (nextRarityId === 'mythic') {
+    return { goldCost: 0, materials: { misty_heart: 1 }, successRate: 1.00 }
+  }
+  return { goldCost: 0, materials: {}, successRate: 1.00 }
+}
+
 export function upgradeItemRarity(run, itemId) {
   const item = findItemAnywhere(run, itemId)
   if (!item) return { ok: false, reason: 'Objet introuvable.' }
@@ -3943,7 +4096,7 @@ export function upgradeItemRarity(run, itemId) {
     return { ok: false, reason: 'Rareté maximale atteinte (Mythique).' }
   }
 
-  const cost = RARITY_UPGRADE_COST
+  const cost = rarityUpgradeCost(item)
   if (run.player.gold < cost.goldCost) {
     return { ok: false, reason: `Or insuffisant — ${cost.goldCost} requis.` }
   }
@@ -3955,25 +4108,20 @@ export function upgradeItemRarity(run, itemId) {
 
   run.player.gold -= cost.goldCost
   for (const [mat, qty] of Object.entries(cost.materials)) {
-    run.player.materials[mat] -= qty
+    run.player.materials[mat] = (run.player.materials[mat] ?? 0) - qty
   }
 
-  if (chance(cost.successRate)) {
-    const oldRarity = RARITIES[item.rarity]
-    const newRarityId = RARITY_ORDER[currentRarityIndex + 1]
-    const newRarity = RARITIES[newRarityId]
-    const ratio = newRarity.powerMultiplier / oldRarity.powerMultiplier
-    item.rarity = newRarityId
-    item.baseAttack = Math.round((item.baseAttack ?? item.attack) * ratio)
-    item.baseDefense = Math.round((item.baseDefense ?? item.defense) * ratio)
-    applyEnhancementStats(item)
-    item.value = Math.round((item.value ?? 0) * newRarity.valueMultiplier / (oldRarity.valueMultiplier || 1))
-    appendLog(run, `Élévation réussie ! ${itemDisplayName(item)} est maintenant ${newRarity.label}.`)
-    return { ok: true, success: true, newRarity: newRarityId }
-  } else {
-    appendLog(run, "Élévation échouée — la rareté reste inchangée.")
-    return { ok: true, success: false }
-  }
+  const oldRarity = RARITIES[item.rarity]
+  const newRarityId = RARITY_ORDER[currentRarityIndex + 1]
+  const newRarity = RARITIES[newRarityId]
+  const ratio = newRarity.powerMultiplier / oldRarity.powerMultiplier
+  item.rarity = newRarityId
+  item.baseAttack = Math.round((item.baseAttack ?? item.attack) * ratio)
+  item.baseDefense = Math.round((item.baseDefense ?? item.defense) * ratio)
+  applyEnhancementStats(item)
+  item.value = Math.round((item.value ?? 0) * newRarity.valueMultiplier / (oldRarity.valueMultiplier || 1))
+  appendLog(run, `Transcendance réussie ! ${itemDisplayName(item)} est maintenant ${newRarity.label}.`)
+  return { ok: true, success: true, newRarity: newRarityId }
 }
 
 export function upgradeCostInfo(run, itemId) {
@@ -3981,7 +4129,7 @@ export function upgradeCostInfo(run, itemId) {
   if (!item || item.kind !== 'equipment') return null
   const level = item.enhancementLevel ?? 0
   if (level >= 5) return null
-  const cost = UPGRADE_COSTS[level]
+  const cost = upgradeCostsForItem(item)[level]
   const canAfford = run.player.gold >= cost.goldCost &&
     Object.entries(cost.materials).every(([mat, qty]) => (run.player.materials[mat] ?? 0) >= qty)
   return { ...cost, canAfford }
@@ -3993,8 +4141,9 @@ export function rarityUpgradeCostInfo(run, itemId) {
   if ((item.enhancementLevel ?? 0) < 5) return null
   const currentRarityIndex = RARITY_ORDER.indexOf(item.rarity)
   if (currentRarityIndex >= RARITY_ORDER.length - 1) return null
-  const cost = RARITY_UPGRADE_COST
+  const nextRarityId = RARITY_ORDER[currentRarityIndex + 1]
+  const cost = rarityUpgradeCost(item)
   const canAfford = run.player.gold >= cost.goldCost &&
     Object.entries(cost.materials).every(([mat, qty]) => (run.player.materials[mat] ?? 0) >= qty)
-  return { ...cost, canAfford, nextRarity: RARITY_ORDER[currentRarityIndex + 1] }
+  return { ...cost, canAfford, nextRarity: nextRarityId, requiresMistyHeart: nextRarityId === 'mythic' }
 }
