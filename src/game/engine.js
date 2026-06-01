@@ -565,6 +565,7 @@ function createMapState(mapId) {
     secretPortalRevealed: false,
     noSpawnZones,
     levers,
+    leverSequenceProgress: [],
   }
 }
 
@@ -793,6 +794,7 @@ export function hydrateRun(rawSnapshot) {
     state.bossDefeated ??= false
     state.secretPortalRevealed ??= false
     state.noSpawnZones ??= []
+    state.leverSequenceProgress ??= []
   }
   // S'assure que la map courante est toujours présente
   ensureMapState(run, run.world.currentMapId)
@@ -1259,8 +1261,50 @@ export function activateLever(run, leverId) {
   if (mapState.levers?.[leverId]) return { ok: false, reason: 'Levier déjà activé.' }
 
   mapState.levers ??= {}
-  mapState.levers[leverId] = true
+  mapState.leverSequenceProgress ??= []
 
+  // ── Puzzle séquentiel ────────────────────────────────────────────────────
+  const puzzle = map.leverPuzzle
+  if (puzzle?.order?.includes(leverId)) {
+    const expectedNext = puzzle.order[mapState.leverSequenceProgress.length]
+
+    if (leverId !== expectedNext) {
+      // Mauvais ordre : reset de tous les leviers du puzzle
+      const resetLevers = puzzle.order.slice()
+      for (const id of resetLevers) {
+        mapState.levers[id] = false
+      }
+      mapState.leverSequenceProgress = []
+      appendLog(run, 'Mauvais ordre — les leviers se réinitialisent dans un cliquetis.')
+      return { ok: true, wrongSequence: true, resetLevers, openedPositions: [] }
+    }
+
+    // Bon levier dans l'ordre
+    mapState.levers[leverId] = true
+    mapState.leverSequenceProgress.push(leverId)
+
+    if (mapState.leverSequenceProgress.length === puzzle.order.length) {
+      // Séquence complète : ouvrir les murs
+      const openedPositions = []
+      for (const pos of puzzle.opensWalls ?? []) {
+        const row = mapState.tiles[pos.y]
+        if (row && row[pos.x] === '#') {
+          mapState.tiles[pos.y] = row.substring(0, pos.x) + '.' + row.substring(pos.x + 1)
+          openedPositions.push({ x: pos.x, y: pos.y })
+        }
+      }
+      mapState.leverSequenceProgress = []
+      appendLog(run, 'Séquence correcte ! Un passage s\'ouvre dans les ombres...')
+      return { ok: true, puzzleComplete: true, openedPositions }
+    }
+
+    const step = mapState.leverSequenceProgress.length
+    appendLog(run, `Levier ${step}/${puzzle.order.length} — continuez la séquence.`)
+    return { ok: true, puzzleProgress: true, step, total: puzzle.order.length, openedPositions: [] }
+  }
+
+  // ── Levier standard ──────────────────────────────────────────────────────
+  mapState.levers[leverId] = true
   const openedPositions = []
   for (const pos of lever.opensWalls ?? []) {
     const row = mapState.tiles[pos.y]
@@ -1269,7 +1313,6 @@ export function activateLever(run, leverId) {
       openedPositions.push({ x: pos.x, y: pos.y })
     }
   }
-
   appendLog(run, `Levier actionné : un passage secret s'ouvre dans la pierre.`)
   return { ok: true, openedPositions }
 }

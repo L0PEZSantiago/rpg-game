@@ -1677,6 +1677,7 @@ export const MAPS = {
 
   shadow_spire: {
     id: 'shadow_spire',
+    noVariants: true,
     name: 'Flèche des ombres',
     levelRange: '20-23',
     isSecret: false,
@@ -1685,21 +1686,31 @@ export const MAPS = {
     height: 12,
     start: { x: 1, y: 10 },
     exit: { x: 14, y: 1, targetMapId: 'nether_citadel' },
+    // Portail dans le couloir central scellé — révélé par l'énigme du PNJ,
+    // accessible uniquement via le puzzle des 3 leviers (A→B→C)
     secretPortal: {
-      x: 8,
+      x: 7,
       y: 5,
       targetMapId: 'secret_room_vault',
-      revealChance: 0.18,
     },
     backPortal: null,
-    levers: [],
+    levers: [
+      { id: 'lever_spire_a', x: 5, y: 5 },  // levier gauche
+      { id: 'lever_spire_b', x: 9, y: 5 },  // levier droit
+      { id: 'lever_spire_c', x: 7, y: 2 },  // levier haut
+    ],
+    // Ordre correct : gauche → droite → haut
+    leverPuzzle: {
+      order: ['lever_spire_a', 'lever_spire_b', 'lever_spire_c'],
+      opensWalls: [{ x: 7, y: 3 }],
+    },
     npcs: [
       {
         id: 'npc_shadow_keeper',
         name: 'Gardien de l\'ombre',
         role: 'craft',
         spawnChance: 0.6,
-        x: 2,
+        x: 1,
         y: 9,
         portrait: ROGUE_ASSET,
         dialogue: 'Les ombres cachent les meilleurs matériaux.',
@@ -1719,10 +1730,10 @@ export const MAPS = {
         name: 'Ombre parlante',
         role: 'lore',
         spawnChance: 0.65,
-        x: 9,
-        y: 5,
+        x: 11,
+        y: 3,
         portrait: ROGUE_ASSET,
-        dialogue: 'Je suis l\'ombre de ce lieu. Réponds-moi juste, et je te montrerai un chemin que peu ont emprunté.',
+        dialogue: 'Je suis l\'ombre de ce lieu. Réponds-moi juste... Le portail scellé répond à trois leviers. Les ombres se lisent de gauche à droite, puis vers le ciel.',
         riddlePool: [
           {
             id: 'riddle_spire_1',
@@ -1733,7 +1744,7 @@ export const MAPS = {
               { id: 'ghost', text: 'Un fantôme' },
             ],
             correctOptionId: 'shadow',
-            successText: 'L\'ombre s\'allonge et trace un chemin secret vers la flèche.',
+            successText: 'L\'ombre s\'allonge et révèle l\'emplacement du portail scellé.',
             failText: 'L\'ombre se retire. Elle ne parlera plus pour cette expédition.',
             reward: { gold: 130, materials: { ether_drop: 3, boss_shard: 1 }, revealSecretPortal: true },
           },
@@ -1746,7 +1757,7 @@ export const MAPS = {
               { id: 'fear', text: 'La peur' },
             ],
             correctOptionId: 'shadow',
-            successText: 'La Flèche des Ombres révèle son couloir secret.',
+            successText: 'La Flèche des Ombres révèle l\'emplacement du portail secret. Il reste encore à l\'atteindre...',
             failText: 'L\'ombre se dissout. Tu ne reverras jamais ce passage.',
             reward: { gold: 128, materials: { obsidian_fragment: 4 }, revealSecretPortal: true },
           },
@@ -1760,7 +1771,7 @@ export const MAPS = {
       { id: 'spire_tree_1', type: 'tree', x: 8, y: 9, charges: 2 },
     ],
     chests: [
-      { id: 'chest_spire_1', x: 5, y: 3, rarityBias: 'legendary' },
+      { id: 'chest_spire_1', x: 3, y: 3, rarityBias: 'legendary' },
       { id: 'chest_spire_2', x: 12, y: 5, rarityBias: 'mythic' },
       { id: 'chest_spire_3', x: 3, y: 7, rarityBias: 'legendary' },
       { id: 'chest_spire_4', x: 13, y: 2, rarityBias: 'epic' },
@@ -1768,8 +1779,8 @@ export const MAPS = {
     enemies: [
       { id: 'e_spire_1', templateId: 'shadow_stalker', x: 5, y: 6 },
       { id: 'e_spire_2', templateId: 'rune_sentinel', x: 9, y: 4 },
-      { id: 'e_spire_3', templateId: 'void_wraith', x: 12, y: 6 },
-      { id: 'e_spire_4', templateId: 'crystal_golem', x: 6, y: 3 },
+      { id: 'e_spire_3', templateId: 'void_wraith', x: 10, y: 6 },
+      { id: 'e_spire_4', templateId: 'crystal_golem', x: 5, y: 3 },
       { id: 'e_spire_5', templateId: 'shadow_stalker', x: 11, y: 8 },
       { id: 'e_spire_6', templateId: 'rune_sentinel', x: 7, y: 7 },
     ],

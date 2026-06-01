@@ -228,6 +228,17 @@ const currentResource = computed(() => (run.value ? nearbyResource(run.value) : 
 const currentChest = computed(() => (run.value ? nearbyChest(run.value) : null))
 const currentLever = computed(() => (run.value ? nearbyLever(run.value) : null))
 const progress = computed(() => (run.value ? progressSummary(run.value) : null))
+
+// Bulle de dialogue : premier contact avec un levier de puzzle
+watch(currentLever, (lever) => {
+  if (!lever || !run.value) return
+  const mapId = run.value.world.currentMapId
+  const mapDef = MAPS[mapId]
+  if (!mapDef?.leverPuzzle?.order?.includes(lever.id)) return
+  if (puzzleHintShownMaps.has(mapId)) return
+  puzzleHintShownMaps.add(mapId)
+  showSpeechBubble('Des leviers... Il doit sûrement y avoir un ordre à respecter.')
+})
 const primaryInteractionTarget = computed(() => {
   if (currentNpc.value) {
     return { type: 'npc', label: `Parler à ${currentNpc.value.name}` }
@@ -251,6 +262,17 @@ const primaryInteractionLabel = computed(() => {
 })
 
 const leverOpenedWalls = reactive(new Set())
+const leverJustActivated = reactive(new Set())
+const leverJustReset = reactive(new Set())
+const playerSpeechBubble = ref('')
+let speechBubbleTimer = null
+const puzzleHintShownMaps = reactive(new Set())
+
+function showSpeechBubble(text) {
+  clearTimeout(speechBubbleTimer)
+  playerSpeechBubble.value = text
+  speechBubbleTimer = setTimeout(() => { playerSpeechBubble.value = '' }, 3400)
+}
 
 function triggerPrimaryInteraction() {
   if (!run.value) {
@@ -263,14 +285,41 @@ function triggerPrimaryInteraction() {
   } else if (currentResource.value) {
     harvestAction()
   } else if (currentLever.value) {
-    const result = activateLever(run.value, currentLever.value.id)
+    const leverId = currentLever.value.id
+    const result = activateLever(run.value, leverId)
     if (result.ok) {
-      for (const pos of result.openedPositions ?? []) {
-        const key = `${pos.x},${pos.y}`
-        leverOpenedWalls.add(key)
-        window.setTimeout(() => leverOpenedWalls.delete(key), 1800)
+      if (result.wrongSequence) {
+        // Mauvais ordre — animer tous les leviers du puzzle en shake rouge
+        for (const id of result.resetLevers ?? []) {
+          leverJustReset.add(id)
+          window.setTimeout(() => leverJustReset.delete(id), 650)
+        }
+        setInfo('Mauvais ordre — les leviers se réinitialisent !')
+      } else if (result.puzzleComplete) {
+        // Succès : ouvrir les murs avec animation
+        leverJustActivated.add(leverId)
+        window.setTimeout(() => leverJustActivated.delete(leverId), 700)
+        for (const pos of result.openedPositions ?? []) {
+          const key = `${pos.x},${pos.y}`
+          leverOpenedWalls.add(key)
+          window.setTimeout(() => leverOpenedWalls.delete(key), 1800)
+        }
+        setInfo('La séquence est juste ! Un passage s\'ouvre dans les ombres...')
+      } else if (result.puzzleProgress) {
+        leverJustActivated.add(leverId)
+        window.setTimeout(() => leverJustActivated.delete(leverId), 700)
+        setInfo(`Levier ${result.step}/${result.total} — continuez la séquence.`)
+      } else {
+        // Levier standard
+        leverJustActivated.add(leverId)
+        window.setTimeout(() => leverJustActivated.delete(leverId), 700)
+        for (const pos of result.openedPositions ?? []) {
+          const key = `${pos.x},${pos.y}`
+          leverOpenedWalls.add(key)
+          window.setTimeout(() => leverOpenedWalls.delete(key), 1800)
+        }
+        setInfo('Un passage secret s\'ouvre dans un grondement de pierre !')
       }
-      setInfo('Un passage secret s\'ouvre dans un grondement de pierre !')
     } else {
       setInfo(result.reason ?? 'Impossible d\'actionner le levier.')
     }
@@ -2568,13 +2617,18 @@ function buildMapCellSprite(cell) {
   }
   if (cell.lever) {
     const activated = cell.leverActivated
+    const justAct = leverJustActivated.has(cell.lever.id)
+    const justRst = leverJustReset.has(cell.lever.id)
     return {
-      src: null,
-      bgSrc: '/assets/Environment/Props/Static/Dungeon_Props.png',
-      bgSize: activated ? '800% 600%' : '800% 600%',
-      bgPos: activated ? '28.6% 16.7%' : '0% 16.7%',
+      src: activated
+        ? '/assets/Icons/levier-actionne.png'
+        : '/assets/Icons/levier-non-actionne.png',
       frames: 1,
-      className: 'entity-lever' + (activated ? ' activated' : ''),
+      staticFit: true,
+      className: 'entity-lever'
+        + (activated ? ' activated' : '')
+        + (justAct ? ' lever-just-activated' : '')
+        + (justRst ? ' lever-just-reset' : ''),
     }
   }
   if (cell.resource) {
@@ -4890,6 +4944,11 @@ onBeforeUnmount(() => {
                     :style="mapPlayerStripStyle" />
                 </div>
               </div>
+              <Transition name="speech-bubble">
+                <div v-if="playerSpeechBubble" class="player-speech-bubble" :style="mapPlayerStyle">
+                  {{ playerSpeechBubble }}
+                </div>
+              </Transition>
             </div>
 
             <div v-if="!run.combat" class="move-buttons">
@@ -5095,6 +5154,11 @@ onBeforeUnmount(() => {
                 <img class="tile-sprite-strip" :src="mapPlayerSpriteSource" alt="joueur" :style="mapPlayerStripStyle" />
               </div>
             </div>
+            <Transition name="speech-bubble">
+              <div v-if="playerSpeechBubble" class="player-speech-bubble" :style="mapPlayerStyle">
+                {{ playerSpeechBubble }}
+              </div>
+            </Transition>
           </div>
           <div v-if="!run.combat" class="mobile-control-panel">
             <div class="move-buttons move-buttons-mobile">
@@ -6838,7 +6902,74 @@ button.danger {
 }
 
 .entity-lever.activated {
-  filter: drop-shadow(0 0 4px rgba(80, 220, 80, 0.8));
+  filter: drop-shadow(0 0 5px rgba(80, 220, 80, 0.9));
+}
+
+@keyframes lever-activate {
+  0%   { transform: scale(1); }
+  25%  { transform: scale(1.35) rotate(-12deg); filter: drop-shadow(0 0 8px rgba(80, 220, 80, 1)) brightness(1.8); }
+  55%  { transform: scale(1.15) rotate(6deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+@keyframes lever-reset-shake {
+  0%   { transform: translateX(0) rotate(0deg); }
+  15%  { transform: translateX(-4px) rotate(-8deg); filter: drop-shadow(0 0 6px rgba(220, 50, 50, 1)); }
+  35%  { transform: translateX(4px) rotate(8deg); }
+  55%  { transform: translateX(-3px) rotate(-4deg); }
+  75%  { transform: translateX(3px) rotate(4deg); }
+  100% { transform: translateX(0) rotate(0deg); }
+}
+
+.entity-lever.lever-just-activated {
+  animation: lever-activate 0.65s ease-out;
+}
+
+.entity-lever.lever-just-reset {
+  animation: lever-reset-shake 0.6s ease-out;
+}
+
+/* ── Bulle de dialogue joueur ──────────────────────────────────────────── */
+.player-speech-bubble {
+  position: absolute;
+  z-index: 12;
+  pointer-events: none;
+  /* Alignée sur le token joueur via les mêmes CSS vars, décalée vers le haut */
+  left: calc(var(--grid-pad) + (((100% - (var(--grid-pad) * 2) - ((var(--grid-cols) - 1) * var(--grid-gap))) / var(--grid-cols) + var(--grid-gap)) * var(--player-x)));
+  top:  calc(var(--grid-pad) + (((100% - (var(--grid-pad) * 2) - ((var(--grid-rows) - 1) * var(--grid-gap))) / var(--grid-rows) + var(--grid-gap)) * var(--player-y)) - 58px);
+  transform: translateX(-12%);
+  background: rgba(245, 238, 210, 0.97);
+  color: #1a1208;
+  font-size: 0.58rem;
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 5px 9px;
+  border-radius: 9px;
+  max-width: 130px;
+  min-width: 70px;
+  text-align: center;
+  white-space: normal;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,0,0,0.2);
+}
+.player-speech-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -7px;
+  left: 18px;
+  width: 0;
+  height: 0;
+  border: 7px solid transparent;
+  border-top: 7px solid rgba(245, 238, 210, 0.97);
+  border-bottom: none;
+}
+
+.speech-bubble-enter-active { animation: speech-pop 0.22s ease-out; }
+.speech-bubble-leave-active { transition: opacity 0.4s ease; }
+.speech-bubble-leave-to    { opacity: 0; }
+
+@keyframes speech-pop {
+  from { transform: translateX(-12%) scale(0.65); opacity: 0; }
+  to   { transform: translateX(-12%) scale(1);    opacity: 1; }
 }
 
 /* Portée d’agro : cases adjacentes aux ennemis (combat au passage) */
