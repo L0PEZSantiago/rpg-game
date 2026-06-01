@@ -43,7 +43,9 @@ import {
   isTileDiscovered,
   itemDisplayName,
   moveEnemyTo,
+  activateLever,
   nearbyChest,
+  nearbyLever,
   nearbyNpc,
   nearbyResource,
   navigateToMap,
@@ -224,6 +226,7 @@ watch(
 const currentNpc = computed(() => (run.value ? nearbyNpc(run.value) : null))
 const currentResource = computed(() => (run.value ? nearbyResource(run.value) : null))
 const currentChest = computed(() => (run.value ? nearbyChest(run.value) : null))
+const currentLever = computed(() => (run.value ? nearbyLever(run.value) : null))
 const progress = computed(() => (run.value ? progressSummary(run.value) : null))
 const primaryInteractionTarget = computed(() => {
   if (currentNpc.value) {
@@ -235,6 +238,9 @@ const primaryInteractionTarget = computed(() => {
   if (currentResource.value) {
     return { type: 'resource', label: `Récolter ${currentResource.value.type}` }
   }
+  if (currentLever.value) {
+    return { type: 'lever', label: 'Actionner le levier' }
+  }
   return null
 })
 const primaryInteractionLabel = computed(() => {
@@ -243,6 +249,8 @@ const primaryInteractionLabel = computed(() => {
   }
   return primaryInteractionTarget.value ? `E - ${primaryInteractionTarget.value.label}` : 'Aucun objet proche'
 })
+
+const leverOpenedWalls = reactive(new Set())
 
 function triggerPrimaryInteraction() {
   if (!run.value) {
@@ -254,6 +262,18 @@ function triggerPrimaryInteraction() {
     openChestAction()
   } else if (currentResource.value) {
     harvestAction()
+  } else if (currentLever.value) {
+    const result = activateLever(run.value, currentLever.value.id)
+    if (result.ok) {
+      for (const pos of result.openedPositions ?? []) {
+        const key = `${pos.x},${pos.y}`
+        leverOpenedWalls.add(key)
+        window.setTimeout(() => leverOpenedWalls.delete(key), 1800)
+      }
+      setInfo('Un passage secret s\'ouvre dans un grondement de pierre !')
+    } else {
+      setInfo(result.reason ?? 'Impossible d\'actionner le levier.')
+    }
   } else {
     setInfo('Aucun objet interactif à proximité.')
   }
@@ -1003,9 +1023,9 @@ function materialIconStyle(key) {
 }
 
 const MAP_RESOURCE_SPRITES = {
-  tree: { src: '/assets/Environment/Props/Animated/Pan_01-Sheet.png', frames: 4 },
-  ore: { src: '/assets/Environment/Props/Animated/Pan_04-Sheet.png', frames: 4 },
-  herb: { src: '/assets/Environment/Props/Animated/Pan_02-Sheet.png', frames: 2 },
+  tree: { src: '/assets/Environment/Props/Static/tree.png', frames: 1, staticFit: true },
+  ore: { src: '/assets/Environment/Props/Static/Rocks.png', frames: 1, bgSize: '380%', bgPos: '0% 0%' },
+  herb: { src: '/assets/Environment/Props/Static/Vegetation.png', frames: 1, bgSize: '500%', bgPos: '0% 0%' },
 }
 
 const BACKGROUND_MUSIC = {
@@ -2546,11 +2566,33 @@ function buildMapCellSprite(cell) {
       className: 'entity-npc',
     }
   }
+  if (cell.lever) {
+    const activated = cell.leverActivated
+    return {
+      src: null,
+      bgSrc: '/assets/Environment/Props/Static/Dungeon_Props.png',
+      bgSize: activated ? '800% 600%' : '800% 600%',
+      bgPos: activated ? '28.6% 16.7%' : '0% 16.7%',
+      frames: 1,
+      className: 'entity-lever' + (activated ? ' activated' : ''),
+    }
+  }
   if (cell.resource) {
     const resSpr = MAP_RESOURCE_SPRITES[cell.resource.type] ?? { src: '/assets/Environment/Props/Animated/Pan_03-Sheet.png', frames: 12 }
+    if (resSpr.bgSize) {
+      return {
+        src: null,
+        bgSrc: resSpr.src,
+        bgSize: resSpr.bgSize,
+        bgPos: resSpr.bgPos,
+        frames: 1,
+        className: 'entity-resource',
+      }
+    }
     return {
       src: resSpr.src,
       frames: resSpr.frames,
+      staticFit: resSpr.staticFit,
       className: 'entity-resource',
     }
   }
@@ -2644,6 +2686,12 @@ const mapCells = computed(() => {
           return adx + ady === 1
         })
 
+      const lever = discovered
+        ? (map?.levers ?? []).find((l) => l.x === x && l.y === y) ?? null
+        : null
+      const leverActivated = lever ? (mapState.levers?.[lever.id] ?? false) : false
+      const justOpened = leverOpenedWalls.has(`${x},${y}`)
+
       const cell = {
         id: toKey(x, y),
         x,
@@ -2660,6 +2708,9 @@ const mapCells = computed(() => {
         chestFxFrame,
         player: px === x && py === y,
         inAgro,
+        lever,
+        leverActivated,
+        justOpened,
       }
       cell.sprite = buildMapCellSprite(cell)
       rows.push(cell)
@@ -2686,6 +2737,12 @@ function itemIcon(item) {
     if (item.effect === 'heal_50') {
       return '/assets/Icons/life_potion.png'
     }
+    if (item.effect === 'buff_crit') {
+      return '/assets/Icons/huile-focus.png'
+    }
+    if (item.effect === 'buff_resistance') {
+      return '/assets/Icons/tonique-de-resistance.png'
+    }
     if (item.effect === 'buff_damage') {
       return '/assets/Icons/fiole-de-furie.png'
     }
@@ -2698,6 +2755,9 @@ function itemIcon(item) {
     return '/assets/Icons/potion.png'
   }
   if (item.kind === 'equipment' && item.slot === 'weapon') {
+    if (item.boneWeapon) {
+      return '/assets/Weapons/Bone/Bone.png'
+    }
     if (item.weaponType === 'staff') {
       return '/assets/Icons/staff.png'
     }
@@ -2801,6 +2861,8 @@ function cellClass(cell) {
     exit: cell.isExit,
     secret: cell.hasPortal,
     back: cell.hasBackPortal,
+    lever: Boolean(cell.lever),
+    'just-opened': cell.justOpened,
   }
 }
 
@@ -4645,7 +4707,15 @@ onBeforeUnmount(() => {
               <div v-if="forgeResult" class="hub-forge-result"
                 :class="forgeResult.success ? 'forge-success' : (forgeResult.ok ? 'forge-fail' : 'forge-error')">
                 <span v-if="!forgeResult.ok">{{ forgeResult.reason }}</span>
-                <span v-else-if="forgeResult.success">✓ Succès !</span>
+                <template v-else-if="forgeResult.success">
+                  <span>✓ Succès !</span>
+                  <span v-if="forgeResult.newRarity" class="forge-result-sub">
+                    → +0 · {{ RARITIES[forgeResult.newRarity]?.label }}
+                    <template v-if="forgeResult.affixes?.length">
+                      <br/><span v-for="a in forgeResult.affixes" :key="a" class="forge-result-affix">{{ a }}</span>
+                    </template>
+                  </span>
+                </template>
                 <span v-else>✗ Échec — rétrogradé</span>
               </div>
             </Transition>
@@ -4794,9 +4864,12 @@ onBeforeUnmount(() => {
               <div ref="mapGridRef" class="map-grid" :style="mapGridStyle">
                 <button v-for="cell in mapCells" :key="cell.id" class="tile-btn" :class="cellClass(cell)"
                   @click="clickCell(cell)">
-                  <div v-if="cellIcon(cell)" class="tile-sprite" :class="cell.sprite?.className">
+                  <div v-if="cell.sprite?.bgSrc" class="tile-sprite tile-sprite-bg" :class="cell.sprite?.className"
+                    :style="{ backgroundImage: `url('${cell.sprite.bgSrc}')`, backgroundSize: cell.sprite.bgSize || 'cover', backgroundPosition: cell.sprite.bgPos || '0 0', backgroundRepeat: 'no-repeat', imageRendering: 'pixelated' }">
+                  </div>
+                  <div v-else-if="cellIcon(cell)" class="tile-sprite" :class="cell.sprite?.className">
                     <img class="tile-sprite-strip" :src="cellIcon(cell)" alt="sprite case"
-                      :style="tileSpriteStripStyle(cell.sprite)" />
+                      :style="cell.sprite?.staticFit ? { width: '100%', height: '100%', objectFit: 'contain' } : tileSpriteStripStyle(cell.sprite)" />
                   </div>
                   <span v-else class="tile-symbol">{{ cellLabel(cell) }}</span>
                 </button>
@@ -4832,6 +4905,7 @@ onBeforeUnmount(() => {
               <span class="legend-secret">Portail Violet = Salle secrete</span>
               <span class="legend-exit">Portail Bleu = Nouvelle zone</span>
               <span class="legend-return">Portail Rose = Salle précédente</span>
+              <span class="legend-lever">Levier = Passage secret</span>
             </div>
             <div class="legend-keys">
               <span><kbd>Z</kbd> Haut</span>
@@ -4856,6 +4930,9 @@ onBeforeUnmount(() => {
               <p v-if="currentResource">Ressource proche: {{ currentResource.type }} ({{ currentResource.charges }}
                 charges)</p>
               <p v-if="currentChest">Coffre proche detecte.</p>
+              <p v-if="currentLever" class="lever-hint">
+                <span class="lever-icon">⚙</span> Levier à portée — appuyez sur E pour actionner
+              </p>
             </div>
           </article>
 
@@ -4993,9 +5070,12 @@ onBeforeUnmount(() => {
             <div ref="mapGridRef" class="map-grid" :style="mapGridStyle">
               <button v-for="cell in mapCells" :key="cell.id" class="tile-btn" :class="cellClass(cell)"
                 @click="clickCell(cell)">
-                <div v-if="cellIcon(cell)" class="tile-sprite" :class="cell.sprite?.className">
+                <div v-if="cell.sprite?.bgSrc" class="tile-sprite tile-sprite-bg" :class="cell.sprite?.className"
+                  :style="{ backgroundImage: `url('${cell.sprite.bgSrc}')`, backgroundSize: cell.sprite.bgSize || 'cover', backgroundPosition: cell.sprite.bgPos || '0 0', backgroundRepeat: 'no-repeat', imageRendering: 'pixelated' }">
+                </div>
+                <div v-else-if="cellIcon(cell)" class="tile-sprite" :class="cell.sprite?.className">
                   <img class="tile-sprite-strip" :src="cellIcon(cell)" alt="sprite case"
-                    :style="tileSpriteStripStyle(cell.sprite)" />
+                    :style="cell.sprite?.staticFit ? { width: '100%', height: '100%', objectFit: 'contain' } : tileSpriteStripStyle(cell.sprite)" />
                 </div>
                 <span v-else class="tile-symbol">{{ cellLabel(cell) }}</span>
               </button>
@@ -6722,12 +6802,43 @@ button.danger {
 }
 
 .tile-btn.wall {
-  background: rgba(74, 52, 37, 0.98);
+  background-color: #1a1410;
+  background-image: url('/assets/Minifantasy_Dungeon_Assets/Tileset/Tileset.png');
+  background-size: 2300% auto;
+  background-position: 41% 0%;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
 }
 
 .tile-btn.water {
-  /* même couleur que les murs (#) : bloquant visuel unifié */
-  background: rgba(74, 52, 37, 0.98);
+  background-color: #0c1a2a;
+}
+
+.tile-btn.just-opened {
+  animation: wall-reveal 1.6s ease-out forwards;
+}
+
+@keyframes wall-reveal {
+  0%   { background-color: #d4a832; filter: brightness(2.4); }
+  30%  { background-color: #8b6020; filter: brightness(1.6); }
+  100% { background-color: rgba(28, 22, 14, 0.92); filter: brightness(1); }
+}
+
+.tile-btn.lever {
+  background: rgba(55, 40, 20, 0.96);
+}
+
+.tile-sprite-bg {
+  width: 100%;
+  height: 100%;
+}
+
+.entity-lever {
+  filter: drop-shadow(0 0 3px rgba(220, 160, 40, 0.7));
+}
+
+.entity-lever.activated {
+  filter: drop-shadow(0 0 4px rgba(80, 220, 80, 0.8));
 }
 
 /* Portée d’agro : cases adjacentes aux ennemis (combat au passage) */
@@ -6758,7 +6869,7 @@ button.danger {
 }
 
 .tile-btn.resource {
-  background: rgba(28, 92, 58, 0.98);
+  background: rgba(28, 92, 58, 0.18);
 }
 
 .tile-btn.chest {
@@ -6851,6 +6962,24 @@ button.danger {
 
 .legend-return {
   color: rgb(255, 93, 134);
+}
+
+.legend-lever {
+  color: #d4a832;
+}
+
+.lever-hint {
+  color: #d4a832;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(212, 168, 50, 0.12);
+  border: 1px solid rgba(212, 168, 50, 0.3);
+}
+
+.lever-icon {
+  margin-right: 4px;
 }
 
 .controls {
@@ -11777,6 +11906,8 @@ button.danger {
 }
 .forge-success { background: rgba(40,160,40,0.15); color: #70e870; border: 1px solid rgba(40,160,40,0.35); }
 .forge-fail    { background: rgba(200,50,30,0.15); color: #f07050; border: 1px solid rgba(200,50,30,0.3); }
+.forge-result-sub { display: block; font-size: 0.78rem; font-weight: 600; margin-top: 4px; color: #d4b8f0; }
+.forge-result-affix { display: inline-block; margin: 2px 4px; font-size: 0.74rem; color: #c8a0ff; }
 .forge-error   { background: rgba(180,100,20,0.15); color: #f0b060; border: 1px solid rgba(180,100,20,0.3); }
 .forge-result-enter-active, .forge-result-leave-active { transition: opacity 0.3s; }
 .forge-result-enter-from, .forge-result-leave-to { opacity: 0; }

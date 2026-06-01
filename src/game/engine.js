@@ -544,6 +544,8 @@ function createMapState(mapId) {
     }
   }
 
+  const levers = Object.fromEntries((map.levers ?? []).map((l) => [l.id, false]))
+
   return {
     layoutVariant,
     tiles,
@@ -562,6 +564,7 @@ function createMapState(mapId) {
     bossDefeated: bossDefeatedInitial,
     secretPortalRevealed: false,
     noSpawnZones,
+    levers,
   }
 }
 
@@ -1233,6 +1236,44 @@ export function nearbyChest(run) {
   )
 }
 
+export function nearbyLever(run) {
+  const map = currentMapById(run.world.currentMapId)
+  const mapState = currentMapState(run)
+  const px = run.world.playerPosition.x
+  const py = run.world.playerPosition.y
+  const levers = map?.levers ?? []
+  return (
+    levers.find(
+      (lever) =>
+        !(mapState.levers?.[lever.id] ?? false) &&
+        Math.abs(lever.x - px) + Math.abs(lever.y - py) <= 1,
+    ) ?? null
+  )
+}
+
+export function activateLever(run, leverId) {
+  const map = currentMapById(run.world.currentMapId)
+  const mapState = currentMapState(run)
+  const lever = (map?.levers ?? []).find((l) => l.id === leverId)
+  if (!lever) return { ok: false, reason: 'Levier introuvable.' }
+  if (mapState.levers?.[leverId]) return { ok: false, reason: 'Levier déjà activé.' }
+
+  mapState.levers ??= {}
+  mapState.levers[leverId] = true
+
+  const openedPositions = []
+  for (const pos of lever.opensWalls ?? []) {
+    const row = mapState.tiles[pos.y]
+    if (row && row[pos.x] === '#') {
+      mapState.tiles[pos.y] = row.substring(0, pos.x) + '.' + row.substring(pos.x + 1)
+      openedPositions.push({ x: pos.x, y: pos.y })
+    }
+  }
+
+  appendLog(run, `Levier actionné : un passage secret s'ouvre dans la pierre.`)
+  return { ok: true, openedPositions }
+}
+
 function addMaterial(run, material, amount) {
   run.player.materials[material] = (run.player.materials[material] ?? 0) + amount
 }
@@ -1829,11 +1870,6 @@ function resolveEnemyDeath(run, enemyRef) {
   if (enemy.isBoss) {
     mapState.bossDefeated = true
     appendLog(run, `Boss de ${currentMap(run).name} vaincu. La sortie est desormais ouverte.`)
-    const secretPortal = mapState.secretPortal
-    if (secretPortal && !mapState.secretPortalRevealed && chance(secretPortal.revealChance)) {
-      mapState.secretPortalRevealed = true
-      appendLog(run, `Un signal secret apparaît vers (${secretPortal.x},${secretPortal.y}).`)
-    }
   }
 }
 
@@ -4118,10 +4154,14 @@ export function upgradeItemRarity(run, itemId) {
   item.rarity = newRarityId
   item.baseAttack = Math.round((item.baseAttack ?? item.attack) * ratio)
   item.baseDefense = Math.round((item.baseDefense ?? item.defense) * ratio)
+  item.enhancementLevel = 0
   applyEnhancementStats(item)
+  item.bonusStats = null
+  item.affixes = []
+  applyRandomBonusesToItem(run, item)
   item.value = Math.round((item.value ?? 0) * newRarity.valueMultiplier / (oldRarity.valueMultiplier || 1))
   appendLog(run, `Transcendance réussie ! ${itemDisplayName(item)} est maintenant ${newRarity.label}.`)
-  return { ok: true, success: true, newRarity: newRarityId }
+  return { ok: true, success: true, newRarity: newRarityId, affixes: item.affixes ?? [] }
 }
 
 export function upgradeCostInfo(run, itemId) {
