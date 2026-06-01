@@ -6867,11 +6867,6 @@ button.danger {
 
 .tile-btn.wall {
   background-color: #1a1410;
-  background-image: url('/assets/Minifantasy_Dungeon_Assets/Tileset/Tileset.png');
-  background-size: 2300% auto;
-  background-position: 41% 0%;
-  background-repeat: no-repeat;
-  image-rendering: pixelated;
 }
 
 .tile-btn.water {
