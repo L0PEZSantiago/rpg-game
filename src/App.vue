@@ -6866,11 +6866,11 @@ button.danger {
 }
 
 .tile-btn.wall {
-  background-color: #1a1410;
+  background: rgba(74, 52, 37, 0.98);
 }
 
 .tile-btn.water {
-  background-color: #0c1a2a;
+  background: rgba(74, 52, 37, 0.98);
 }
 
 .tile-btn.just-opened {

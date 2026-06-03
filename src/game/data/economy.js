@@ -189,14 +189,14 @@ export const RECIPES = [
   },
   {
     id: 'recipe_torch',
-    name: 'Torche',
+    name: 'Torche runique',
     rarity: 'common',
     description: 'Éclaire les zones sombres.',
     category: 'camp',
     materials: { wood: 2, resin: 1 },
     result: {
       kind: 'consumable',
-      name: 'Torche',
+      name: 'Torche runique',
       effect: 'torch',
       icon: '/assets/Icons/torche-runique.png',
       quantity: 2,

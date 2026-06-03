@@ -274,11 +274,7 @@ export const MAPS = {
       targetMapId: 'forgotten_foundry',
       revealChance: 0.28,
     },
-    backPortal: {
-      x: 1,
-      y: 1,
-      targetMapId: 'ashen_meadow',
-    },
+    backPortal: null,
     npcs: [
       {
         id: 'npc_broker',
@@ -551,11 +547,7 @@ export const MAPS = {
       targetMapId: 'lunar_shrine',
       revealChance: 0.36,
     },
-    backPortal: {
-      x: 14,
-      y: 1,
-      targetMapId: 'whispering_catacombs',
-    },
+    backPortal: null,
     npcs: [
       {
         id: 'npc_smith_prime',
@@ -671,11 +663,7 @@ export const MAPS = {
       targetMapId: 'echoing_vault',
       revealChance: 0.18,
     },
-    backPortal: {
-      x: 1,
-      y: 1,
-      targetMapId: 'obsidian_citadel',
-    },
+    backPortal: null,
     npcs: [
       {
         id: 'npc_quartermaster',
@@ -944,11 +932,7 @@ export const MAPS = {
     start: { x: 1, y: 1 },
     exit: { x: 14, y: 10, targetMapId: 'ember_crossroads' },
     secretPortal: null,
-    backPortal: {
-      x: 1,
-      y: 10,
-      targetMapId: 'shattered_sanctum',
-    },
+    backPortal: null,
     npcs: [
       {
         id: 'npc_warder',
@@ -1017,11 +1001,7 @@ export const MAPS = {
     start: { x: 1, y: 1 },
     exit: { x: 14, y: 10, targetMapId: 'veil_harbor' },
     secretPortal: null,
-    backPortal: {
-      x: 1,
-      y: 10,
-      targetMapId: 'abyssal_archive',
-    },
+    backPortal: null,
     npcs: [
       {
         id: 'npc_crossroads_merchant',
@@ -1091,11 +1071,7 @@ export const MAPS = {
     start: { x: 1, y: 10 },
     exit: { x: 14, y: 1, targetMapId: 'crystal_abyss' },
     secretPortal: null,
-    backPortal: {
-      x: 1,
-      y: 1,
-      targetMapId: 'ember_crossroads',
-    },
+    backPortal: null,
     npcs: [
       {
         id: 'npc_harbor_healer',

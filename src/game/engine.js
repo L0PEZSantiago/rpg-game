@@ -1564,7 +1564,7 @@ function rollEquipmentBonuses(run, rarity) {
       continue
     }
     const picked = pool.splice(index, 1)[0]
-    const rarityScale = rarity === 'mythic' ? 1.28 : rarity === 'legendary' ? 1.15 : 1
+    const rarityScale = rarity === 'mythic' ? 1.15 : rarity === 'legendary' ? 1.08 : 1
     const levelScale = 1 + run.player.level * 0.02
     const rolled = picked.min + Math.random() * (picked.max - picked.min)
     const value = picked.percent
