@@ -12,6 +12,8 @@ import {
   TUTORIAL_MAP_ID,
   MATERIAL_FROM_ENEMY,
   MATERIAL_LABELS,
+  QUESTS,
+  getQuestById,
   RARITY_BONUS_RULES,
   RARITIES,
   RARITY_ORDER,
@@ -665,6 +667,8 @@ export function createRun({ name, classId, difficulty }) {
       deaths: 0,
       passiveResetsUsed: 0,
       hasRevive: false,
+      quests: { active: [], completed: [], killCounts: {} },
+      discoveredSecretRooms: [],
     },
     world: {
       currentMapId: firstMapId,
@@ -722,6 +726,11 @@ function ensurePlayerState(run) {
   run.player.nextXp ??= xpForLevel(run.player.level || 1)
   run.player.preparedBuffs ??= []
   run.player.hasRevive ??= false
+  run.player.quests ??= { active: [], completed: [], killCounts: {} }
+  run.player.quests.active ??= []
+  run.player.quests.completed ??= []
+  run.player.quests.killCounts ??= {}
+  run.player.discoveredSecretRooms ??= []
 }
 
 function ensureShopStockState(run) {
@@ -1341,6 +1350,118 @@ function removeInventoryItem(run, itemId) {
   }
 }
 
+function recordQuestKill(run, templateId) {
+  run.player.quests.killCounts[templateId] = (run.player.quests.killCounts[templateId] ?? 0) + 1
+}
+
+export function availableQuestsForNpc(run, npcId) {
+  return QUESTS.filter((quest) => quest.npcId === npcId && !run.player.quests.completed.includes(quest.id))
+}
+
+export function acceptQuest(run, questId) {
+  const quest = getQuestById(questId)
+  if (!quest) {
+    return { ok: false, reason: 'Quete introuvable.' }
+  }
+  if (run.player.quests.active.includes(questId) || run.player.quests.completed.includes(questId)) {
+    return { ok: false, reason: 'Quete deja acceptee.' }
+  }
+  run.player.quests.active.push(questId)
+  appendLog(run, `Nouvelle quete acceptee : ${quest.name}.`)
+  return { ok: true }
+}
+
+export function questProgress(run, questId) {
+  const quest = getQuestById(questId)
+  if (!quest) {
+    return { current: 0, target: 1 }
+  }
+  const objective = quest.objective
+  switch (objective.type) {
+    case 'collect_material': {
+      const current = Math.min(run.player.materials[objective.material] ?? 0, objective.amount)
+      return { current, target: objective.amount }
+    }
+    case 'upgrade_equipment': {
+      const items = [
+        run.player.equipment.weapon,
+        run.player.equipment.armor,
+        run.player.equipment.trinket,
+        ...run.player.inventory,
+      ]
+      const reached = items.some(
+        (item) => item?.kind === 'equipment' && (item.enhancementLevel ?? 0) >= objective.enhancementLevel,
+      )
+      return { current: reached ? 1 : 0, target: 1 }
+    }
+    case 'discover_secret_room': {
+      const found = run.player.discoveredSecretRooms.includes(objective.mapId)
+      return { current: found ? 1 : 0, target: 1 }
+    }
+    case 'defeat_boss': {
+      const defeated = (run.player.quests.killCounts[objective.templateId] ?? 0) > 0
+      return { current: defeated ? 1 : 0, target: 1 }
+    }
+    case 'defeat_enemy_count': {
+      const current = objective.templateIds.reduce(
+        (sum, templateId) => sum + (run.player.quests.killCounts[templateId] ?? 0),
+        0,
+      )
+      return { current: Math.min(current, objective.amount), target: objective.amount }
+    }
+    case 'reach_level': {
+      return { current: Math.min(run.player.level, objective.level), target: objective.level }
+    }
+    default:
+      return { current: 0, target: 1 }
+  }
+}
+
+export function isQuestComplete(run, questId) {
+  const { current, target } = questProgress(run, questId)
+  return current >= target
+}
+
+export function turnInQuest(run, questId) {
+  if (!run.player.quests.active.includes(questId)) {
+    return { ok: false, reason: 'Quete non acceptee.' }
+  }
+  const quest = getQuestById(questId)
+  if (!quest || !isQuestComplete(run, questId)) {
+    return { ok: false, reason: 'Objectif non atteint.' }
+  }
+
+  if (quest.objective.type === 'collect_material') {
+    addMaterial(run, quest.objective.material, -quest.objective.amount)
+  }
+
+  const rewards = quest.rewards
+  if (rewards.gold) {
+    run.player.gold += rewards.gold
+  }
+  for (const [material, amount] of Object.entries(rewards.materials ?? {})) {
+    addMaterial(run, material, amount)
+  }
+  for (const consumable of rewards.consumables ?? []) {
+    addInventoryItem(run, { id: uid('consumable'), kind: 'consumable', ...consumable })
+  }
+  if (rewards.loot) {
+    const item = buildLootItem({
+      run,
+      isBoss: true,
+      sourceName: quest.name,
+      forcedRarity: rewards.loot.forcedRarity ?? null,
+      forcedSlot: rewards.loot.forcedSlot ?? null,
+    })
+    addInventoryItem(run, item)
+  }
+
+  run.player.quests.active = run.player.quests.active.filter((id) => id !== questId)
+  run.player.quests.completed.push(questId)
+  appendLog(run, `Quete accomplie : ${quest.name}.`)
+  return { ok: true }
+}
+
 export function equipItem(run, itemId) {
   const item = run.player.inventory.find((entry) => entry.id === itemId)
   if (!item || item.kind !== 'equipment') {
@@ -1591,8 +1712,8 @@ function applyRandomBonusesToItem(run, item) {
   return item
 }
 
-function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null, forcedRarity = null }) {
-  const slot = weightedChoice([
+function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null, forcedRarity = null, forcedSlot = null }) {
+  const slot = forcedSlot ?? weightedChoice([
     { value: 'weapon', weight: 44 },
     { value: 'armor', weight: 33 },
     { value: 'trinket', weight: 23 },
@@ -1873,6 +1994,8 @@ function resolveEnemyDeath(run, enemyRef) {
   enemy.currentHp = 0
   enemy.currentMana = 0
 
+  recordQuestKill(run, enemy.templateId)
+
   const template = enemyById(enemy.templateId)
   const difficulty = difficultyFor(run)
   const xp = Math.floor((template?.xpReward ?? 50) * difficulty.xpMultiplier)
@@ -1940,6 +2063,9 @@ function transitionToMap(run, targetMapId) {
   const leavingIsHidden = leavingMap.isSecret || leavingMap.isSecretRoom
   if (nextIsHidden && !leavingIsHidden) {
     run.world.returnMapId = leavingMap.id
+  }
+  if (nextIsHidden && !run.player.discoveredSecretRooms.includes(nextMap.id)) {
+    run.player.discoveredSecretRooms.push(nextMap.id)
   }
   if (!nextIsHidden && targetMapId === 'return') {
     run.world.returnMapId = null
@@ -2918,6 +3044,7 @@ function applySkill(run, side, skill) {
         critDamage: 'Dégâts critiques',
         damagePercent: 'Dégâts',
         dodge: 'Esquive',
+        dodgeChance: 'Esquive',
       }
       text += ` Buff ${BUFF_LABELS[buffType] ?? buffType} actif (${skill.buffTurns ?? 2} tours).`
     }
@@ -3664,6 +3791,9 @@ function recipeUsesBaseCost(recipe) {
   if (!recipe) {
     return true
   }
+  if (recipe.category === 'camp') {
+    return true
+  }
   if (recipe.rarity === 'legendary' || recipe.result?.rarity === 'legendary') {
     return true
   }
@@ -3966,10 +4096,10 @@ export function getWanderingMerchantStock(run, npcId) {
   const npc = mapState.npcs.find((n) => n.id === npcId && n.role === 'wandering_merchant')
   if (!npc) return []
   if (!npc.stock) {
-    const rarityBiases = ['rare', 'epic', 'rare', 'legendary']
+    const rarityBiases = ['uncommon', 'uncommon', 'rare', 'rare', 'epic', 'rare']
     npc.stock = rarityBiases.map((bias) => {
       const item = buildLootItem({ run, isBoss: false, rarityBias: bias })
-      item.merchantPrice = Math.max(100, Math.floor((item.value ?? 50) * 3.2 + randomInt(40, 140)))
+      item.merchantPrice = Math.max(100, Math.floor((item.value ?? 50) * 2.2 + randomInt(20, 80)))
       item.soldOut = false
       return item
     })
@@ -4195,8 +4325,8 @@ export function upgradeItemRarity(run, itemId) {
   const newRarity = RARITIES[newRarityId]
   const ratio = newRarity.powerMultiplier / oldRarity.powerMultiplier
   item.rarity = newRarityId
-  item.baseAttack = Math.round((item.baseAttack ?? item.attack) * ratio)
-  item.baseDefense = Math.round((item.baseDefense ?? item.defense) * ratio)
+  item.baseAttack = Math.round(item.attack * ratio)
+  item.baseDefense = Math.round(item.defense * ratio)
   item.enhancementLevel = 0
   applyEnhancementStats(item)
   item.bonusStats = null

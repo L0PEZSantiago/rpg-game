@@ -8,6 +8,7 @@ import {
   MAIN_LORE,
   MAPS,
   MATERIAL_LABELS,
+  QUESTS,
   RARITY_ORDER,
   RARITIES,
   RECIPES,
@@ -16,9 +17,11 @@ import {
 import { TUTORIAL_MAP_ID } from './game/data'
 import {
   PASSIVE_RESET_RULES,
+  acceptQuest,
   answerNpcRiddle,
   appendLog,
   attemptMove,
+  availableQuestsForNpc,
   buyConsumable,
   buyWanderingItem,
   canCraft,
@@ -40,6 +43,7 @@ import {
   harvestNearbyAllCharges,
   healAtNpc,
   hydrateRun,
+  isQuestComplete,
   isTileDiscovered,
   itemDisplayName,
   moveEnemyTo,
@@ -58,6 +62,7 @@ import {
   playerNormalAttack,
   playerUseSkill,
   progressSummary,
+  questProgress,
   recipeMaterialRequirements,
   resetPassiveTree,
   revealAround,
@@ -65,6 +70,7 @@ import {
   sellItem,
   sellValueForItem,
   startCombat,
+  turnInQuest,
   upgradeCostInfo,
   upgradeItem,
   upgradeItemRarity,
@@ -94,6 +100,7 @@ const runHistory = ref([])
 const run = ref(null)
 
 const npcOpen = ref(false)
+const questPanelOpen = ref(false)
 const craftFilter = ref('all')
 const infoMessage = ref('')
 const exportMessage = ref('')
@@ -228,6 +235,43 @@ const currentResource = computed(() => (run.value ? nearbyResource(run.value) : 
 const currentChest = computed(() => (run.value ? nearbyChest(run.value) : null))
 const currentLever = computed(() => (run.value ? nearbyLever(run.value) : null))
 const progress = computed(() => (run.value ? progressSummary(run.value) : null))
+
+const npcQuests = computed(() => {
+  if (!run.value || !currentNpc.value || currentNpc.value.role !== 'quest') {
+    return []
+  }
+  return availableQuestsForNpc(run.value, currentNpc.value.id).map((quest) => {
+    const isActive = run.value.player.quests.active.includes(quest.id)
+    return {
+      ...quest,
+      isActive,
+      progress: questProgress(run.value, quest.id),
+      isComplete: isActive && isQuestComplete(run.value, quest.id),
+    }
+  })
+})
+
+const activeQuestsList = computed(() => {
+  if (!run.value) return []
+  return run.value.player.quests.active
+    .map((questId) => {
+      const quest = QUESTS.find((entry) => entry.id === questId)
+      if (!quest) return null
+      return {
+        ...quest,
+        progress: questProgress(run.value, questId),
+        isComplete: isQuestComplete(run.value, questId),
+      }
+    })
+    .filter(Boolean)
+})
+
+const completedQuestsList = computed(() => {
+  if (!run.value) return []
+  return run.value.player.quests.completed
+    .map((questId) => QUESTS.find((entry) => entry.id === questId))
+    .filter(Boolean)
+})
 
 // Bulle de dialogue : premier contact avec un levier de puzzle
 watch(currentLever, (lever) => {
@@ -765,6 +809,16 @@ function handleHubUseConsumable(itemId) {
   persistRun()
 }
 
+const quickTorchItem = computed(() => {
+  if (!run.value) return null
+  return run.value.player.inventory.find(i => i.kind === 'consumable' && (i.effect === 'torch' || i.effect === 'vision_boost')) ?? null
+})
+
+function handleQuickUseTorch() {
+  if (!quickTorchItem.value) return
+  handleHubUseConsumable(quickTorchItem.value.id)
+}
+
 function handleHubCraft(recipeId) {
   if (!run.value) return
   const result = craftItem(run.value, recipeId)
@@ -1074,7 +1128,7 @@ function materialIconStyle(key) {
 const MAP_RESOURCE_SPRITES = {
   tree: { src: '/assets/Environment/Props/Static/tree.png', frames: 1, staticFit: true },
   ore: { src: '/assets/Environment/Props/Static/Rocks.png', frames: 1, bgSize: '380%', bgPos: '0% 0%' },
-  herb: { src: '/assets/Environment/Props/Static/Vegetation.png', frames: 1, bgSize: '500%', bgPos: '0% 0%' },
+  herb: { src: '/assets/Environment/Props/Static/Vegetation.png', frames: 1, bgSize: '830%', bgPos: '0% 14%' },
 }
 
 const BACKGROUND_MUSIC = {
@@ -1439,6 +1493,15 @@ function bodyASpriteSet() {
 function standardSpriteSetFromIdle(source) {
   if (!source) {
     return { idle: '', attack: '', cast: '', hit: '', death: '' }
+  }
+  if (source.includes('/sprites/spider/')) {
+    return {
+      idle: source,
+      attack: source,
+      cast: source,
+      hit: source,
+      death: source.replace('spider-idle.png', 'spider-death.png'),
+    }
   }
   if (source.includes('/Idle/Idle-Sheet.png')) {
     return {
@@ -2803,7 +2866,7 @@ function itemIcon(item) {
     if (item.effect === 'cleanse_and_guard') {
       return '/assets/Icons/orbe_de_clarte.png'
     }
-    if (item.effect === 'vision_boost') {
+    if (item.effect === 'vision_boost' || item.effect === 'torch') {
       return '/assets/Icons/torche-runique.png'
     }
     return '/assets/Icons/potion.png'
@@ -3915,6 +3978,26 @@ function npcAction(action, payload = null) {
     }
   }
 
+  if (action === 'quest_accept') {
+    const result = acceptQuest(run.value, payload)
+    if (!result.ok) {
+      setInfo(result.reason)
+    } else {
+      setInfo('Nouvelle quête acceptée.')
+      playUiSound(UI_SOUND_BANK.uiConfirm, 0.26)
+    }
+  }
+
+  if (action === 'quest_turn_in') {
+    const result = turnInQuest(run.value, payload)
+    if (!result.ok) {
+      setInfo(result.reason)
+    } else {
+      setInfo('Quête terminée ! Récompense reçue.')
+      playUiSound(UI_SOUND_BANK.levelUp, 0.3)
+    }
+  }
+
   persistRun()
 }
 
@@ -4482,7 +4565,7 @@ onBeforeUnmount(() => {
           <img src="/assets/Icons/dagger.png" alt="" class="hub-tab-icon" /> Forge
         </button>
         <button class="hub-tab-btn" :class="{ active: hubTab === 'transcendance' }" @click="hubTab = 'transcendance'">
-          <img src="/assets/Icons/anneau.png" alt="" class="hub-tab-icon" /> Transcendance
+          <img src="/assets/Icons/anneau.png" alt="" class="hub-tab-icon icon-wide" /> Transcendance
         </button>
         <button class="hub-tab-btn" :class="{ active: hubTab === 'craft' }" @click="hubTab = 'craft'">
           <img src="/assets/Icons/life_potion.png" alt="" class="hub-tab-icon" /> Provisions
@@ -4595,7 +4678,7 @@ onBeforeUnmount(() => {
           <div class="hub-inv-grid">
             <div v-for="item in hubInventoryEquipment" :key="item.id"
               class="hub-inv-card card" :class="{ 'hub-inv-selected': item.id === forgeSelectedItemId }">
-              <img :src="itemIcon(item)" class="hub-inv-icon" alt="" />
+              <img :src="itemIcon(item)" class="hub-inv-icon" :class="{ 'icon-wide': itemIcon(item).includes('anneau.png') }" alt="" />
               <div class="hub-inv-info">
                 <span class="hub-inv-name" :style="{ color: RARITIES[item.rarity]?.color }">
                   {{ itemDisplayName(item) }}
@@ -4631,7 +4714,7 @@ onBeforeUnmount(() => {
           <div class="hub-inv-grid">
             <div v-for="item in run.player.inventory.filter(i => i.kind === 'consumable')" :key="item.id"
               class="hub-inv-card card">
-              <img :src="itemIcon(item)" class="hub-inv-icon" alt="" />
+              <img :src="itemIcon(item)" class="hub-inv-icon" :class="{ 'icon-wide': itemIcon(item).includes('anneau.png') }" alt="" />
               <div class="hub-inv-info">
                 <span class="hub-inv-name">{{ item.name }}</span>
                 <span class="hub-inv-stats">{{ item.description ?? '' }}</span>
@@ -4832,7 +4915,7 @@ onBeforeUnmount(() => {
             <div v-for="recipe in RECIPES.filter(r => r.category === 'camp')" :key="recipe.id"
               class="hub-craft-card card">
               <div class="hub-craft-header">
-                <img :src="recipe.result.icon || '/assets/Icons/potion.png'" alt="" class="hub-craft-icon" />
+                <img :src="recipe.result.icon || '/assets/Icons/potion.png'" alt="" class="hub-craft-icon" :class="{ 'icon-wide': (recipe.result.icon || '').includes('anneau.png') }" />
                 <div>
                   <span class="hub-craft-name">{{ recipe.name }}</span>
                   <span class="hub-craft-desc">{{ recipe.description }}</span>
@@ -4859,6 +4942,35 @@ onBeforeUnmount(() => {
     </section>
 
     <section v-else class="game-screen">
+      <button type="button" class="quest-panel-toggle" :class="{ open: questPanelOpen }"
+        @click="questPanelOpen = !questPanelOpen">
+        <img src="/assets/Icons/quest.png" alt="" />
+        <span class="quest-panel-arrow">{{ questPanelOpen ? '‹' : '›' }}</span>
+      </button>
+      <aside class="quest-panel" :class="{ open: questPanelOpen }">
+        <h2 class="quest-panel-title">Quêtes</h2>
+        <div class="quest-panel-section">
+          <h3>En cours</h3>
+          <p v-if="activeQuestsList.length === 0" class="quest-panel-empty">Aucune quête active.</p>
+          <div v-for="quest in activeQuestsList" :key="quest.id" class="quest-panel-entry"
+            :class="{ 'quest-panel-ready': quest.isComplete }">
+            <h4>{{ quest.name }}</h4>
+            <p>{{ quest.description }}</p>
+            <p class="quest-panel-progress">
+              {{ quest.progress.current }} / {{ quest.progress.target }}
+              <span v-if="quest.isComplete"> — Pret a rendre !</span>
+            </p>
+          </div>
+        </div>
+        <div class="quest-panel-section">
+          <h3>Terminées</h3>
+          <p v-if="completedQuestsList.length === 0" class="quest-panel-empty">Aucune quête terminée.</p>
+          <div v-for="quest in completedQuestsList" :key="quest.id" class="quest-panel-entry quest-panel-done">
+            <h4>{{ quest.name }}</h4>
+          </div>
+        </div>
+      </aside>
+
       <header class="hud">
         <div class="hud-main">
           <h1>{{ run.player.name }} - {{ run.player.classId }}</h1>
@@ -4950,6 +5062,10 @@ onBeforeUnmount(() => {
                 </div>
               </Transition>
             </div>
+
+            <button type="button" class="torch-quick-btn" :disabled="!quickTorchItem" @click="handleQuickUseTorch">
+              <img src="/assets/Icons/torche-runique.png" alt="Utiliser une torche" />
+            </button>
 
             <div v-if="!run.combat" class="move-buttons">
               <button type="button" class="move-btn move-up" aria-label="Haut" @click="handleMove(0, -1)">↑</button>
@@ -5114,7 +5230,8 @@ onBeforeUnmount(() => {
           </span>
           <span class="mobile-hud-stat">XP {{ run.player.xp }}/{{ run.player.nextXp }}</span>
           <span v-if="(run.player.visionBoostSteps ?? 0) > 0" class="mobile-hud-stat hud-stat-vision">
-            Torche {{ run.player.visionBoostSteps }}
+            <img src="/assets/Icons/torche-runique.png" alt="" class="mobile-hud-icon" />
+            {{ run.player.visionBoostSteps }}
           </span>
         </div>
         <div class="mobile-top-bar-actions">
@@ -5160,6 +5277,11 @@ onBeforeUnmount(() => {
               </div>
             </Transition>
           </div>
+
+          <button type="button" class="torch-quick-btn" :disabled="!quickTorchItem" @click="handleQuickUseTorch">
+            <img src="/assets/Icons/torche-runique.png" alt="Utiliser une torche" />
+          </button>
+
           <div v-if="!run.combat" class="mobile-control-panel">
             <div class="move-buttons move-buttons-mobile">
               <button type="button" class="move-btn move-up" aria-label="Haut" @click="handleMove(0, -1)">↑</button>
@@ -5279,7 +5401,7 @@ onBeforeUnmount(() => {
             <p class="combat-intro-text">Un <strong>{{ run.combat.enemyName }}</strong> apparaît !</p>
             <div class="combat-intro-sprite-box">
               <img class="combat-intro-sprite-img" :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')"
-                alt="" :style="battleSpriteStripStyle('enemy')" />
+                alt="" :style="[battleSpriteStripStyle('enemy'), combatEnemyVisual?.spriteFilter ? { filter: combatEnemyVisual.spriteFilter } : {}]" />
             </div>
             <p class="combat-intro-skip">Cliquer ou attendre pour continuer</p>
           </article>
@@ -5524,7 +5646,7 @@ onBeforeUnmount(() => {
                       :style="[battleSpriteViewportStyle('enemy'), battleSpriteTransformStyle('enemy')]">
                       <img class="battle-sprite-strip"
                         :src="combatSpriteMeta.enemy.src || (combatEnemyVisual?.asset ?? '')" alt="sprite ennemi"
-                        :style="battleSpriteStripStyle('enemy')" />
+                        :style="[battleSpriteStripStyle('enemy'), combatEnemyVisual?.spriteFilter ? { filter: combatEnemyVisual.spriteFilter } : {}]" />
                     </div>
                     <div class="battle-popups">
                       <span v-for="popup in combatPopups.enemy" :key="popup.id" class="battle-popup"
@@ -6052,7 +6174,7 @@ onBeforeUnmount(() => {
                     v-for="recipe in RECIPES.filter(r => !r.category && (craftFilter === 'all' || r.result.kind === craftFilter || r.result.slot === craftFilter))"
                     :key="recipe.id" :disabled="!canCraftRecipe(recipe)" @click="npcAction('craft', recipe.id)">
                     <span class="craft-recipe-header">
-                      <img :src="itemIcon(recipe.result)" alt="" class="craft-recipe-icon" />
+                      <img :src="itemIcon(recipe.result)" alt="" class="craft-recipe-icon" :class="{ 'icon-wide': itemIcon(recipe.result).includes('anneau.png') }" />
                       <span class="craft-recipe-name" :style="{ color: rarityColor(recipe.rarity) }">
                         {{ recipe.name }}
                         <span class="craft-recipe-rarity">({{ RARITIES[recipe.rarity].label }})</span>
@@ -6078,6 +6200,23 @@ onBeforeUnmount(() => {
                 <small>Limite: {{ PASSIVE_RESET_RULES.limit }} fois par partie</small>
                 <small>Restant: {{ passiveResetRemaining }}</small>
               </button>
+            </template>
+            <template v-if="currentNpc.role === 'quest'">
+              <div v-for="quest in npcQuests" :key="quest.id" class="quest-offer">
+                <h3 class="quest-offer-name">{{ quest.name }}</h3>
+                <p class="quest-offer-desc">{{ quest.description }}</p>
+                <p v-if="quest.isActive" class="quest-offer-progress">
+                  Progression : {{ quest.progress.current }} / {{ quest.progress.target }}
+                </p>
+                <button v-if="!quest.isActive" @click="npcAction('quest_accept', quest.id)">
+                  Accepter la quête
+                </button>
+                <button v-else-if="quest.isComplete" @click="npcAction('quest_turn_in', quest.id)">
+                  Rendre la quête
+                </button>
+                <p v-else class="quest-offer-progress quest-offer-pending">Objectif en cours...</p>
+              </div>
+              <p v-if="npcQuests.length === 0" class="quest-offer-desc">Rien à signaler pour le moment.</p>
             </template>
             <button class="secondary modal-close-btn" @click="npcOpen = false">Fermer</button>
           </div>
@@ -6732,6 +6871,180 @@ button.danger {
   position: relative;
 }
 
+.torch-quick-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 8px 0 0 auto;
+  width: 56px;
+  height: 56px;
+  padding: 8px;
+  border-radius: 50%;
+  border: 1px solid rgba(252, 208, 135, 0.4);
+  background: rgba(20, 35, 45, 0.85);
+  cursor: pointer;
+}
+
+.torch-quick-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.torch-quick-btn:hover:enabled {
+  background: rgba(35, 60, 75, 0.9);
+  border-color: rgba(252, 208, 135, 0.7);
+}
+
+.torch-quick-btn:disabled {
+  opacity: 0.35;
+  filter: grayscale(1);
+  cursor: not-allowed;
+}
+
+.quest-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(300px, 84vw);
+  background: linear-gradient(160deg, rgba(11, 24, 30, 0.96), rgba(43, 20, 12, 0.92));
+  border-right: 1px solid rgba(255, 217, 156, 0.22);
+  box-shadow: 8px 0 28px rgba(0, 0, 0, 0.45);
+  padding: 18px 16px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  z-index: 45;
+}
+
+.quest-panel.open {
+  transform: translateX(0);
+}
+
+.quest-panel-title {
+  margin: 0 0 12px;
+  color: #ffd99c;
+}
+
+.quest-panel-section {
+  margin-bottom: 18px;
+}
+
+.quest-panel-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 217, 156, 0.8);
+}
+
+.quest-panel-empty {
+  font-size: 0.85rem;
+  opacity: 0.6;
+}
+
+.quest-panel-entry {
+  border: 1px solid rgba(255, 217, 156, 0.18);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.quest-panel-entry h4 {
+  margin: 0 0 4px;
+  font-size: 0.92rem;
+}
+
+.quest-panel-entry p {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.quest-panel-progress {
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.quest-panel-ready {
+  border-color: rgba(124, 230, 150, 0.6);
+}
+
+.quest-panel-ready .quest-panel-progress {
+  color: #8af0a5;
+}
+
+.quest-panel-done {
+  opacity: 0.6;
+}
+
+.quest-panel-toggle {
+  position: fixed;
+  top: 70%;
+  left: 0;
+  transform: translateY(-50%);
+  z-index: 46;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 8px;
+  border: 1px solid rgba(255, 217, 156, 0.4);
+  border-left: none;
+  border-radius: 0 10px 10px 0;
+  background: rgba(20, 35, 45, 0.85);
+  cursor: pointer;
+  transition: left 0.25s ease;
+}
+
+.quest-panel-toggle.open {
+  left: min(300px, 84vw);
+}
+
+.quest-panel-toggle img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.quest-panel-arrow {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.quest-offer {
+  border: 1px solid rgba(255, 217, 156, 0.18);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.quest-offer-name {
+  margin: 0 0 4px;
+}
+
+.quest-offer-desc {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.quest-offer-progress {
+  margin: 0 0 6px;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.quest-offer-pending {
+  opacity: 0.7;
+  font-weight: 400;
+}
+
 .map-grid {
   display: grid;
   gap: var(--grid-gap);
@@ -6803,19 +7116,17 @@ button.danger {
 .map-enemy-token .enemy-sprite {
   width: 100%;
   height: 100%;
-  transform-origin: center center;
-  transform: scale(1.1);
 }
 
 @keyframes map-enemy-idle {
 
   0%,
   100% {
-    transform: translateY(0);
+    transform: scale(1.1) translateY(0);
   }
 
   50% {
-    transform: translateY(-1px);
+    transform: scale(1.1) translateY(-1px);
   }
 }
 
@@ -6823,11 +7134,11 @@ button.danger {
 
   0%,
   100% {
-    transform: translateY(0);
+    transform: scale(1.1) translateY(0);
   }
 
   50% {
-    transform: translateY(-2px);
+    transform: scale(1.1) translateY(-2px);
   }
 }
 
@@ -6894,6 +7205,13 @@ button.danger {
 
 .entity-lever {
   filter: drop-shadow(0 0 3px rgba(220, 160, 40, 0.7));
+  position: relative;
+  z-index: 3;
+  transform: scale(1.6);
+}
+
+.tile-btn:has(.entity-lever) {
+  overflow: visible;
 }
 
 .entity-lever.activated {
@@ -6901,19 +7219,19 @@ button.danger {
 }
 
 @keyframes lever-activate {
-  0%   { transform: scale(1); }
-  25%  { transform: scale(1.35) rotate(-12deg); filter: drop-shadow(0 0 8px rgba(80, 220, 80, 1)) brightness(1.8); }
-  55%  { transform: scale(1.15) rotate(6deg); }
-  100% { transform: scale(1) rotate(0deg); }
+  0%   { transform: scale(1.6); }
+  25%  { transform: scale(2.16) rotate(-12deg); filter: drop-shadow(0 0 8px rgba(80, 220, 80, 1)) brightness(1.8); }
+  55%  { transform: scale(1.84) rotate(6deg); }
+  100% { transform: scale(1.6) rotate(0deg); }
 }
 
 @keyframes lever-reset-shake {
-  0%   { transform: translateX(0) rotate(0deg); }
-  15%  { transform: translateX(-4px) rotate(-8deg); filter: drop-shadow(0 0 6px rgba(220, 50, 50, 1)); }
-  35%  { transform: translateX(4px) rotate(8deg); }
-  55%  { transform: translateX(-3px) rotate(-4deg); }
-  75%  { transform: translateX(3px) rotate(4deg); }
-  100% { transform: translateX(0) rotate(0deg); }
+  0%   { transform: scale(1.6) translateX(0) rotate(0deg); }
+  15%  { transform: scale(1.6) translateX(-4px) rotate(-8deg); filter: drop-shadow(0 0 6px rgba(220, 50, 50, 1)); }
+  35%  { transform: scale(1.6) translateX(4px) rotate(8deg); }
+  55%  { transform: scale(1.6) translateX(-3px) rotate(-4deg); }
+  75%  { transform: scale(1.6) translateX(3px) rotate(4deg); }
+  100% { transform: scale(1.6) translateX(0) rotate(0deg); }
 }
 
 .entity-lever.lever-just-activated {
@@ -7484,8 +7802,8 @@ button.danger {
 }
 
 .craft-recipe-icon {
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   object-fit: contain;
   image-rendering: pixelated;
   flex-shrink: 0;
@@ -8519,6 +8837,7 @@ button.danger {
   display: grid;
   place-items: end center;
   transform-origin: 50% 82%;
+  filter: drop-shadow(0 12px 12px rgba(0, 0, 0, 0.52));
 }
 
 .battle-actor.enemy {
@@ -8539,7 +8858,6 @@ button.danger {
   max-height: 190px;
   overflow: hidden;
   image-rendering: pixelated;
-  filter: drop-shadow(0 12px 12px rgba(0, 0, 0, 0.52));
   transform-origin: 50% 100%;
 }
 
@@ -11707,12 +12025,16 @@ button.danger {
 
 /* Hub tab icon */
 .hub-tab-icon {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   vertical-align: middle;
   margin-right: 5px;
   opacity: 0.85;
   image-rendering: pixelated;
+}
+
+.icon-wide {
+  transform: scale(1.35);
 }
 
 /* ── TAB TRANSCENDANCE ── */
@@ -11804,8 +12126,8 @@ button.danger {
 }
 
 .hub-craft-icon {
-  width: 36px;
-  height: 36px;
+  width: 46px;
+  height: 46px;
   object-fit: contain;
 }
 
@@ -11885,7 +12207,7 @@ button.danger {
   gap: 12px;
 }
 .hub-inv-card.hub-inv-selected { border-color: #c89a20; }
-.hub-inv-icon { width: 38px; height: 38px; object-fit: contain; flex-shrink: 0; image-rendering: pixelated; }
+.hub-inv-icon { width: 48px; height: 48px; object-fit: contain; flex-shrink: 0; image-rendering: pixelated; }
 .hub-inv-info { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .hub-inv-name { font-size: 0.88rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hub-inv-stats { font-size: 0.75rem; color: rgba(255,217,156,0.55); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
