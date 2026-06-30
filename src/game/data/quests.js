@@ -43,24 +43,7 @@ export const QUESTS = [
       loot: null,
     },
   },
-  {
-    id: 'quest_cartographer',
-    npcId: 'npc_cartographer_apprentice',
-    mapId: 'obsidian_citadel',
-    name: 'La Carte Inachevée',
-    description: 'L\'apprenti cartographe cherche à localiser le Sanctuaire Lunaire, une zone secrète accessible depuis les prairies ou la citadelle.',
-    objective: {
-      type: 'discover_secret_room',
-      mapId: 'lunar_shrine',
-      targetLabel: 'Sanctuaire Lunaire',
-    },
-    rewards: {
-      gold: 120,
-      materials: { misty_heart: 1 },
-      consumables: [],
-      loot: null,
-    },
-  },
+
   {
     id: 'quest_void_hunter',
     npcId: 'npc_void_hunter',
@@ -111,10 +94,10 @@ export const QUESTS = [
     npcId: 'npc_onyx_pilgrim',
     mapId: 'nether_citadel',
     name: 'Le Pèlerinage d\'Onyx',
-    description: 'Le Pèlerin attend un compagnon de voyage digne du Trône d\'Onyx: atteins le niveau 24.',
+    description: 'Le Pèlerin attend un compagnon de voyage digne du Trône d\'Onyx: atteins le niveau 15.',
     objective: {
       type: 'reach_level',
-      level: 24,
+      level: 15,
       targetLabel: 'Niveau du héros',
     },
     rewards: {
@@ -129,7 +112,6 @@ export const QUESTS = [
 export const QUEST_ORDER = [
   'quest_bone_collector',
   'quest_forge_ascension',
-  'quest_cartographer',
   'quest_void_hunter',
   'quest_onyx_pilgrim',
   'quest_web_clearing',

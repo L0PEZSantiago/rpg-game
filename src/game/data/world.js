@@ -246,6 +246,7 @@ export const MAPS = {
       { id: 'chest_ash_3', x: 6, y: 5, rarityBias: 'common' },
     ],
     enemies: [
+      { id: 'e_ash_spider_test', templateId: 'ashen_spider', x: 6, y: 2 },
       { id: 'e_ash_1', templateId: 'ash_hound', x: 10, y: 3 },
       { id: 'e_ash_2', templateId: 'ash_hound', x: 12, y: 7 },
       { id: 'e_ash_3', templateId: 'shrouded_orc', x: 8, y: 8 },
@@ -961,7 +962,7 @@ export const MAPS = {
     height: 12,
     start: { x: 1, y: 1 },
     exit: { x: 14, y: 10, targetMapId: 'ember_crossroads' },
-    secretPortal: null,
+    secretPortal: { x: 2, y: 10, targetMapId: 'library_underweb', revealChance: 0.24 },
     backPortal: null,
     npcs: [
       {
@@ -1030,7 +1031,7 @@ export const MAPS = {
     height: 12,
     start: { x: 1, y: 1 },
     exit: { x: 14, y: 10, targetMapId: 'veil_harbor' },
-    secretPortal: null,
+    secretPortal: { x: 13, y: 10, targetMapId: 'ember_cache', revealChance: 0.24 },
     backPortal: null,
     npcs: [
       {
@@ -2104,7 +2105,7 @@ export const MAPS = {
     width: 16,
     height: 12,
     start: { x: 1, y: 1 },
-    exit: { x: 14, y: 10, targetMapId: 'crocs_de_la_reine' },
+    exit: { x: 14, y: 10, targetMapId: 'galeries_tissees' },
     secretPortal: null,
     backPortal: null,
     npcs: [
@@ -2153,6 +2154,28 @@ export const MAPS = {
     ],
   },
 
+  galeries_tissees: {
+    id: 'galeries_tissees', name: 'Galeries Tissees', levelRange: '32-33', isSecret: false,
+    background: '/assets/Environment/Tilesets/Dungeon_Tiles.png', width: 16, height: 12,
+    start: { x: 1, y: 10 }, exit: { x: 14, y: 1, targetMapId: 'puits_de_soie' }, secretPortal: null, backPortal: null,
+    npcs: [{ id: 'npc_galeries_craft', name: 'Forgeron des Fils', role: 'craft', spawnChance: 0.8, x: 2, y: 2, portrait: KNIGHT_ASSET, dialogue: 'La soie durcie vaut le fer, si tu sais la travailler.' }],
+    resources: [{ id: 'galeries_ore_1', type: 'ore', x: 4, y: 3, charges: 4 }, { id: 'galeries_herb_1', type: 'herb', x: 12, y: 8, charges: 3 }, { id: 'galeries_tree_1', type: 'tree', x: 7, y: 5, charges: 3 }],
+    chests: [{ id: 'chest_galeries_1', x: 6, y: 8, rarityBias: 'legendary' }, { id: 'chest_galeries_2', x: 13, y: 3, rarityBias: 'mythic' }],
+    enemies: [{ id: 'e_galeries_1', templateId: 'webspun_revenant', x: 4, y: 2 }, { id: 'e_galeries_2', templateId: 'cave_spider', x: 11, y: 3 }, { id: 'e_galeries_3', templateId: 'crypt_revenant', x: 5, y: 6 }, { id: 'e_galeries_4', templateId: 'broodmother_spider', x: 12, y: 8 }],
+    boss: { id: 'boss_galeries', templateId: 'boss_spider_matriarch', x: 13, y: 6 },
+    tiles: ['################', '#..............#', '#....##........#', '#....##..##....#', '#........##....#', '#..............#', '#..##..........#', '#..##....##....#', '#........##....#', '#..............#', '#..............#', '################'],
+  },
+  puits_de_soie: {
+    id: 'puits_de_soie', name: 'Puits de Soie', levelRange: '33-34', isSecret: false,
+    background: '/assets/Environment/Tilesets/Wall_Tiles.png', width: 16, height: 12,
+    start: { x: 1, y: 1 }, exit: { x: 14, y: 10, targetMapId: 'crocs_de_la_reine' }, secretPortal: null, backPortal: null,
+    npcs: [{ id: 'npc_puits_healer', name: 'Prieure Ensoiee', role: 'healer', spawnChance: 1.0, x: 2, y: 2, portrait: WIZZARD_ASSET, dialogue: 'Chaque fil tire vers la Reine. Repose-toi avant de descendre.' }],
+    resources: [{ id: 'puits_herb_1', type: 'herb', x: 7, y: 2, charges: 3 }, { id: 'puits_ore_1', type: 'ore', x: 12, y: 5, charges: 4 }, { id: 'puits_tree_1', type: 'tree', x: 3, y: 9, charges: 3 }],
+    chests: [{ id: 'chest_puits_1', x: 11, y: 9, rarityBias: 'legendary' }, { id: 'chest_puits_2', x: 5, y: 5, rarityBias: 'mythic' }],
+    enemies: [{ id: 'e_puits_1', templateId: 'cave_spider', x: 5, y: 2 }, { id: 'e_puits_2', templateId: 'webspun_revenant', x: 10, y: 3 }, { id: 'e_puits_3', templateId: 'broodmother_spider', x: 4, y: 7 }, { id: 'e_puits_4', templateId: 'webspun_revenant', x: 12, y: 8 }],
+    boss: { id: 'boss_puits', templateId: 'boss_spider_matriarch', x: 8, y: 7 },
+    tiles: ['################', '#..............#', '#..............#', '#...###..###...#', '#..............#', '#..............#', '#...###..###...#', '#..............#', '#..............#', '#...###..###...#', '#..............#', '################'],
+  },
   crocs_de_la_reine: {
     id: 'crocs_de_la_reine',
     name: 'Crocs de la Reine',
@@ -2221,6 +2244,29 @@ export const MAPS = {
     ],
   },
 
+  library_underweb: {
+    id: 'library_underweb', name: 'Bibliotheque Sous-Toile (Secret)', levelRange: '12-14', isSecret: true,
+    background: '/assets/Environment/Tilesets/Dungeon_Tiles.png', width: 16, height: 12,
+    start: { x: 1, y: 1 }, exit: { x: 14, y: 10, targetMapId: 'return' }, secretPortal: null, backPortal: null,
+    npcs: [{ id: 'npc_underweb_scholar', name: 'Archiviste Enfile', role: 'respec', spawnChance: 0.8, x: 3, y: 2, portrait: WIZZARD_ASSET, dialogue: 'Les fils gardent les erreurs. Je peux en defaire quelques unes.' }],
+    resources: [{ id: 'underweb_ore_1', type: 'ore', x: 6, y: 4, charges: 3 }, { id: 'underweb_herb_1', type: 'herb', x: 11, y: 8, charges: 3 }],
+    chests: [{ id: 'chest_underweb_1', x: 5, y: 8, rarityBias: 'legendary' }, { id: 'chest_underweb_2', x: 12, y: 4, rarityBias: 'epic' }],
+    enemies: [{ id: 'e_underweb_1', templateId: 'crypt_spider', x: 7, y: 3 }, { id: 'e_underweb_2', templateId: 'obsidian_spider', x: 10, y: 7 }, { id: 'e_underweb_3', templateId: 'crypt_mage', x: 4, y: 6 }],
+    boss: { id: 'boss_underweb', templateId: 'boss_mirror_eater', x: 13, y: 8 },
+    tiles: ['################', '#..............#', '#..####..####..#', '#..............#', '#.###......###.#', '#..............#', '#..............#', '#.###......###.#', '#..............#', '#..####..####..#', '#..............#', '################'],
+  },
+
+  ember_cache: {
+    id: 'ember_cache', name: 'Cache des Braises (Secret)', levelRange: '13-15', isSecret: true,
+    background: '/assets/Environment/Tilesets/Floors_Tiles.png', width: 16, height: 12,
+    start: { x: 1, y: 10 }, exit: { x: 14, y: 1, targetMapId: 'return' }, secretPortal: null, backPortal: null,
+    npcs: [{ id: 'npc_ember_cache_smith', name: 'Martelier Cache', role: 'craft', spawnChance: 1.0, x: 2, y: 9, portrait: KNIGHT_ASSET, dialogue: 'Une cache de forge, une seule halte. Choisis bien.' }],
+    resources: [{ id: 'cache_ore_1', type: 'ore', x: 4, y: 4, charges: 4 }, { id: 'cache_tree_1', type: 'tree', x: 11, y: 7, charges: 3 }],
+    chests: [{ id: 'chest_cache_1', x: 7, y: 5, rarityBias: 'legendary' }, { id: 'chest_cache_2', x: 12, y: 9, rarityBias: 'mythic' }],
+    enemies: [{ id: 'e_cache_1', templateId: 'obsidian_spider', x: 6, y: 3 }, { id: 'e_cache_2', templateId: 'obsidian_reaper', x: 11, y: 4 }, { id: 'e_cache_3', templateId: 'crypt_spider', x: 8, y: 8 }],
+    boss: { id: 'boss_cache', templateId: 'boss_forge_titan', x: 13, y: 8 },
+    tiles: ['################', '#..............#', '#...###....##..#', '#..............#', '#.##....##.....#', '#..............#', '#.....##....##.#', '#..............#', '#..##....###...#', '#..............#', '#..............#', '################'],
+  },
   lunar_shrine: {
     id: 'lunar_shrine',
     name: 'Sanctuaire Lunaire (Secret)',
@@ -2571,6 +2617,8 @@ export const MAP_ORDER = [
   'onyx_throne',
   'crypts_descendantes',
   'antre_de_la_reine_araignee',
+  'galeries_tissees',
+  'puits_de_soie',
   'crocs_de_la_reine',
 ]
 

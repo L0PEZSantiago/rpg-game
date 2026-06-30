@@ -67,6 +67,7 @@ import {
   resetPassiveTree,
   revealAround,
   runEnemyTurn,
+  recycleItem,
   sellItem,
   sellValueForItem,
   startCombat,
@@ -101,6 +102,21 @@ const run = ref(null)
 
 const npcOpen = ref(false)
 const questPanelOpen = ref(false)
+const questPanelDrag = reactive({
+  x: 0,
+  y: 0,
+  startX: 0,
+  startY: 0,
+  pointerX: 0,
+  pointerY: 0,
+  dragging: false,
+  moved: false,
+})
+const questPanelToggleStyle = computed(() => ({
+  left: questPanelOpen.value ? 'min(300px, 84vw)' : '0px',
+  top: `${questPanelDrag.y}px`,
+}))
+let suppressQuestPanelClick = false
 const craftFilter = ref('all')
 const infoMessage = ref('')
 const exportMessage = ref('')
@@ -123,7 +139,7 @@ const challengeModal = ref(/** @type {{ npcId: string, npcName: string, result: 
 const wanderingMerchantModal = ref(/** @type {{ npcId: string, npcName: string, portrait: string } | null} */(null))
 const merchantArrivalModal = ref(/** @type {{ npcName: string } | null} */(null))
 const merchantDepartedModal = ref(/** @type {{ npcName: string } | null} */(null))
-const sellConfirmModal = ref(/** @type {{ type: 'sell-all' | 'sell-item', itemId?: string, label: string } | null} */(null))
+const sellConfirmModal = ref(/** @type {{ type: 'sell-all' | 'sell-item' | 'sell-loot-item' | 'recycle-item' | 'recycle-loot-item', itemId?: string, label: string, rarity?: string, icon?: string } | null} */(null))
 let merchantDepartureTimer = null
 let merchantMoveInterval = null
 let merchantDepartedAutoCloseTimer = null
@@ -619,6 +635,9 @@ const combatActiveConsumableGroup = computed(
   () => combatConsumableGroups.value.find((entry) => entry.id === combatConsumableTab.value) ?? combatConsumableGroups.value[0] ?? null,
 )
 
+function classDisplayName(classId) {
+  return CLASS_DEFINITIONS.find((entry) => entry.id === classId)?.name ?? classId
+}
 function rarityRank(rarity) {
   const index = RARITY_ORDER.indexOf(rarity)
   return index < 0 ? -1 : index
@@ -717,6 +736,12 @@ function itemDescription(item) {
 
 function itemSellPrice(item) {
   return sellValueForItem(item)
+}
+
+function materialGainsLabel(gained) {
+  return (gained ?? [])
+    .map((entry) => `+${entry.quantity} ${MATERIAL_LABELS[entry.material] ?? entry.material}`)
+    .join(', ')
 }
 
 function rarityLabel(rarity) {
@@ -1076,6 +1101,7 @@ const UI_SOUND_BANK = {
   sellOrBuy: ['/assets/sounds/sell_or_buy.mp3'],
   levelUp: ['/assets/sounds/level_up.mp3'],
   craft: ['/assets/sounds/craft.mp3'],
+  forgeFail: ['/assets/sounds/forge_upgrade_fail.wav'],
   drinkPotion: ['/assets/sounds/drink_potion.wav'],
   passiveGet: ['/assets/sounds/passive_get.mp3'],
 }
@@ -1184,6 +1210,7 @@ const combatSpriteFrame = reactive({
 const worldMusic = ref(null)
 const battleMusic = ref(null)
 const audioPools = new Map()
+let uiSoundsPrimed = false
 const combatPlayerState = ref('idle')
 const combatEnemyState = ref('idle')
 const combatStateTokens = reactive({
@@ -1302,7 +1329,10 @@ const combatSpriteScale = computed(() => {
   const playerOccupied = Math.max(1, combatSpriteMeta.player.occupiedHeight)
   const enemyOccupied = Math.max(1, combatSpriteMeta.enemy.occupiedHeight)
   const enemyAutoScale = (playerOccupied / enemyOccupied) * playerScale * 0.98
-  const enemyScale = Math.max(0.58, Math.min(1, enemyAutoScale))
+  const enemySource = combatSpriteMeta.enemy.src || combatEnemyVisual.value?.asset || ''
+  const enemyMaxScale = enemySource.includes('/sprites/spider/') ? 1.42 : 1
+  const enemyMinScale = enemySource.includes('/sprites/spider/') ? 0.92 : 0.58
+  const enemyScale = Math.max(enemyMinScale, Math.min(enemyMaxScale, enemyAutoScale))
   return {
     player: playerScale,
     enemy: enemyScale,
@@ -1397,6 +1427,19 @@ function guessSpriteFrames(width, height) {
     occupiedWidth: frameWidth,
     occupiedHeight: frameHeight,
   }
+}
+
+function spriteFrameCountForSource(source, fallback = 4) {
+  if (!source || typeof source !== 'string') {
+    return fallback
+  }
+  if (source.includes('/sprites/spider/spider-idle.png')) {
+    return 5
+  }
+  if (source.includes('/sprites/spider/spider-death.png')) {
+    return 4
+  }
+  return fallback
 }
 
 function loadSpriteMeta(source) {
@@ -1712,6 +1755,29 @@ function getPooledAudio(source) {
   return audio
 }
 
+function preloadUiSoundPool(pool) {
+  for (const source of pool) {
+    if (!source || typeof source !== 'string') {
+      continue
+    }
+    try {
+      const sound = getPooledAudio(source)
+      sound.load()
+    } catch {
+      // Ignore preload failures.
+    }
+  }
+}
+
+function primeUiSounds() {
+  if (uiSoundsPrimed) {
+    return
+  }
+  uiSoundsPrimed = true
+  preloadUiSoundPool(UI_SOUND_BANK.craft)
+  preloadUiSoundPool(UI_SOUND_BANK.forgeFail)
+}
+
 function startMusicTrack(trackRef, source, volume) {
   if (!trackRef.value || trackRef.value.src !== new URL(source, window.location.origin).href) {
     const audio = createAudioElement(source, volume, true)
@@ -1763,6 +1829,7 @@ function playCombatSound(pool, volume = 0.18) {
 }
 
 function playUiSound(pool, volume = 0.22) {
+  primeUiSounds()
   const source = randomFrom(pool)
   if (!source) {
     return
@@ -2532,7 +2599,7 @@ function mapEnemyTokenStyle(token) {
 }
 
 function mapEnemyStripStyle(token) {
-  const frames = 4
+  const frames = Math.max(1, spriteFrameCountForSource(token.asset, 4))
   const frame = token.walking
     ? (mapEnemyFrame[token.id] ?? 0) % frames
     : Math.floor(mapAnimTick.value / 2) % frames
@@ -3450,6 +3517,8 @@ function handleForgeUpgrade() {
   forgeResult.value = result
   if (result.ok && result.success) {
     playUiSound(UI_SOUND_BANK.craft, 0.35)
+  } else if (result.ok && result.success === false) {
+    playUiSound(UI_SOUND_BANK.forgeFail, 0.32)
   }
   forgeResultTimer = setTimeout(() => { forgeResult.value = null }, 3500)
   persistRun()
@@ -4127,6 +4196,31 @@ function doSellItem(itemId) {
   persistRun()
 }
 
+function doRecycleItem(itemId) {
+  if (!run.value) return
+  const result = recycleItem(run.value, itemId)
+  if (!result.ok) {
+    setInfo(result.reason)
+  } else {
+    setInfo(`Recycle: ${materialGainsLabel(result.gained) || 'rien de notable'}.`)
+    playUiSound(UI_SOUND_BANK.craft, 0.28)
+  }
+  persistRun()
+}
+
+function doRecycleLootItem(itemId) {
+  if (!run.value || !lootModal.value) return
+  const result = recycleItem(run.value, itemId)
+  if (!result.ok) {
+    setInfo(result.reason)
+    return
+  }
+  lootModal.value.items = (lootModal.value.items ?? []).filter((item) => item.id !== itemId)
+  setInfo(`Recycle: ${materialGainsLabel(result.gained) || 'rien de notable'}.`)
+  playUiSound(UI_SOUND_BANK.craft, 0.28)
+  persistRun()
+}
+
 function doSellLootItem(itemId) {
   if (!run.value || !lootModal.value) return
   const result = sellItem(run.value, itemId)
@@ -4149,6 +4243,16 @@ function sellAction(itemId) {
   doSellItem(itemId)
 }
 
+function recycleAction(itemId) {
+  if (!run.value) return
+  const item = run.value.player.inventory.find((i) => i.id === itemId)
+  if (item && isHighValueItem(item)) {
+    sellConfirmModal.value = { type: 'recycle-item', itemId, label: item.name, rarity: item.rarity, icon: itemIcon(item) }
+    return
+  }
+  doRecycleItem(itemId)
+}
+
 function sellLootItem(itemId) {
   if (!run.value || !lootModal.value) return
   const item = (lootModal.value.items ?? []).find((i) => i.id === itemId)
@@ -4157,6 +4261,16 @@ function sellLootItem(itemId) {
     return
   }
   doSellLootItem(itemId)
+}
+
+function recycleLootItem(itemId) {
+  if (!run.value || !lootModal.value) return
+  const item = (lootModal.value.items ?? []).find((i) => i.id === itemId)
+  if (item && isHighValueItem(item)) {
+    sellConfirmModal.value = { type: 'recycle-loot-item', itemId, label: item.name, rarity: item.rarity, icon: itemIcon(item) }
+    return
+  }
+  doRecycleLootItem(itemId)
 }
 
 function equipLootItem(itemId) {
@@ -4205,6 +4319,8 @@ function confirmSell() {
   if (type === 'sell-all') doSellAllFromActiveCategory()
   else if (type === 'sell-item') doSellItem(itemId)
   else if (type === 'sell-loot-item') doSellLootItem(itemId)
+  else if (type === 'recycle-item') doRecycleItem(itemId)
+  else if (type === 'recycle-loot-item') doRecycleLootItem(itemId)
 }
 
 function cancelSell() {
@@ -4387,8 +4503,98 @@ function handleMerchantItemTouch(item, event) {
   }
 }
 
+function clampQuestPanelTogglePosition(x, y) {
+  const margin = 8
+  const height = 54
+  const maxY = Math.max(margin, window.innerHeight - height - margin)
+  return {
+    x: 0,
+    y: Math.min(maxY, Math.max(margin, y)),
+  }
+}
+
+function saveQuestPanelTogglePosition() {
+  try {
+    localStorage.setItem('questPanelTogglePosition', JSON.stringify({ y: questPanelDrag.y }))
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function restoreQuestPanelTogglePosition() {
+  let restored = null
+  try {
+    restored = JSON.parse(localStorage.getItem('questPanelTogglePosition') ?? 'null')
+  } catch {
+    restored = null
+  }
+  const fallbackY = Math.round((window.innerHeight || 720) * 0.7)
+  const position = clampQuestPanelTogglePosition(
+    0,
+    Number.isFinite(restored?.y) ? restored.y : fallbackY,
+  )
+  questPanelDrag.x = position.x
+  questPanelDrag.y = position.y
+}
+
+function onQuestPanelTogglePointerDown(event) {
+  if (event.button != null && event.button !== 0) {
+    return
+  }
+  questPanelDrag.dragging = true
+  questPanelDrag.moved = false
+  questPanelDrag.startX = questPanelDrag.x
+  questPanelDrag.startY = questPanelDrag.y
+  questPanelDrag.pointerX = event.clientX
+  questPanelDrag.pointerY = event.clientY
+  event.currentTarget?.setPointerCapture?.(event.pointerId)
+}
+
+function onQuestPanelTogglePointerMove(event) {
+  if (!questPanelDrag.dragging) {
+    return
+  }
+  const dy = event.clientY - questPanelDrag.pointerY
+  if (Math.abs(dy) > 4) {
+    questPanelDrag.moved = true
+  }
+  const position = clampQuestPanelTogglePosition(0, questPanelDrag.startY + dy)
+  questPanelDrag.x = 0
+  questPanelDrag.y = position.y
+}
+
+function onQuestPanelTogglePointerUp(event) {
+  if (!questPanelDrag.dragging) {
+    return
+  }
+  questPanelDrag.dragging = false
+  event.currentTarget?.releasePointerCapture?.(event.pointerId)
+  if (questPanelDrag.moved) {
+    suppressQuestPanelClick = true
+    saveQuestPanelTogglePosition()
+    window.setTimeout(() => { suppressQuestPanelClick = false }, 0)
+  }
+}
+
+function toggleQuestPanel() {
+  if (suppressQuestPanelClick) {
+    suppressQuestPanelClick = false
+    return
+  }
+  questPanelOpen.value = !questPanelOpen.value
+}
+
+function clampQuestPanelToggleToViewport() {
+  const position = clampQuestPanelTogglePosition(0, questPanelDrag.y)
+  questPanelDrag.x = 0
+  questPanelDrag.y = position.y
+}
 onMounted(async () => {
+  restoreQuestPanelTogglePosition()
+  window.addEventListener('resize', clampQuestPanelToggleToViewport)
   document.addEventListener('touchstart', onDocumentTouchStart, { passive: true })
+  window.addEventListener('pointerdown', primeUiSounds, { once: true, passive: true })
+  window.addEventListener('keydown', primeUiSounds, { once: true })
   try {
     await initDatabase()
     dbReady.value = true
@@ -4409,7 +4615,10 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', clampQuestPanelToggleToViewport)
   document.removeEventListener('touchstart', onDocumentTouchStart)
+  window.removeEventListener('pointerdown', primeUiSounds)
+  window.removeEventListener('keydown', primeUiSounds)
   window.removeEventListener('keydown', keyHandler)
   if (combatIntroTimer) {
     window.clearTimeout(combatIntroTimer)
@@ -4526,7 +4735,7 @@ onBeforeUnmount(() => {
           <ul v-if="runHistory.length" class="history-list">
             <li v-for="entry in runHistory" :key="`${entry.createdAt}-${entry.result}`">
               <strong>{{ entry.result }}</strong>
-              <span>{{ entry.difficulty }} / {{ entry.classId }} / niv. {{ entry.level }}</span>
+              <span>{{ entry.difficulty }} / {{ classDisplayName(entry.classId) }} / niv. {{ entry.level }}</span>
               <small>{{ entry.createdAt }}</small>
             </li>
           </ul>
@@ -4942,8 +5151,13 @@ onBeforeUnmount(() => {
     </section>
 
     <section v-else class="game-screen">
-      <button type="button" class="quest-panel-toggle" :class="{ open: questPanelOpen }"
-        @click="questPanelOpen = !questPanelOpen">
+      <button type="button" class="quest-panel-toggle" :class="{ open: questPanelOpen, dragging: questPanelDrag.dragging }"
+        :style="questPanelToggleStyle"
+        @pointerdown="onQuestPanelTogglePointerDown"
+        @pointermove="onQuestPanelTogglePointerMove"
+        @pointerup="onQuestPanelTogglePointerUp"
+        @pointercancel="onQuestPanelTogglePointerUp"
+        @click="toggleQuestPanel">
         <img src="/assets/Icons/quest.png" alt="" />
         <span class="quest-panel-arrow">{{ questPanelOpen ? 'â€¹' : 'â€º' }}</span>
       </button>
@@ -4973,7 +5187,7 @@ onBeforeUnmount(() => {
 
       <header class="hud">
         <div class="hud-main">
-          <h1>{{ run.player.name }} - {{ run.player.classId }}</h1>
+          <h1>{{ run.player.name }} - {{ classDisplayName(run.player.classId) }}</h1>
           <p>Mode {{ run.metadata.difficulty }} | Niveau {{ run.player.level }}</p>
         </div>
         <div class="hud-stats">
@@ -5762,6 +5976,10 @@ onBeforeUnmount(() => {
                         :title="consumableDisableReason(item)" @click="consumeItem(item.id)">
                         Utiliser
                       </button>
+                      <button v-if="item.kind === 'equipment'" class="secondary" @click="recycleAction(item.id)">
+                        <img src="/assets/Icons/recycle.png" alt="" class="recycle-btn-icon" />
+                        Recycler
+                      </button>
                       <button @click="sellAction(item.id)">
                         Vendre {{ itemSellPrice(item) }} <img src="/assets/Icons/gold_coin.png" alt=""
                           class="gold-btn-icon" />
@@ -5865,6 +6083,10 @@ onBeforeUnmount(() => {
                   <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
                   <div class="row-actions">
                     <button v-if="item.kind === 'equipment'" @click="equipLootItem(item.id)">Equiper</button>
+                    <button v-if="item.kind === 'equipment'" class="secondary" @click="recycleLootItem(item.id)">
+                      <img src="/assets/Icons/recycle.png" alt="" class="recycle-btn-icon" />
+                      Recycler
+                    </button>
                     <button class="secondary" @click="sellLootItem(item.id)">
                       Vendre pour {{ itemSellPrice(item) }}<img src="/assets/Icons/gold_coin.png" alt=""
                         class="gold-btn-icon" />
@@ -5914,9 +6136,14 @@ onBeforeUnmount(() => {
           <div v-else class="sell-confirm-item">
             <img :src="sellConfirmModal.icon" alt="" class="sell-confirm-icon" />
             <p>
-              Vendre <strong :style="{ color: rarityColor(sellConfirmModal.rarity) }">{{ sellConfirmModal.label }}</strong> ?
+              {{ sellConfirmModal.type?.startsWith('recycle') ? 'Recycler' : 'Vendre' }}
+              <strong :style="{ color: rarityColor(sellConfirmModal.rarity) }">{{ sellConfirmModal.label }}</strong> ?
               <em :style="{ color: rarityColor(sellConfirmModal.rarity) }" class="sell-confirm-rarity">RaretÃ© : {{ rarityLabel(sellConfirmModal.rarity) }}</em>
-              <span class="sell-confirm-warning">Cet objet est de grande valeur, cette action est irrÃ©versible.</span>
+              <span class="sell-confirm-warning">
+                {{ sellConfirmModal.type?.startsWith('recycle')
+                  ? 'Cet objet sera détruit pour récupérer des matériaux. Cette action est irréversible.'
+                  : 'Cet objet est de grande valeur, cette action est irréversible.' }}
+              </span>
             </p>
           </div>
           <div class="sell-confirm-actions">
@@ -6374,7 +6601,7 @@ onBeforeUnmount(() => {
           <h2 v-if="run.victory">Victoire</h2>
           <h2 v-else-if="run.hardcoreDeath">Defaite Hardcore</h2>
           <h2 v-else>Run terminee</h2>
-          <p>Niveau {{ run.player.level }} / classe {{ run.player.classId }} / morts {{ run.player.deaths }}</p>
+          <p>Niveau {{ run.player.level }} / classe {{ classDisplayName(run.player.classId) }} / morts {{ run.player.deaths }}</p>
           <button class="primary" @click="run = null; npcOpen = false; closeMetaModals()">Retour au menu</button>
         </div>
       </div>
@@ -6610,6 +6837,14 @@ button.tutorial-btn {
   object-fit: contain;
   vertical-align: -2px;
   margin-left: 2px;
+}
+
+.recycle-btn-icon {
+  width: 15px;
+  height: 15px;
+  object-fit: contain;
+  vertical-align: -3px;
+  margin-right: 4px;
 }
 
 .no-wrap-line {
@@ -6984,9 +7219,6 @@ button.danger {
 
 .quest-panel-toggle {
   position: fixed;
-  top: 70%;
-  left: 0;
-  transform: translateY(-50%);
   z-index: 46;
   display: flex;
   align-items: center;
@@ -6997,11 +7229,14 @@ button.danger {
   border-radius: 0 10px 10px 0;
   background: rgba(20, 35, 45, 0.85);
   cursor: pointer;
-  transition: left 0.25s ease;
+  touch-action: none;
+  user-select: none;
+  transition: left 0.25s ease, top 0.16s ease;
 }
 
-.quest-panel-toggle.open {
-  left: min(300px, 84vw);
+.quest-panel-toggle.dragging {
+  cursor: grabbing;
+  transition: none;
 }
 
 .quest-panel-toggle img {
@@ -7989,7 +8224,7 @@ button.danger {
 
 .overlay-combat {
   background: rgba(1, 5, 10, 0.78);
-  z-index: 40;
+  z-index: 160;
   transition: background 0.6s ease;
 }
 .overlay-combat[data-actor="player"] {

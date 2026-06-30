@@ -47,6 +47,8 @@ const CHALLENGER_NPC_SPAWN_CHANCE = 0.42
 const WANDERING_MERCHANT_SPAWN_CHANCE = 0.15
 const CHALLENGER_NAMES = ['Mercenaire Borgne', 'Duelliste des Ombres', 'Champion Errant', 'Vétéran des Ruines', 'Gladiateur Exilé']
 const WANDERING_MERCHANT_NAMES = ['Caravane Spectrale', 'Marchand Sans Visage', 'Trafiquant des Ombres', 'Colporteur Maudit']
+const PROCEDURAL_SPIDER_SPAWN_CHANCE = 0.58
+const PROCEDURAL_SPIDER_MAX_COUNT = 2
 const UPGRADE_COSTS_BY_RARITY = {
   common: [
     { goldCost: 15,  materials: {},              successRate: 1.00 },
@@ -104,6 +106,19 @@ const SELL_RARITY_MULTIPLIER = {
   epic: 1.15,
   legendary: 1.2,
   mythic: 1.3,
+}
+const RECYCLE_RULES_BY_RARITY = {
+  common: { min: 1, max: 2, secondaryChance: 0.15, bossShardChance: 0 },
+  uncommon: { min: 2, max: 3, secondaryChance: 0.25, bossShardChance: 0 },
+  rare: { min: 3, max: 4, secondaryChance: 0.35, bossShardChance: 0 },
+  epic: { min: 4, max: 6, secondaryChance: 0.55, bossShardChance: 0 },
+  legendary: { min: 5, max: 8, secondaryChance: 0.8, bossShardChance: 0.35 },
+  mythic: { min: 7, max: 10, secondaryChance: 1, bossShardChance: 0.75, bossShardMax: 2 },
+}
+const RECYCLE_MATERIALS_BY_SLOT = {
+  weapon: { primary: 'ore', secondary: 'wood' },
+  armor: { primary: 'ore', secondary: 'resin' },
+  trinket: { primary: 'ether_drop', secondary: 'obsidian_fragment' },
 }
 const ENEMY_GOLD_REWARD_FACTOR = 0.12 // 0.72 / 6
 const BOSS_GOLD_MULTIPLIER = 6
@@ -398,6 +413,42 @@ function placeRandomizedEntities(map, tiles, entities, pool, blockedSet, startCe
   })
 }
 
+function defaultBackPortalForMap(mapId, map) {
+  const index = MAP_ORDER.indexOf(mapId)
+  if (index <= 0 || !map || mapId === TUTORIAL_MAP_ID) {
+    return map?.backPortal ?? null
+  }
+  return map.backPortal ?? {
+    x: map.start?.x ?? 1,
+    y: map.start?.y ?? 1,
+    targetMapId: MAP_ORDER[index - 1],
+  }
+}
+
+function proceduralSpiderTemplateForMap(map) {
+  const minLevel = Number.parseInt(String(map?.levelRange ?? '1').split('-')[0], 10) || 1
+  if (minLevel >= 28) return randomChoice(['cave_spider', 'broodmother_spider', 'crypt_spider']) ?? 'cave_spider'
+  if (minLevel >= 16) return randomChoice(['obsidian_spider', 'crypt_spider']) ?? 'obsidian_spider'
+  if (minLevel >= 5) return randomChoice(['crypt_spider', 'ashen_spider']) ?? 'crypt_spider'
+  return 'ashen_spider'
+}
+
+function proceduralSpiderSpawnsForMap(mapId, map) {
+  if (!map || mapId === TUTORIAL_MAP_ID || map.isSecretRoom) {
+    return []
+  }
+  const minLevel = Number.parseInt(String(map.levelRange ?? '1').split('-')[0], 10) || 1
+  const baseChance = map.isSecret ? 0.72 : PROCEDURAL_SPIDER_SPAWN_CHANCE
+  if (!chance(baseChance)) {
+    return []
+  }
+  const maxCount = map.isSecret ? 1 : PROCEDURAL_SPIDER_MAX_COUNT
+  const count = minLevel >= 12 && chance(0.45) ? maxCount : 1
+  return Array.from({ length: count }, (_, index) => ({
+    id: uid(`spider_${mapId}_${index}`),
+    templateId: proceduralSpiderTemplateForMap(map),
+  }))
+}
 function createEnemyInstance(spawn, cell, isBoss = false) {
   const template = enemyById(spawn.templateId)
   return {
@@ -450,13 +501,13 @@ function createMapState(mapId) {
     blocked.add(toKey(secretPortal.x, secretPortal.y))
   }
 
-  // Les maps de la progression principale n'ont plus de portail retour (le hub remplace ce besoin)
-  const isMainPathMap = MAP_ORDER.includes(mapId)
+  const baseBackPortal = defaultBackPortalForMap(mapId, map)
   let backPortal = null
-  if (map.backPortal && !isMainPathMap) {
-    const backCell = findNearestWalkable(map, transformedBack.x, transformedBack.y, blocked, tiles)
+  if (baseBackPortal) {
+    const backPoint = map.backPortal ? transformedBack : transformPoint(baseBackPortal, layoutVariant, map.width, map.height)
+    const backCell = findNearestWalkable(map, backPoint.x, backPoint.y, blocked, tiles)
     backPortal = {
-      ...map.backPortal,
+      ...baseBackPortal,
       x: backCell.x,
       y: backCell.y,
     }
@@ -490,7 +541,11 @@ function createMapState(mapId) {
     icon: CHEST_ICON,
   }))
 
-  const enemies = placeRandomizedEntities(map, tiles, map.enemies ?? [], pool, blocked, start, 3, (enemySpawn, cell) =>
+  const enemySpawns = [
+    ...(map.enemies ?? []),
+    ...proceduralSpiderSpawnsForMap(mapId, map),
+  ]
+  const enemies = placeRandomizedEntities(map, tiles, enemySpawns, pool, blocked, start, 3, (enemySpawn, cell) =>
     createEnemyInstance(enemySpawn, cell, false),
   )
 
@@ -782,15 +837,15 @@ export function hydrateRun(rawSnapshot) {
       state.exit = map.exit != null ? { ...map.exit } : null
     }
     state.secretPortal ??= map.secretPortal ? { ...map.secretPortal } : null
-    state.backPortal ??= map.backPortal ? { ...map.backPortal } : null
+    state.backPortal ??= defaultBackPortalForMap(mapId, map) ? { ...defaultBackPortalForMap(mapId, map) } : null
     if (state.exit && map.exit) {
       state.exit.targetMapId = map.exit.targetMapId
     }
     if (state.secretPortal && map.secretPortal) {
       state.secretPortal.targetMapId = map.secretPortal.targetMapId
     }
-    if (state.backPortal && map.backPortal) {
-      state.backPortal.targetMapId = map.backPortal.targetMapId
+    if (state.backPortal) {
+      state.backPortal.targetMapId = (defaultBackPortalForMap(mapId, map) ?? state.backPortal).targetMapId
     }
     state.npcs ??= (map.npcs ?? []).map((npc) => ({ ...npc }))
     state.discovered ??= []
@@ -2072,6 +2127,10 @@ function transitionToMap(run, targetMapId) {
   }
 
   run.world.currentMapId = nextMapId
+  const mapOrderIndex = MAP_ORDER.indexOf(nextMapId)
+  if (mapOrderIndex >= 0) {
+    run.world.currentMapIndex = mapOrderIndex
+  }
   run.world.playerPosition = { ...nextState.start }
   revealAround(run, nextMapId, nextState.start.x, nextState.start.y, 2)
   appendLog(run, `Transition vers ${nextMap.name}.`)
@@ -3764,6 +3823,50 @@ export function buyConsumable(run, shopId) {
   return { ok: true, remainingStock: run.world.shopStock?.[entry.id] ?? null }
 }
 
+function recycleMaterialEntriesForItem(item) {
+  const rarity = item?.rarity ?? 'common'
+  const rule = RECYCLE_RULES_BY_RARITY[rarity] ?? RECYCLE_RULES_BY_RARITY.common
+  const slotMaterials = RECYCLE_MATERIALS_BY_SLOT[item?.slot] ?? RECYCLE_MATERIALS_BY_SLOT.weapon
+  const gained = []
+  const addGained = (material, quantity) => {
+    if (!material || quantity <= 0) return
+    const existing = gained.find((entry) => entry.material === material)
+    if (existing) existing.quantity += quantity
+    else gained.push({ material, quantity })
+  }
+
+  addGained(slotMaterials.primary, randomInt(rule.min, rule.max))
+  if (chance(rule.secondaryChance)) {
+    addGained(slotMaterials.secondary, randomInt(1, Math.max(1, Math.ceil(rule.max / 2))))
+  }
+  if (chance(rule.bossShardChance)) {
+    addGained('boss_shard', randomInt(1, rule.bossShardMax ?? 1))
+  }
+  return gained
+}
+
+export function recycleItem(run, itemId) {
+  const item = run.player.inventory.find((entry) => entry.id === itemId)
+  if (!item) {
+    return { ok: false, reason: 'Objet introuvable.' }
+  }
+  if (item.kind !== 'equipment') {
+    return { ok: false, reason: 'Seuls les equipements peuvent etre recycles.' }
+  }
+
+  const gained = recycleMaterialEntriesForItem(item)
+  for (const entry of gained) {
+    addMaterial(run, entry.material, entry.quantity)
+  }
+  removeInventoryItem(run, item.id)
+
+  const materialLine = gained.length
+    ? gained.map((entry) => `${entry.quantity} ${MATERIAL_LABELS[entry.material] ?? entry.material}`).join(', ')
+    : 'aucun materiau'
+  appendLog(run, `${item.name} recycle: ${materialLine}.`)
+  return { ok: true, gained }
+}
+
 export function sellItem(run, itemId) {
   const item = run.player.inventory.find((entry) => entry.id === itemId)
   if (!item) {
@@ -4187,6 +4290,10 @@ export function startNextLevel(run) {
   run.world.currentMapIndex = nextIndex
   const nextState = ensureMapState(run, nextMapId)
   run.world.currentMapId = nextMapId
+  const mapOrderIndex = MAP_ORDER.indexOf(nextMapId)
+  if (mapOrderIndex >= 0) {
+    run.world.currentMapIndex = mapOrderIndex
+  }
   run.world.playerPosition = { ...nextState.start }
   run.phase = 'exploring'
   revealAround(run, nextMapId, nextState.start.x, nextState.start.y, 2)
