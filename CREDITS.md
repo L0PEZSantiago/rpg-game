@@ -11,3 +11,4 @@ libre, attribution requise). Elles ont été recolorées pour ce projet.
 | `assets/Icons/spirit_stone.svg` | Cut Diamond | Lorc |
 | `assets/Icons/stability_shard.svg` | Crystal Shine | Lorc |
 | `assets/Icons/spirit_chisel.svg` | Chisel | Delapouite |
+| `assets/Icons/revive_charm.svg` | Totem Mask | Lorc |

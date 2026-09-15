@@ -56,11 +56,14 @@ import {
   nextLevelInfo,
   openNearbyChest,
   performChallengeRoll,
+  claimChallengeReward,
   rarityUpgradeCostInfo,
   socketInfoForItem,
   insertSpiritStone,
   removeSpiritStone,
   addSocketToItem,
+  identifySpiritStone,
+  identifyXpCostForStone,
   startNextLevel,
   stepWanderingNpcs,
   playerNormalAttack,
@@ -139,6 +142,8 @@ const lootModal = ref(null)
 const chestEvent = ref(null)
 const combatMobilePanel = ref(/** @type {null|'skills'|'actions'|'inventory'} */(null))
 let chestEventTimer = null
+const spiritSocketerModal = ref(/** @type {{ npcId: string, npcName: string } | null} */(null))
+const spiritIdentifierModal = ref(/** @type {{ npcId: string, npcName: string } | null} */(null))
 const challengeModal = ref(/** @type {{ npcId: string, npcName: string, result: null | { won: boolean, playerRoll: number, npcRoll: number, gold: number, xp: number, penalty: number } } | null} */(null))
 const challengeRolling = ref(false)
 const challengeAnimPlayer = ref(2)
@@ -515,6 +520,12 @@ const forgeUpgradeCost = computed(() =>
 const forgeRarityUpgradeCost = computed(() =>
   run.value && forgeSelectedItemId.value ? rarityUpgradeCostInfo(run.value, forgeSelectedItemId.value) : null,
 )
+const forgeStabilityShardCost = computed(() => {
+  const item = forgeSelectedItem.value
+  if (!item) return 1
+  const level = item.enhancementLevel ?? 0
+  return item.rarity === 'legendary' && level === 4 ? 2 : 1
+})
 const forgeSocketInfo = computed(() =>
   run.value && forgeSelectedItemId.value ? socketInfoForItem(run.value, forgeSelectedItemId.value) : null,
 )
@@ -748,9 +759,17 @@ function itemDescription(item) {
     return bonuses.join(' | ') || 'Equipement'
   }
   if (item.kind === 'spirit_stone') {
+    if (!item.identified) {
+      return 'Non identifiée — sertissez-la (risque de casse) ou faites-la identifier par un PNJ pour révéler ses effets.'
+    }
     return (item.affixes ?? []).join(', ') || 'À sertir dans un emplacement d\'équipement.'
   }
   return ''
+}
+
+function stoneDisplayAffixes(stone) {
+  if (!stone) return ''
+  return stone.identified ? (stone.affixes ?? []).join(', ') : 'Non identifiée'
 }
 
 function itemSellPrice(item) {
@@ -850,17 +869,6 @@ function handleHubUseConsumable(itemId) {
   if (!run.value) return
   const result = useConsumable(run.value, itemId)
   if (!result.ok) setInfo(result.reason)
-  persistRun()
-}
-
-function handleHubSell(itemId) {
-  if (!run.value) return
-  const result = sellItem(run.value, itemId)
-  if (!result.ok) {
-    setInfo(result.reason)
-  } else {
-    playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
-  }
   persistRun()
 }
 
@@ -1161,6 +1169,7 @@ const MATERIAL_ICONS = {
   misty_heart:        { path: '/assets/Icons/coeur_brumeux.png' },
   stability_shard:    { path: '/assets/Icons/stability_shard.svg' },
   spirit_chisel:      { path: '/assets/Icons/spirit_chisel.svg' },
+  revive_charm:       { path: '/assets/Icons/revive_charm.svg' },
 }
 
 function materialIconStyle(key) {
@@ -2842,6 +2851,13 @@ function buildMapCellSprite(cell) {
       className: 'entity-portal return',
     }
   }
+  if (cell.hasCampPortal) {
+    return {
+      src: MAP_PORTAL_SPRITES.back,
+      frames: 8,
+      className: 'entity-portal camp',
+    }
+  }
   if (cell.isExit) {
     return {
       src: MAP_PORTAL_SPRITES.back,
@@ -2882,6 +2898,7 @@ const mapCells = computed(() => {
         mapState.secretPortal.x === x &&
         mapState.secretPortal.y === y
       const hasBackPortal = discovered && mapState.backPortal && mapState.backPortal.x === x && mapState.backPortal.y === y
+      const hasCampPortal = discovered && mapState.campPortal && mapState.campPortal.x === x && mapState.campPortal.y === y
       const hasChestFx =
         fx &&
         fx.mapId === map.id &&
@@ -2921,6 +2938,7 @@ const mapCells = computed(() => {
         isExit,
         hasPortal,
         hasBackPortal,
+        hasCampPortal,
         chestFxFrame,
         player: px === x && py === y,
         inAgro,
@@ -3633,6 +3651,25 @@ function handleRemoveSpiritStone(socketIndex) {
   persistRun()
 }
 
+const unidentifiedStones = computed(() => {
+  if (!run.value) return []
+  return run.value.player.inventory
+    .filter((i) => i.kind === 'spirit_stone' && !i.identified)
+    .map((stone) => ({ ...stone, xpCost: identifyXpCostForStone(stone) }))
+})
+
+function handleIdentifyStone(stoneId) {
+  if (!run.value) return
+  const result = identifySpiritStone(run.value, stoneId)
+  if (!result.ok) {
+    setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.passiveGet, 0.3)
+    setInfo(`${result.stone.name} identifiée !`)
+  }
+  persistRun()
+}
+
 function handleAddSocket() {
   if (!run.value || !forgeSelectedItemId.value) return
   const result = addSocketToItem(run.value, forgeSelectedItemId.value)
@@ -3699,6 +3736,14 @@ function portalModalFromPrompt(prompt) {
       title: 'Portail secret',
       text: `Entrer dans ${targetName} ?`,
       color: '#9f74ff',
+    }
+  }
+
+  if (prompt.type === 'camp') {
+    return {
+      title: 'Portail de camp',
+      text: 'Retourner au camp pour te préparer (forge, artisanat) ? Tu pourras revenir reprendre cette zone où tu l\'as laissée.',
+      color: '#6dff9b',
     }
   }
 
@@ -3962,6 +4007,20 @@ function openNpcPanel() {
     persistRun()
     return
   }
+  if (npc.role === 'spirit_socketer') {
+    forgeSelectedItemId.value = null
+    armedStoneId.value = null
+    spiritSocketerModal.value = { npcId: npc.id, npcName: npc.name }
+    appendLog(run.value, `${npc.name}: ${npc.dialogue}`)
+    persistRun()
+    return
+  }
+  if (npc.role === 'spirit_identifier') {
+    spiritIdentifierModal.value = { npcId: npc.id, npcName: npc.name }
+    appendLog(run.value, `${npc.name}: ${npc.dialogue}`)
+    persistRun()
+    return
+  }
   npcOpen.value = true
   appendLog(run.value, `${npc.name}: ${npc.dialogue}`)
   persistRun()
@@ -4026,6 +4085,12 @@ function closeChallengeModal() {
   clearInterval(challengeAnimTimer)
   challengeAnimTimer = null
   challengeRolling.value = false
+  const result = challengeModal.value?.result
+  if (result?.won && !result.claimed && run.value) {
+    // Ne jamais perdre une récompense non réclamée si le joueur ferme la fenêtre directement.
+    claimChallengeReward(run.value, result.gold, result.xp)
+    persistRun()
+  }
   challengeModal.value = null
 }
 
@@ -4051,11 +4116,20 @@ function rollChallengeGame() {
       challengeAnimTimer = null
       challengeRolling.value = false
       if (challengeModal.value) {
-        challengeModal.value = { ...challengeModal.value, result }
+        challengeModal.value = { ...challengeModal.value, result: { ...result, claimed: false } }
       }
       playUiSound(UI_SOUND_BANK.uiConfirm, 0.25)
     }
   }, 90)
+}
+
+function claimChallengeRewardAction() {
+  if (!run.value || !challengeModal.value?.result?.won || challengeModal.value.result.claimed) return
+  const { gold, xp } = challengeModal.value.result
+  claimChallengeReward(run.value, gold, xp)
+  challengeModal.value = { ...challengeModal.value, result: { ...challengeModal.value.result, claimed: true } }
+  playUiSound(UI_SOUND_BANK.levelUp, 0.3)
+  persistRun()
 }
 
 function buyFromWanderingMerchant(itemId) {
@@ -4065,6 +4139,7 @@ function buyFromWanderingMerchant(itemId) {
     setInfo(result.reason)
   } else {
     setInfo(`Acheté ${result.item.name}.`)
+    playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
   }
   persistRun()
 }
@@ -4365,19 +4440,32 @@ function doRecycleLootItem(itemId) {
     return
   }
   lootModal.value.items = (lootModal.value.items ?? []).filter((item) => item.id !== itemId)
-  setInfo(`Recycle: ${materialGainsLabel(result.gained) || 'rien de notable'}.`)
+  setLootModalBanner(`Recyclé : ${materialGainsLabel(result.gained) || 'rien de notable'}.`)
   playUiSound(UI_SOUND_BANK.craft, 0.28)
   persistRun()
 }
 
+let lootModalBannerTimer = null
+function setLootModalBanner(message) {
+  if (!lootModal.value) return
+  lootModal.value.banner = message
+  clearTimeout(lootModalBannerTimer)
+  lootModalBannerTimer = setTimeout(() => {
+    if (lootModal.value) lootModal.value.banner = null
+  }, 3000)
+}
+
 function doSellLootItem(itemId) {
   if (!run.value || !lootModal.value) return
+  const soldItem = (lootModal.value.items ?? []).find((item) => item.id === itemId)
+  const soldValue = soldItem ? sellValueForItem(soldItem) : 0
   const result = sellItem(run.value, itemId)
   if (!result.ok) {
     setInfo(result.reason)
     return
   }
   lootModal.value.items = (lootModal.value.items ?? []).filter((item) => item.id !== itemId)
+  setLootModalBanner(`Vendu pour ${soldValue} or.`)
   playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
   persistRun()
 }
@@ -5064,7 +5152,7 @@ onBeforeUnmount(() => {
                   <img src="/assets/Icons/recycle.png" alt="" class="recycle-btn-icon" /> Recycler
                 </button>
                 <button class="hub-action-btn hub-btn-sell"
-                  @click="handleHubSell(item.id)">
+                  @click="sellAction(item.id)">
                   <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
                 </button>
               </div>
@@ -5090,7 +5178,7 @@ onBeforeUnmount(() => {
                 <button class="hub-action-btn hub-btn-equip"
                   @click="handleHubUseConsumable(item.id)">Utiliser</button>
                 <button class="hub-action-btn hub-btn-sell"
-                  @click="handleHubSell(item.id)">
+                  @click="sellAction(item.id)">
                   <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
                 </button>
               </div>
@@ -5109,7 +5197,7 @@ onBeforeUnmount(() => {
               <img :src="itemIcon(item)" class="hub-inv-icon" alt="" />
               <div class="hub-inv-info">
                 <span class="hub-inv-name" :style="{ color: RARITIES[item.rarity]?.color }">{{ item.name }}</span>
-                <span class="hub-inv-stats">{{ (item.affixes ?? []).join(', ') }}</span>
+                <span class="hub-inv-stats" :class="{ 'stone-unidentified': !item.identified }">{{ stoneDisplayAffixes(item) }}</span>
                 <span class="hub-inv-rarity" :style="{ color: RARITIES[item.rarity]?.color }">
                   {{ RARITIES[item.rarity]?.label }}
                 </span>
@@ -5117,7 +5205,7 @@ onBeforeUnmount(() => {
               <div class="hub-inv-actions">
                 <button class="hub-action-btn hub-btn-forge" @click="hubTab = 'forge'">Sertir en forge</button>
                 <button class="hub-action-btn hub-btn-sell"
-                  @click="handleHubSell(item.id)">
+                  @click="sellAction(item.id)">
                   <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
                 </button>
               </div>
@@ -5197,11 +5285,11 @@ onBeforeUnmount(() => {
                 Échec → rétrogradé d'un niveau (sauf protection)
               </p>
               <label v-if="forgeUpgradeCost.successRate < 1" class="hub-forge-shard-toggle"
-                :class="{ disabled: (run.player.materials.stability_shard ?? 0) < 1 }">
+                :class="{ disabled: (run.player.materials.stability_shard ?? 0) < forgeStabilityShardCost }">
                 <input type="checkbox" v-model="forgeUseStabilityShard"
-                  :disabled="(run.player.materials.stability_shard ?? 0) < 1" />
+                  :disabled="(run.player.materials.stability_shard ?? 0) < forgeStabilityShardCost" />
                 <span class="material-icon material-icon-sm" :style="materialIconStyle('stability_shard')"></span>
-                Protéger contre la rétrogradation (1 Éclat de stabilité, x{{ run.player.materials.stability_shard ?? 0 }} en stock)
+                Protéger contre la rétrogradation ({{ forgeStabilityShardCost }}× Éclat de stabilité, x{{ run.player.materials.stability_shard ?? 0 }} en stock)
               </label>
               <button class="hub-forge-btn" :disabled="!forgeUpgradeCost.canAfford" @click="handleForgeUpgrade">
                 Améliorer
@@ -5273,8 +5361,10 @@ onBeforeUnmount(() => {
                   </template>
                 </div>
               </div>
-              <button class="hub-forge-btn" :disabled="!forgeSocketInfo.canAddSocket" @click="handleAddSocket">
-                Créer une châsse vide (1 Ciseau des esprits, x{{ forgeSocketInfo.chiselStock }} en stock, plafond {{ forgeSocketInfo.cap }})
+              <button class="hub-forge-btn hub-forge-btn-icon" :disabled="!forgeSocketInfo.canAddSocket" @click="handleAddSocket">
+                Créer une châsse vide (1
+                <img src="/assets/Icons/spirit_chisel.svg" alt="Ciseau des esprits" class="hub-forge-btn-inline-icon" />
+                x{{ forgeSocketInfo.chiselStock }} en stock, plafond {{ forgeSocketInfo.cap }})
               </button>
 
               <div class="hub-stone-tray">
@@ -5292,7 +5382,7 @@ onBeforeUnmount(() => {
                     <img src="/assets/Icons/spirit_stone.svg" class="hub-stone-card-icon" alt="" />
                     <div class="hub-stone-card-info">
                       <span class="hub-stone-card-name" :style="{ color: RARITIES[stone.rarity]?.color }">{{ stone.name }}</span>
-                      <span class="hub-stone-card-affixes">{{ (stone.affixes ?? []).join(', ') }}</span>
+                      <span class="hub-stone-card-affixes" :class="{ 'stone-unidentified': !stone.identified }">{{ stoneDisplayAffixes(stone) }}</span>
                       <span class="hub-stone-card-rate"
                         :class="stone.successRate >= 0.8 ? 'rate-good' : stone.successRate >= 0.5 ? 'rate-mid' : 'rate-risky'">
                         {{ Math.round(stone.successRate * 100) }}% de réussite au sertissage
@@ -6307,6 +6397,9 @@ onBeforeUnmount(() => {
             </h2>
             <p class="loot-modal-source">{{ lootModal.enemyName }}</p>
           </header>
+          <Transition name="forge-result">
+            <p v-if="lootModal.banner" class="loot-modal-banner">{{ lootModal.banner }}</p>
+          </Transition>
           <div class="loot-summary">
             <span v-if="lootModal.xp > 0" class="loot-badge">+{{ lootModal.xp }} XP</span>
             <span v-if="lootModal.gold > 0" class="loot-badge loot-badge-gold">
@@ -6385,31 +6478,6 @@ onBeforeUnmount(() => {
         </div>
       </Transition>
 
-      <div v-if="sellConfirmModal" class="overlay-meta sell-confirm-overlay" @click="cancelSell">
-        <article class="meta-modal sell-confirm-modal" @click.stop>
-          <p v-if="sellConfirmModal.type === 'sell-all'">
-            Vendre tous les objets de la catégorie <strong>{{ sellConfirmModal.label }}</strong> ?
-          </p>
-          <div v-else class="sell-confirm-item">
-            <img :src="sellConfirmModal.icon" alt="" class="sell-confirm-icon" />
-            <p>
-              {{ sellConfirmModal.type?.startsWith('recycle') ? 'Recycler' : 'Vendre' }}
-              <strong :style="{ color: rarityColor(sellConfirmModal.rarity) }">{{ sellConfirmModal.label }}</strong> ?
-              <em :style="{ color: rarityColor(sellConfirmModal.rarity) }" class="sell-confirm-rarity">Rareté : {{ rarityLabel(sellConfirmModal.rarity) }}</em>
-              <span class="sell-confirm-warning">
-                {{ sellConfirmModal.type?.startsWith('recycle')
-                  ? 'Cet objet sera d�truit pour r�cup�rer des mat�riaux. Cette action est irr�versible.'
-                  : 'Cet objet est de grande valeur, cette action est irr�versible.' }}
-              </span>
-            </p>
-          </div>
-          <div class="sell-confirm-actions">
-            <button class="sell-cancel" @click="cancelSell">Annuler</button>
-            <button class="sell-ok" @click="confirmSell">Confirmer</button>
-          </div>
-        </article>
-      </div>
-
 
 
       <div v-if="challengeModal" class="overlay-meta" @click="closeChallengeModal">
@@ -6453,10 +6521,121 @@ onBeforeUnmount(() => {
             </div>
             <div class="challenge-outcome">
               <strong>{{ challengeModal.result.won ? 'Victoire !' : 'Défaite.' }}</strong>
-              <span v-if="challengeModal.result.won"> +{{ challengeModal.result.gold }} or · +{{ challengeModal.result.xp }} XP</span>
-              <span v-else> −{{ challengeModal.result.penalty }} or</span>
+              <span v-if="challengeModal.result.won && challengeModal.result.claimed"> +{{ challengeModal.result.gold }} or · +{{ challengeModal.result.xp }} XP récupérés</span>
+              <span v-else-if="!challengeModal.result.won"> −{{ challengeModal.result.penalty }} or</span>
             </div>
+            <button v-if="challengeModal.result.won && !challengeModal.result.claimed" class="primary challenge-roll-btn"
+              @click="claimChallengeRewardAction">
+              Récupérer la récompense (+{{ challengeModal.result.gold }} or, +{{ challengeModal.result.xp }} XP)
+            </button>
             <button class="secondary" @click="closeChallengeModal">Fermer</button>
+          </div>
+        </article>
+      </div>
+
+      <div v-if="spiritSocketerModal" class="overlay-meta" @click="spiritSocketerModal = null">
+        <article class="meta-modal socketer-modal" @click.stop>
+          <button type="button" class="modal-x-btn" @click="spiritSocketerModal = null">✕</button>
+          <header class="challenge-modal-header">
+            <div class="challenge-icon">✧</div>
+            <h2>{{ spiritSocketerModal.npcName }}</h2>
+            <p class="challenge-subtitle">Sertit tes pierres d'esprit sur le terrain, comme au camp.</p>
+          </header>
+          <div class="hub-forge-selector card">
+            <h3 class="hub-section-title">Choisir un équipement</h3>
+            <div class="hub-forge-item-list">
+              <button v-for="eq in [...hubEquipmentItems, ...hubInventoryEquipment]" :key="eq.id"
+                class="hub-forge-item-btn" :class="{ selected: eq.id === forgeSelectedItemId }"
+                @click="forgeSelectedItemId = eq.id">
+                <img :src="itemIcon(eq)" class="hub-forge-item-icon" alt="" />
+                <span class="hub-forge-item-label" :style="{ color: RARITIES[eq.rarity]?.color }">
+                  {{ itemDisplayName(eq) }}
+                </span>
+                <span v-if="eq._isEquipped" class="hub-equipped-tag">équipé</span>
+              </button>
+              <p v-if="hubEquipmentItems.length === 0 && hubInventoryEquipment.length === 0" class="hub-empty">
+                Aucun équipement disponible.
+              </p>
+            </div>
+          </div>
+
+          <div v-if="forgeSocketInfo" class="hub-forge-cost-block hub-socket-block">
+            <h4 class="hub-forge-cost-title">✧ Pierres d'esprit</h4>
+            <p v-if="forgeSocketInfo.sockets.length === 0" class="hub-empty-inline">
+              Aucun emplacement sur cet objet.
+            </p>
+            <div v-else class="hub-socket-list">
+              <div v-for="(socket, idx) in forgeSocketInfo.sockets" :key="idx" class="hub-socket-slot"
+                :class="{ 'drop-armed': !socket && armedStoneId }"
+                @dragover.prevent
+                @drop="handleSocketDrop(idx, $event, Boolean(socket))"
+                @click="!socket && handleSocketTap(idx)">
+                <template v-if="socket">
+                  <span class="hub-socket-icon-wrap" :style="{ borderColor: RARITIES[socket.rarity]?.color }">
+                    <img src="/assets/Icons/spirit_stone.svg" class="hub-socket-icon" alt="" />
+                  </span>
+                  <span class="hub-socket-label" :style="{ color: RARITIES[socket.rarity]?.color }">{{ socket.name }}</span>
+                  <span class="hub-socket-desc">{{ (socket.affixes ?? []).join(', ') }}</span>
+                  <button class="hub-action-btn hub-btn-sell" @click.stop="handleRemoveSpiritStone(idx)">Retirer</button>
+                </template>
+                <template v-else>
+                  <span class="hub-socket-empty">Emplacement vide — glisser/taper une pierre ici</span>
+                </template>
+              </div>
+            </div>
+          </div>
+          <p v-else class="hub-empty">Sélectionne un équipement pour voir ses emplacements.</p>
+
+          <div v-if="forgeSocketInfo" class="hub-stone-tray">
+            <h5 class="hub-stone-tray-title">Tes pierres d'esprit</h5>
+            <p v-if="forgeSocketInfo.availableStones.length === 0" class="hub-empty-inline">
+              Aucune pierre en stock.
+            </p>
+            <div v-else class="hub-stone-tray-list">
+              <div v-for="stone in forgeSocketInfo.availableStones" :key="stone.id" class="hub-stone-card"
+                :class="{ armed: armedStoneId === stone.id }"
+                draggable="true"
+                @dragstart="handleStoneDragStart(stone.id, $event)"
+                @dragend="armedStoneId = null"
+                @click="handleStoneTap(stone.id)">
+                <img src="/assets/Icons/spirit_stone.svg" class="hub-stone-card-icon" alt="" />
+                <div class="hub-stone-card-info">
+                  <span class="hub-stone-card-name" :style="{ color: RARITIES[stone.rarity]?.color }">{{ stone.name }}</span>
+                  <span class="hub-stone-card-affixes" :class="{ 'stone-unidentified': !stone.identified }">{{ stoneDisplayAffixes(stone) }}</span>
+                  <span class="hub-stone-card-rate"
+                    :class="stone.successRate >= 0.8 ? 'rate-good' : stone.successRate >= 0.5 ? 'rate-mid' : 'rate-risky'">
+                    {{ Math.round(stone.successRate * 100) }}% de réussite au sertissage
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div v-if="spiritIdentifierModal" class="overlay-meta" @click="spiritIdentifierModal = null">
+        <article class="meta-modal socketer-modal" @click.stop>
+          <button type="button" class="modal-x-btn" @click="spiritIdentifierModal = null">✕</button>
+          <header class="challenge-modal-header">
+            <div class="challenge-icon">?</div>
+            <h2>{{ spiritIdentifierModal.npcName }}</h2>
+            <p class="challenge-subtitle">Révèle la nature d'une pierre d'esprit non identifiée, contre de l'expérience.</p>
+          </header>
+          <p v-if="unidentifiedStones.length === 0" class="hub-empty">
+            Tu n'as aucune pierre d'esprit non identifiée.
+          </p>
+          <div v-else class="hub-stone-tray-list">
+            <div v-for="stone in unidentifiedStones" :key="stone.id" class="hub-stone-card">
+              <img src="/assets/Icons/spirit_stone.svg" class="hub-stone-card-icon" alt="" />
+              <div class="hub-stone-card-info">
+                <span class="hub-stone-card-name" :style="{ color: RARITIES[stone.rarity]?.color }">{{ stone.name }}</span>
+                <span class="hub-stone-card-affixes stone-unidentified">Non identifiée</span>
+              </div>
+              <button class="hub-action-btn hub-btn-equip" :disabled="(run?.player?.xp ?? 0) < stone.xpCost"
+                @click="handleIdentifyStone(stone.id)">
+                Identifier ({{ stone.xpCost }} XP)
+              </button>
+            </div>
           </div>
         </article>
       </div>
@@ -6877,6 +7056,32 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </section>
+
+    <!-- Confirmation vente/recyclage : rendue hors hub/exploration pour rester visible dans les deux -->
+    <div v-if="sellConfirmModal" class="overlay-meta sell-confirm-overlay" @click="cancelSell">
+      <article class="meta-modal sell-confirm-modal" @click.stop>
+        <p v-if="sellConfirmModal.type === 'sell-all'">
+          Vendre tous les objets de la catégorie <strong>{{ sellConfirmModal.label }}</strong> ?
+        </p>
+        <div v-else class="sell-confirm-item">
+          <img :src="sellConfirmModal.icon" alt="" class="sell-confirm-icon" />
+          <p>
+            {{ sellConfirmModal.type?.startsWith('recycle') ? 'Recycler' : 'Vendre' }}
+            <strong :style="{ color: rarityColor(sellConfirmModal.rarity) }">{{ sellConfirmModal.label }}</strong> ?
+            <em :style="{ color: rarityColor(sellConfirmModal.rarity) }" class="sell-confirm-rarity">Rareté : {{ rarityLabel(sellConfirmModal.rarity) }}</em>
+            <span class="sell-confirm-warning">
+              {{ sellConfirmModal.type?.startsWith('recycle')
+                ? 'Cet objet sera détruit pour récupérer des matériaux. Cette action est irréversible.'
+                : 'Cet objet est de grande valeur, cette action est irréversible.' }}
+            </span>
+          </p>
+        </div>
+        <div class="sell-confirm-actions">
+          <button class="sell-cancel" @click="cancelSell">Annuler</button>
+          <button class="sell-ok" @click="confirmSell">Confirmer</button>
+        </div>
+      </article>
+    </div>
 
     <!-- Tutorial NPC welcome dialogue (typewriter) -->
     <div v-if="tutorialIntroModal" class="overlay-meta tuto-welcome-overlay">
@@ -7593,6 +7798,10 @@ button.danger {
 
 .tile-sprite.entity-portal.exit {
   filter: saturate(1.1) brightness(1.06);
+}
+
+.tile-sprite.entity-portal.camp {
+  filter: hue-rotate(80deg) saturate(1.3) brightness(1.08);
 }
 
 .tile-sprite.entity-portal.return {
@@ -9994,6 +10203,16 @@ button.danger {
   image-rendering: pixelated;
 }
 
+.loot-modal-banner {
+  margin: 4px 0 0;
+  padding: 6px 10px;
+  background: rgba(112,216,240,0.14);
+  border: 1px solid rgba(112,216,240,0.4);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: #70d8f0;
+  text-align: center;
+}
 .loot-modal-source {
   margin: 0;
   font-size: 0.9rem;
@@ -11928,6 +12147,11 @@ button.danger {
 .challenge-modal {
   max-width: 420px;
 }
+.socketer-modal {
+  max-width: 560px;
+  max-height: 82vh;
+  overflow-y: auto;
+}
 .challenge-modal-header {
   text-align: center;
   padding-bottom: 12px;
@@ -12887,6 +13111,8 @@ button.danger {
   padding: 3px 6px;
   font-size: 0.76rem;
 }
+.hub-forge-btn-icon { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; }
+.hub-forge-btn-inline-icon { width: 18px; height: 18px; vertical-align: middle; }
 .hub-socket-slot.drop-armed {
   border-color: rgba(112,216,240,0.7);
   background: rgba(112,216,240,0.08);
@@ -12934,6 +13160,7 @@ button.danger {
 .hub-stone-card-rate.rate-good { color: #70e870; }
 .hub-stone-card-rate.rate-mid { color: #70d0f0; }
 .hub-stone-card-rate.rate-risky { color: #f09060; }
+.stone-unidentified { font-style: italic; opacity: 0.65; }
 .hub-forge-btn {
   padding: 9px 20px;
   background: linear-gradient(135deg, #5a2a08, #8b4a14);

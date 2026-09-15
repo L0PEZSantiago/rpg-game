@@ -652,7 +652,7 @@ const RAW_CLASS_DEFINITIONS = [
         cooldown: 2,
         effect: 'lifesteal',
         power: 2.5,
-        stealRatio: 0.45,
+        stealRatio: 0.32,
       },
       {
         id: 'necro_skeleton_oath',
@@ -864,8 +864,8 @@ const CLASS_INNATE_PASSIVES = {
   druid: {
     id: 'innate_life_cycle',
     name: 'Cycle vital',
-    description: '+5 régen PV/tour et +5% résistance aux états.',
-    bonuses: { lifeRegenFlat: 5, statusResistFlat: 0.05 },
+    description: '+8 régen PV/tour et +5% résistance aux états.',
+    bonuses: { lifeRegenFlat: 8, statusResistFlat: 0.05 },
   },
   assassin: {
     id: 'innate_shadow_edge',

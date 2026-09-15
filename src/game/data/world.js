@@ -23,7 +23,7 @@ export const MAPS = {
         id: 'npc_cartographer',
         name: 'Iria la Cartographe',
         role: 'lore',
-        spawnChance: 0,
+        spawnChance: 1.0,
         x: 2,
         y: 2,
         portrait: WIZZARD_ASSET,

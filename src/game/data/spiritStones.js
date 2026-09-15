@@ -52,3 +52,14 @@ export const SOCKET_CAP_BY_RARITY = {
 }
 
 export const SPIRIT_STONE_ICON = '/assets/Icons/spirit_stone.svg'
+
+// Coût en XP (ponction sur l'XP courante du niveau, jamais de perte de niveau)
+// pour qu'un PNJ identificateur révèle les bonus réels d'une pierre non identifiée.
+export const IDENTIFY_XP_COST_BY_RARITY = {
+  common: 15,
+  uncommon: 30,
+  rare: 60,
+  epic: 120,
+  legendary: 220,
+  mythic: 400,
+}

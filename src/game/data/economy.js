@@ -37,6 +37,7 @@ export const MATERIAL_LABELS = {
   misty_heart: 'Cœur brumeux',
   stability_shard: 'Éclat de stabilité',
   spirit_chisel: 'Ciseau des esprits',
+  revive_charm: 'Idole de renaissance',
 }
 
 export const RECIPES = [

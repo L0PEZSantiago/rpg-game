@@ -27,6 +27,7 @@ import {
   SPIRIT_STONE_BONUS_COUNT_BY_RARITY,
   SPIRIT_STONE_SOCKET_SUCCESS_RATE,
   SPIRIT_STONE_ICON,
+  IDENTIFY_XP_COST_BY_RARITY,
 } from './data'
 import { chance, clamp, deepClone, randomChoice, randomInt, toKey, uid, weightedChoice } from './utils'
 
@@ -40,18 +41,25 @@ const PASSIVE_LIFESTEAL_MAX_RATIO = 0.3
 const PASSIVE_LIFESTEAL_HIT_CAP_MAX_HP_RATIO = 0.12
 const NON_BOSS_EQUIPMENT_DROP_CHANCE = 0.35
 /** Poids mythique boss : avec biais mythic (+4), (w+4)/(84+w) ≤ 0.10 => max 10% */
-const BOSS_MYTHIC_WEIGHT = 3.5
-const CHEST_MYTHIC_CHANCE = 0.02
+const BOSS_MYTHIC_WEIGHT = 2.2 // rendu plus rare (au lieu de re-nerfer ses stats une deuxième fois)
+const CHEST_MYTHIC_CHANCE = 0.012
 const CHEST_TYPE_WEIGHTS = [
   { value: 'normal', weight: 54 },
   { value: 'trapped', weight: 16 },
   { value: 'bonus', weight: 30 },
 ]
 const SECRET_ROOM_IDS = ['secret_room_vault', 'secret_room_hollow', 'secret_room_sanctum']
+const SECRET_DUNGEON_IDS = ['library_underweb', 'ember_cache', 'lunar_shrine', 'forgotten_foundry', 'echoing_vault']
 const CHALLENGER_NPC_SPAWN_CHANCE = 0.42
 const WANDERING_MERCHANT_SPAWN_CHANCE = 0.15
 const CHALLENGER_NAMES = ['Mercenaire Borgne', 'Duelliste des Ombres', 'Champion Errant', 'Vétéran des Ruines', 'Gladiateur Exilé']
 const WANDERING_MERCHANT_NAMES = ['Caravane Spectrale', 'Marchand Sans Visage', 'Trafiquant des Ombres', 'Colporteur Maudit']
+const SPIRIT_SOCKETER_NAMES = ['Sertisseur Errant', 'Artisan des Châsses', 'Ancienne des Pierres']
+const SPIRIT_IDENTIFIER_NAMES = ['Voyante des Reliques', 'Sage des Murmures', 'Oracle des Pierres']
+const SPIRIT_SOCKETER_MIN_GAP = 2
+const SPIRIT_SOCKETER_SPAWN_CHANCE = 0.55
+const SPIRIT_IDENTIFIER_MIN_GAP = 4
+const SPIRIT_IDENTIFIER_SPAWN_CHANCE = 0.4
 const PROCEDURAL_SPIDER_SPAWN_CHANCE = 0.58
 const PROCEDURAL_SPIDER_MAX_COUNT = 2
 const UPGRADE_COSTS_BY_RARITY = {
@@ -101,7 +109,7 @@ const UPGRADE_COSTS_BY_RARITY = {
 // Fallback for unknown rarities
 const UPGRADE_COSTS = UPGRADE_COSTS_BY_RARITY.legendary
 
-const CHEST_MISTY_HEART_CHANCE = 0.03
+const CHEST_MISTY_HEART_CHANCE = 0.05 // relevé : la transcendance vers le mythique peut désormais échouer
 
 const SELL_PRICE_FACTOR = 0.12 // 12% du prix d'achat, pour changer la valeur de vente des objets
 const SELL_RARITY_MULTIPLIER = {
@@ -147,7 +155,7 @@ const STARTER_WEAPON_BY_CLASS = {
     icon: '/assets/Weapons/Hands/Hands.png',
     weaponType: 'melee',
     attack: 5,
-    defense: 2,
+    defense: 1,
   },
   assassin: {
     name: 'Dague de nuit',
@@ -160,35 +168,35 @@ const STARTER_WEAPON_BY_CLASS = {
     name: 'Arc de frêne',
     icon: '/assets/Weapons/Wood/Wood.png',
     weaponType: 'bow',
-    attack: 4,
+    attack: 5,
     defense: 1,
   },
   mage: {
     name: 'Baton runique',
     icon: '/assets/Weapons/Wood/Wood.png',
     weaponType: 'staff',
-    attack: 4,
+    attack: 5,
     defense: 1,
   },
   druid: {
     name: 'Baton de seve',
     icon: '/assets/Weapons/Wood/Wood.png',
     weaponType: 'staff',
-    attack: 4,
+    attack: 5,
     defense: 1,
   },
   necromancer: {
     name: 'Baton d\'os',
     icon: '/assets/Weapons/Bone/Bone.png',
     weaponType: 'staff',
-    attack: 4,
+    attack: 5,
     defense: 1,
   },
   bard: {
     name: 'Luth ferrugineux',
     icon: '/assets/Weapons/Wood/Wood.png',
     weaponType: 'staff',
-    attack: 4,
+    attack: 5,
     defense: 1,
   },
 }
@@ -238,6 +246,85 @@ function currentMapById(mapId) {
 
 function mapEntries() {
   return Object.entries(MAPS)
+}
+
+// ─── Maps secrètes/loot procédurales et infinies ──────────────────────────────
+// Les salles de butin et donjons secrets ne sont plus un pool fixe de maps
+// réutilisées telles quelles : à chaque déclenchement, une nouvelle instance
+// (id unique) est clonée depuis l'une des formes existantes puis recalibrée
+// (rareté des coffres, puissance des ennemis) sur le niveau de la map d'origine,
+// pour ne jamais s'épuiser et rester pertinente quel que soit le niveau atteint.
+
+function levelRangeMid(map) {
+  const raw = String(map?.levelRange ?? '1-1')
+  const [a, b] = raw.split('-').map((n) => Number.parseInt(n, 10) || 1)
+  return (a + (b ?? a)) / 2
+}
+
+function currentSourceLevelMid(run) {
+  const map = currentMap(run)
+  return map ? levelRangeMid(map) : Math.max(1, run.player?.level ?? 1)
+}
+
+// Bande de rareté de coffres en fonction du niveau de la map d'origine (1..36+).
+function chestRarityBandForLevel(level) {
+  if (level <= 5) return ['common', 'uncommon', 'uncommon']
+  if (level <= 10) return ['uncommon', 'rare', 'rare']
+  if (level <= 16) return ['rare', 'rare', 'epic']
+  if (level <= 22) return ['rare', 'epic', 'epic']
+  if (level <= 28) return ['epic', 'epic', 'legendary']
+  return ['epic', 'legendary', 'legendary', 'mythic']
+}
+
+export function generateProceduralSecretRoom(run) {
+  const templateId = randomChoice(SECRET_ROOM_IDS)
+  const template = MAPS[templateId]
+  if (!template) return templateId
+  const sourceLevel = currentSourceLevelMid(run)
+  const rarities = chestRarityBandForLevel(sourceLevel)
+  const newId = `secret_room_gen_${uid('room')}`
+  const clone = deepClone(template)
+  clone.id = newId
+  clone.name = `${template.name} (Écho)`
+  clone.levelRange = `${Math.max(1, Math.round(sourceLevel - 1))}-${Math.round(sourceLevel + 1)}`
+  clone.chests = (clone.chests ?? []).map((chest, idx) => ({
+    ...chest,
+    rarityBias: rarities[idx % rarities.length],
+  }))
+  MAPS[newId] = clone
+  run.world.generatedMaps ??= {}
+  run.world.generatedMaps[newId] = clone
+  return newId
+}
+
+export function generateProceduralSecretDungeon(run) {
+  const sourceLevel = currentSourceLevelMid(run)
+  // Choisit la forme de donjon dont le niveau natif est le plus proche du niveau d'origine.
+  const templateId = [...SECRET_DUNGEON_IDS].sort((a, b) => {
+    const da = Math.abs(levelRangeMid(MAPS[a]) - sourceLevel)
+    const db = Math.abs(levelRangeMid(MAPS[b]) - sourceLevel)
+    return da - db
+  })[0]
+  const template = MAPS[templateId]
+  if (!template) return templateId
+  const nativeLevel = levelRangeMid(template)
+  const rarities = chestRarityBandForLevel(sourceLevel)
+  const newId = `secret_dungeon_gen_${uid('dungeon')}`
+  const clone = deepClone(template)
+  clone.id = newId
+  clone.name = `${template.name.replace(' (Secret)', '')} (Écho)`
+  clone.levelRange = `${Math.max(1, Math.round(sourceLevel - 1))}-${Math.round(sourceLevel + 1)}`
+  clone.chests = (clone.chests ?? []).map((chest, idx) => ({
+    ...chest,
+    rarityBias: rarities[idx % rarities.length],
+  }))
+  // Recalibre la puissance des ennemis/boss (mêmes templates que la forme d'origine,
+  // mais rééchelonnés pour coller au niveau réel de la map d'où vient le portail).
+  clone.levelScale = clamp(sourceLevel / Math.max(1, nativeLevel), 0.55, 2.4)
+  MAPS[newId] = clone
+  run.world.generatedMaps ??= {}
+  run.world.generatedMaps[newId] = clone
+  return newId
 }
 
 function mapNeighbors(x, y) {
@@ -468,7 +555,52 @@ function createEnemyInstance(spawn, cell, isBoss = false) {
   }
 }
 
-function createMapState(mapId) {
+function rollAuxiliaryNpcSpawns(map, mapId, pool, blocked, start, npcs, counters) {
+  if (map.isSecret || map.isSecretRoom || mapId === TUTORIAL_MAP_ID) {
+    return
+  }
+  counters.sinceSocketer = (counters.sinceSocketer ?? 0) + 1
+  counters.sinceIdentifier = (counters.sinceIdentifier ?? 0) + 1
+
+  let spawnedSocketer = false
+  if (counters.sinceSocketer >= SPIRIT_SOCKETER_MIN_GAP && chance(SPIRIT_SOCKETER_SPAWN_CHANCE)) {
+    const cell = takeCellFromPool(pool, blocked, start, 2)
+    if (cell) {
+      blocked.add(toKey(cell.x, cell.y))
+      npcs.push({
+        id: uid('spirit_socketer'),
+        name: randomChoice(SPIRIT_SOCKETER_NAMES),
+        role: 'spirit_socketer',
+        portrait: WIZZARD_ASSET,
+        dialogue: 'Apporte-moi tes pierres d\'esprit, je les sertirai dans ton équipement.',
+        x: cell.x,
+        y: cell.y,
+      })
+      counters.sinceSocketer = 0
+      spawnedSocketer = true
+    }
+  }
+
+  // Jamais sur la même map que le sertisseur.
+  if (!spawnedSocketer && counters.sinceIdentifier >= SPIRIT_IDENTIFIER_MIN_GAP && chance(SPIRIT_IDENTIFIER_SPAWN_CHANCE)) {
+    const cell = takeCellFromPool(pool, blocked, start, 2)
+    if (cell) {
+      blocked.add(toKey(cell.x, cell.y))
+      npcs.push({
+        id: uid('spirit_identifier'),
+        name: randomChoice(SPIRIT_IDENTIFIER_NAMES),
+        role: 'spirit_identifier',
+        portrait: ROGUE_ASSET,
+        dialogue: 'Une pierre non identifiée ? Je peux en révéler la nature, contre un peu de ton expérience.',
+        x: cell.x,
+        y: cell.y,
+      })
+      counters.sinceIdentifier = 0
+    }
+  }
+}
+
+function createMapState(mapId, spawnCounters = { sinceSocketer: 0, sinceIdentifier: 0 }) {
   const map = currentMapById(mapId)
   const layoutVariant = map.noVariants ? 'none' : (randomChoice(MAP_LAYOUT_VARIANTS) ?? 'none')
   const tiles = transformTiles(map.tiles, layoutVariant, map.width, map.height)
@@ -522,6 +654,18 @@ function createMapState(mapId) {
   markNoSpawnZones(map, tiles, blocked, noSpawnZones)
 
   const pool = walkablePool(map, tiles, blocked)
+
+  // Portail de camp : disponible dès le niveau 1, sur toute map régulière, pour
+  // permettre d'aller se préparer (forge/craft) avant d'affronter le boss sans
+  // attendre de l'avoir vaincu. Jamais sur les maps secrètes/tutoriel.
+  let campPortal = null
+  if (!map.isSecret && !map.isSecretRoom && mapId !== TUTORIAL_MAP_ID) {
+    const campCell = takeCellFromPool(pool, blocked, start, 2)
+    if (campCell) {
+      blocked.add(toKey(campCell.x, campCell.y))
+      campPortal = { x: campCell.x, y: campCell.y }
+    }
+  }
 
   // Filtre les PNJ optionnels selon leur spawnChance (défaut 1.0 = toujours présent)
   const eligibleNpcs = (map.npcs ?? []).filter((npc) => chance(npc.spawnChance ?? 1.0))
@@ -606,6 +750,8 @@ function createMapState(mapId) {
     }
   }
 
+  rollAuxiliaryNpcSpawns(map, mapId, pool, blocked, start, npcs, spawnCounters)
+
   const levers = Object.fromEntries((map.levers ?? []).map((l) => [l.id, false]))
 
   return {
@@ -615,6 +761,7 @@ function createMapState(mapId) {
     exit,
     secretPortal,
     backPortal,
+    campPortal,
     npcs,
     discovered: [],
     enemies,
@@ -635,8 +782,9 @@ function starterWeaponForClass(classId) {
   return STARTER_WEAPON_BY_CLASS[classId] ?? STARTER_WEAPON_BY_CLASS.warrior
 }
 
-function createStarterInventory(selectedClass) {
+function createStarterInventory(selectedClass, difficulty) {
   const starter = starterWeaponForClass(selectedClass.id)
+  const startingTorches = difficulty === 'hardcore' ? 2 : 1
   return [
     {
       id: uid('consumable'),
@@ -663,7 +811,7 @@ function createStarterInventory(selectedClass) {
       kind: 'consumable',
       name: 'Torche runique',
       effect: 'vision_boost',
-      quantity: 1,
+      quantity: startingTorches,
       rarity: 'common',
       value: 30,
       icon: '/assets/Icons/torche-runique.png',
@@ -717,7 +865,7 @@ export function createRun({ name, classId, difficulty }) {
       gold: 75,
       passivePoints: 1,
       unlockedPassives: [],
-      inventory: createStarterInventory(selectedClass),
+      inventory: createStarterInventory(selectedClass, difficulty),
       equipment: {
         weapon: null,
         armor: null,
@@ -726,7 +874,6 @@ export function createRun({ name, classId, difficulty }) {
       materials: createMaterialBag(),
       deaths: 0,
       passiveResetsUsed: 0,
-      hasRevive: false,
       quests: { active: [], completed: [], killCounts: {} },
       discoveredSecretRooms: [],
     },
@@ -737,6 +884,8 @@ export function createRun({ name, classId, difficulty }) {
       playerPosition: { ...firstStart },
       maps: { [firstMapId]: firstMapState },
       shopStock: createShopStock(),
+      spawnCounters: { sinceSocketer: 0, sinceIdentifier: 0 },
+      generatedMaps: {},
     },
     combat: null,
     pendingLootModal: null,
@@ -767,7 +916,8 @@ export function createRun({ name, classId, difficulty }) {
 function ensureMapState(run, mapId) {
   run.world.maps ??= {}
   if (!run.world.maps[mapId]) {
-    run.world.maps[mapId] = createMapState(mapId)
+    run.world.spawnCounters ??= { sinceSocketer: 0, sinceIdentifier: 0 }
+    run.world.maps[mapId] = createMapState(mapId, run.world.spawnCounters)
   }
   return run.world.maps[mapId]
 }
@@ -785,7 +935,13 @@ function ensurePlayerState(run) {
   run.player.deaths ??= 0
   run.player.nextXp ??= xpForLevel(run.player.level || 1)
   run.player.preparedBuffs ??= []
-  run.player.hasRevive ??= false
+  // Migration : l'idole de renaissance était un simple booléen, elle devient un
+  // objet cumulable (run.player.materials.revive_charm).
+  if (run.player.hasRevive) {
+    run.player.materials ??= {}
+    run.player.materials.revive_charm = (run.player.materials.revive_charm ?? 0) + 1
+  }
+  delete run.player.hasRevive
   run.player.quests ??= { active: [], completed: [], killCounts: {} }
   run.player.quests.active ??= []
   run.player.quests.completed ??= []
@@ -815,10 +971,15 @@ export function hydrateRun(rawSnapshot) {
   run.eventLog ??= []
   run.levelUpModal ??= null
   run.world ??= {}
+  run.world.generatedMaps ??= {}
+  // Réinjecte les maps procédurales générées lors de parties précédentes dans le
+  // registre global MAPS (celui-ci n'est pas sérialisé — seule sa définition l'est).
+  Object.assign(MAPS, run.world.generatedMaps)
   run.world.currentMapId ??= MAP_ORDER[0]
   run.world.playerPosition ??= { ...MAPS[run.world.currentMapId].start }
   run.world.returnMapId ??= null
   run.world.shopStock ??= createShopStock()
+  run.world.spawnCounters ??= { sinceSocketer: 0, sinceIdentifier: 0 }
   run.combat ??= null
   run.pendingLootModal ??= null
   run.gameOver ??= false
@@ -843,10 +1004,14 @@ export function hydrateRun(rawSnapshot) {
     }
     state.secretPortal ??= map.secretPortal ? { ...map.secretPortal } : null
     state.backPortal ??= defaultBackPortalForMap(mapId, map) ? { ...defaultBackPortalForMap(mapId, map) } : null
+    state.campPortal ??= null
     if (state.exit && map.exit) {
       state.exit.targetMapId = map.exit.targetMapId
     }
-    if (state.secretPortal && map.secretPortal) {
+    if (state.secretPortal && map.secretPortal && !state.secretPortalRevealed) {
+      // Ne resynchronise sur la cible statique que tant que le portail n'a pas
+      // déjà été révélé — une fois révélé, sa cible est une map générée à la volée
+      // (voir generateProceduralSecretDungeon) qu'il ne faut pas écraser au reload.
       state.secretPortal.targetMapId = map.secretPortal.targetMapId
     }
     if (state.backPortal) {
@@ -1703,6 +1868,9 @@ function enemyMaterialDrops(enemy) {
     if (chance(0.04)) {
       gained.push({ material: 'stability_shard', quantity: 1 })
     }
+    if (chance(0.04)) {
+      gained.push({ material: 'misty_heart', quantity: 1 })
+    }
   }
   return gained
 }
@@ -1979,16 +2147,16 @@ export function openNearbyChest(run) {
       appendLog(run, `Coffre béni ! Une rune de puissance vous galvanise pour le prochain combat.`)
       chestEvent = { type: 'bonus', title: 'Rune de puissance !', desc: `Une rune ancienne vous galvanise. +30% d'attaque pendant 3 tours au prochain combat.` }
     } else if (bonus === 'revive_charm') {
-      run.player.hasRevive = true
-      appendLog(run, `Coffre béni ! Un idole de renaissance vous protège de la mort.`)
-      chestEvent = { type: 'bonus', title: 'Idole de renaissance !', desc: `Une idole ancienne vous protège. Si vous tombez à 0 PV, vous revenez à 50% de vos PV.` }
+      addMaterial(run, 'revive_charm', 1)
+      appendLog(run, `Coffre béni ! Une idole de renaissance rejoint votre bourse.`)
+      chestEvent = { type: 'bonus', title: 'Idole de renaissance !', desc: `Une idole ancienne rejoint ta bourse (x${run.player.materials.revive_charm}). Si tu tombes à 0 PV, une idole se brise et te ramène à 50% de tes PV.` }
     } else if (bonus === 'xp_surge') {
       const xpGain = randomInt(200, 450)
       grantXp(run, xpGain)
       appendLog(run, `Coffre béni ! Un fragment de savoir vous accorde ${xpGain} XP.`)
       chestEvent = { type: 'bonus', title: 'Éveil du savoir !', desc: `Un fragment de connaissance ancienne illumine votre esprit. +${xpGain} XP.` }
     } else {
-      const roomId = randomChoice(SECRET_ROOM_IDS)
+      const roomId = generateProceduralSecretRoom(run)
       const roomMap = currentMapById(roomId)
       transitionToMap(run, roomId)
       appendLog(run, `Coffre béni ! Un vortex vous aspire vers ${roomMap?.name ?? 'une salle secrète'}.`)
@@ -2027,8 +2195,9 @@ export function openNearbyChest(run) {
     addMaterial(run, specialMaterial, 1)
     materials.push({ material: specialMaterial, quantity: 1 })
   }
-  if (chance(0.05)) {
-    const stone = buildSpiritStone(run, rarityRoll({ isBoss: false }))
+  const isBonusLootMap = Boolean(map?.isSecret || map?.isSecretRoom)
+  if (chance(isBonusLootMap ? 0.18 : 0.07)) {
+    const stone = buildSpiritStone(run, rarityRoll({ isBoss: false, bias: isBonusLootMap ? 'rare' : null }))
     addInventoryItem(run, stone)
     loots.push(stone)
   }
@@ -2068,15 +2237,15 @@ function endgameEnemyScale(level) {
   return 1 + Math.max(0, level - 15) * 0.025
 }
 
-function applyDifficultyToEnemy(template, difficulty) {
+function applyDifficultyToEnemy(template, difficulty, extraScale = 1) {
   const tactical = difficulty.enemyTacticsMultiplier ?? 1
   const statBoost = ENEMY_BASE_STAT_BOOST
-  const endgameScale = endgameEnemyScale(template.level ?? 1)
+  const endgameScale = endgameEnemyScale(template.level ?? 1) * extraScale
   return {
     maxHp: Math.floor(template.maxHp * difficulty.enemyHpMultiplier * statBoost * endgameScale),
     maxMana: template.maxMana,
     attack: Math.floor(template.attack * difficulty.enemyDamageMultiplier * statBoost * endgameScale),
-    defense: Math.floor(template.defense * difficulty.enemyArmorMultiplier * statBoost),
+    defense: Math.floor(template.defense * difficulty.enemyArmorMultiplier * statBoost * extraScale),
     speed: template.speed,
     ap: template.ap,
     critChance: clamp((template.critChance ?? 0.06) * tactical, 0.02, 0.5),
@@ -2136,8 +2305,12 @@ function resolveEnemyDeath(run, enemyRef) {
   const loots = Array.from({ length: lootCount }, () =>
     buildLootItem({ run, isBoss: enemy.isBoss, sourceName: template?.name ?? 'Boss' }),
   )
-  if (enemy.isBoss && chance(0.12)) {
-    loots.push(buildSpiritStone(run, rarityRoll({ isBoss: true })))
+  if (enemy.isBoss) {
+    const map = currentMap(run)
+    const isBonusLootMap = Boolean(map?.isSecret || map?.isSecretRoom)
+    if (chance(isBonusLootMap ? 0.28 : 0.15)) {
+      loots.push(buildSpiritStone(run, rarityRoll({ isBoss: true, bias: isBonusLootMap ? 'epic' : null })))
+    }
   }
   loots.forEach((item) => addInventoryItem(run, item))
 
@@ -2221,6 +2394,9 @@ function portalAtPosition(run, mapState, x, y) {
   if (mapState.backPortal && mapState.backPortal.x === x && mapState.backPortal.y === y) {
     return { type: 'back', targetMapId: mapState.backPortal.targetMapId }
   }
+  if (mapState.campPortal && mapState.campPortal.x === x && mapState.campPortal.y === y) {
+    return { type: 'camp', targetMapId: null }
+  }
   return null
 }
 
@@ -2230,6 +2406,9 @@ function resolvePortal(run, portal, mapState) {
   }
   if (portal.type === 'secret') {
     return { ok: true, exitChoice: true, portalType: 'secret', targetMapId: portal.targetMapId }
+  }
+  if (portal.type === 'camp') {
+    return enterHub(run, run.world.currentMapId)
   }
   return transitionToMap(run, portal.targetMapId)
 }
@@ -3415,11 +3594,11 @@ function resolvePlayerDeath(run) {
   run.combat = null
   run.player.deaths += 1
 
-  if (run.player.hasRevive) {
-    run.player.hasRevive = false
+  if ((run.player.materials.revive_charm ?? 0) > 0) {
+    run.player.materials.revive_charm -= 1
     const stats = derivedStats(run)
     run.player.hp = Math.max(1, Math.floor(stats.maxHp * 0.5))
-    appendLog(run, `Idole de renaissance activé ! Vous revenez à 50% de vos PV.`)
+    appendLog(run, `Idole de renaissance brisée ! Vous revenez à 50% de vos PV (${run.player.materials.revive_charm} restante(s)).`)
     return
   }
 
@@ -3448,7 +3627,8 @@ export function startCombat(run, enemy) {
   }
 
   const difficulty = difficultyFor(run)
-  const scaled = applyDifficultyToEnemy(template, difficulty)
+  const mapLevelScale = currentMap(run)?.levelScale ?? 1
+  const scaled = applyDifficultyToEnemy(template, difficulty, mapLevelScale)
   const hpRatio = clamp(enemy.currentHp / Math.max(1, template.maxHp), 0.05, 1)
   const manaRatio = clamp(enemy.currentMana / Math.max(1, template.maxMana || 1), 0, 1)
   const playerStats = derivedStats(run)
@@ -4177,6 +4357,9 @@ export function answerNpcRiddle(run, npcId, optionId) {
     }
   }
   if (reward.revealSecretPortal && mapState.secretPortal) {
+    // Génère un donjon secret frais et recalibré sur le niveau de cette map, plutôt
+    // que de renvoyer toujours vers la même destination fixe partagée par tout le jeu.
+    mapState.secretPortal.targetMapId = generateProceduralSecretDungeon(run)
     mapState.secretPortalRevealed = true
   }
 
@@ -4253,18 +4436,27 @@ export function performChallengeRoll(run, npcId) {
   let gold = 0
   let xp = 0
   let penalty = 0
+  // Le gain (or/XP) n'est PAS octroyé ici : il doit être récupéré explicitement via
+  // claimChallengeReward() une fois l'animation de dés terminée côté UI, pour éviter
+  // que la fenêtre de montée de niveau n'apparaisse avant même que le joueur ait vu
+  // le résultat du lancer.
   if (won) {
     gold = randomInt(80, 200)
     xp = randomInt(100, 250)
-    run.player.gold += gold
-    grantXp(run, xp)
-    appendLog(run, `Défi remporté ! (${playerRoll} vs ${npcRoll}): +${gold} or, +${xp} XP.`)
+    appendLog(run, `Défi remporté ! (${playerRoll} vs ${npcRoll}).`)
   } else {
     penalty = Math.min(run.player.gold, randomInt(20, 65))
     run.player.gold = Math.max(0, run.player.gold - penalty)
     appendLog(run, `Défi perdu. (${playerRoll} vs ${npcRoll}): −${penalty} or.`)
   }
   return { ok: true, won, playerRoll, npcRoll, gold, xp, penalty }
+}
+
+export function claimChallengeReward(run, gold, xp) {
+  run.player.gold += gold
+  grantXp(run, xp)
+  appendLog(run, `Récompense du défi récupérée : +${gold} or, +${xp} XP.`)
+  return { ok: true }
 }
 
 export function getWanderingMerchantStock(run, npcId) {
@@ -4295,7 +4487,7 @@ export function getWanderingMerchantStock(run, npcId) {
       description: 'Nécessaire pour la Transcendance vers le rang Mythique.',
       materialKey: 'misty_heart',
       quantity: 1,
-      merchantPrice: randomInt(800, 1200),
+      merchantPrice: randomInt(500, 800),
       soldOut: false,
     })
   }
@@ -4430,6 +4622,13 @@ function upgradeCostsForItem(item) {
   return UPGRADE_COSTS_BY_RARITY[rarity] ?? UPGRADE_COSTS
 }
 
+// L'ultime palier (légendaire +4 -> +5) est le plus risqué à sécuriser : il faut
+// 2 Éclats de stabilité au lieu d'un seul pour s'en protéger. Tous les autres cas
+// (y compris mythique, dont la marge de progression est ailleurs) n'en coûtent qu'1.
+function stabilityShardCostFor(item, currentLevel) {
+  return item.rarity === 'legendary' && currentLevel === 4 ? 2 : 1
+}
+
 export function upgradeItem(run, itemId, useStabilityShard = false) {
   const item = findItemAnywhere(run, itemId)
   if (!item) return { ok: false, reason: 'Objet introuvable.' }
@@ -4438,8 +4637,9 @@ export function upgradeItem(run, itemId, useStabilityShard = false) {
   if (currentLevel >= 5) return { ok: false, reason: 'Amélioration maximale (+5) atteinte.' }
 
   const wantsShard = Boolean(useStabilityShard)
-  if (wantsShard && (run.player.materials.stability_shard ?? 0) < 1) {
-    return { ok: false, reason: 'Aucun Éclat de stabilité en stock.' }
+  const shardCost = stabilityShardCostFor(item, currentLevel)
+  if (wantsShard && (run.player.materials.stability_shard ?? 0) < shardCost) {
+    return { ok: false, reason: `${shardCost}× Éclat de stabilité requis pour protéger cette tentative.` }
   }
 
   const cost = upgradeCostsForItem(item)[currentLevel]
@@ -4469,10 +4669,10 @@ export function upgradeItem(run, itemId, useStabilityShard = false) {
     appendLog(run, `Forge réussie ! ${name} obtenu.`)
     return { ok: true, success: true, newLevel: item.enhancementLevel }
   } else if (wantsShard) {
-    run.player.materials.stability_shard -= 1
+    run.player.materials.stability_shard -= shardCost
     applyEnhancementStats(item)
     const name = itemDisplayName(item)
-    appendLog(run, `Forge échouée — ${name} protégé par un Éclat de stabilité (pas de rétrogradation).`)
+    appendLog(run, `Forge échouée — ${name} protégé par ${shardCost}× Éclat de stabilité (pas de rétrogradation).`)
     return { ok: true, success: false, protectedByShard: true, newLevel: item.enhancementLevel }
   } else {
     item.enhancementLevel = Math.max(0, currentLevel - 1)
@@ -4628,9 +4828,35 @@ export function buildSpiritStone(run, rarity) {
     rarity,
     bonusStats,
     affixes,
+    identified: false,
     icon: SPIRIT_STONE_ICON,
     value: stoneValueForRarity(rarity),
   }
+}
+
+export function identifyXpCostForStone(stone) {
+  return IDENTIFY_XP_COST_BY_RARITY[stone?.rarity] ?? IDENTIFY_XP_COST_BY_RARITY.common
+}
+
+// Révèle les bonus réels d'une pierre non identifiée contre de l'XP. Garde-fou :
+// ne fait jamais redescendre le joueur de niveau (on ne ponctionne que l'XP
+// courante du palier, jamais en dessous de 0), et refuse si l'XP est insuffisante.
+export function identifySpiritStone(run, stoneItemId) {
+  const stone = run.player.inventory.find((i) => i.id === stoneItemId && i.kind === 'spirit_stone')
+  if (!stone) {
+    return { ok: false, reason: 'Pierre introuvable.' }
+  }
+  if (stone.identified) {
+    return { ok: false, reason: 'Cette pierre est déjà identifiée.' }
+  }
+  const cost = identifyXpCostForStone(stone)
+  if (run.player.xp < cost) {
+    return { ok: false, reason: `Expérience insuffisante (${cost} XP requis) — le PNJ refuse.` }
+  }
+  run.player.xp -= cost
+  stone.identified = true
+  appendLog(run, `${stone.name} identifiée contre ${cost} XP.`)
+  return { ok: true, stone, cost }
 }
 
 function socketSuccessRateFor(run, stoneRarity) {
