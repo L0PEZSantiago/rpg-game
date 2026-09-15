@@ -45,6 +45,24 @@ export const QUESTS = [
   },
 
   {
+    id: 'quest_lunar_pilgrim',
+    npcId: 'npc_cartographer_apprentice',
+    mapId: 'obsidian_citadel',
+    name: 'Le Sanctuaire Baigné de Lune',
+    description: 'Tomas rêve de voir de ses propres yeux le sanctuaire lunaire dont parle Iria. Trouve le sanctuaire caché et reviens lui en parler.',
+    objective: {
+      type: 'discover_secret_room',
+      mapId: 'lunar_shrine',
+      targetLabel: 'Sanctuaire lunaire découvert',
+    },
+    rewards: {
+      gold: 180,
+      materials: { obsidian_fragment: 3, ether_drop: 2 },
+      consumables: [],
+      loot: null,
+    },
+  },
+  {
     id: 'quest_void_hunter',
     npcId: 'npc_void_hunter',
     mapId: 'void_labyrinth',
@@ -112,6 +130,7 @@ export const QUESTS = [
 export const QUEST_ORDER = [
   'quest_bone_collector',
   'quest_forge_ascension',
+  'quest_lunar_pilgrim',
   'quest_void_hunter',
   'quest_onyx_pilgrim',
   'quest_web_clearing',

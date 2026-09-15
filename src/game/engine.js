@@ -22,6 +22,11 @@ import {
   ROGUE_ASSET,
   WIZZARD_ASSET,
   mapIsWalkable,
+  SOCKET_RULES_BY_RARITY,
+  SOCKET_CAP_BY_RARITY,
+  SPIRIT_STONE_BONUS_COUNT_BY_RARITY,
+  SPIRIT_STONE_SOCKET_SUCCESS_RATE,
+  SPIRIT_STONE_ICON,
 } from './data'
 import { chance, clamp, deepClone, randomChoice, randomInt, toKey, uid, weightedChoice } from './utils'
 
@@ -33,10 +38,10 @@ const MAP_LAYOUT_VARIANTS = ['none', 'flip_x', 'flip_y', 'flip_xy']
 const ENEMY_BASE_STAT_BOOST = 1.05
 const PASSIVE_LIFESTEAL_MAX_RATIO = 0.3
 const PASSIVE_LIFESTEAL_HIT_CAP_MAX_HP_RATIO = 0.12
-const NON_BOSS_EQUIPMENT_DROP_CHANCE = 0.6
+const NON_BOSS_EQUIPMENT_DROP_CHANCE = 0.35
 /** Poids mythique boss : avec biais mythic (+4), (w+4)/(84+w) ≤ 0.10 => max 10% */
-const BOSS_MYTHIC_WEIGHT = 4.9
-const CHEST_MYTHIC_CHANCE = 0.05
+const BOSS_MYTHIC_WEIGHT = 3.5
+const CHEST_MYTHIC_CHANCE = 0.02
 const CHEST_TYPE_WEIGHTS = [
   { value: 'normal', weight: 54 },
   { value: 'trapped', weight: 16 },
@@ -120,7 +125,7 @@ const RECYCLE_MATERIALS_BY_SLOT = {
   armor: { primary: 'ore', secondary: 'resin' },
   trinket: { primary: 'ether_drop', secondary: 'obsidian_fragment' },
 }
-const ENEMY_GOLD_REWARD_FACTOR = 0.12 // 0.72 / 6
+const ENEMY_GOLD_REWARD_FACTOR = 0.25 // relevé pour compenser le recentrage sur le craft (était 0.12)
 const BOSS_GOLD_MULTIPLIER = 6
 const CRAFT_COST_MULTIPLIER = 1.4
 const PASSIVE_RESET_COST = 200
@@ -896,6 +901,11 @@ function equipmentBonusStats(run) {
     if (item.bonusStats) {
       addBonuses(out, item.bonusStats)
     }
+    for (const socket of item.sockets ?? []) {
+      if (socket?.bonusStats) {
+        addBonuses(out, socket.bonusStats)
+      }
+    }
   }
   return out
 }
@@ -1491,14 +1501,22 @@ export function turnInQuest(run, questId) {
   }
 
   const rewards = quest.rewards
+  const grantedMaterials = []
+  const grantedItems = []
   if (rewards.gold) {
     run.player.gold += rewards.gold
   }
   for (const [material, amount] of Object.entries(rewards.materials ?? {})) {
     addMaterial(run, material, amount)
+    grantedMaterials.push({ material, quantity: amount })
   }
   for (const consumable of rewards.consumables ?? []) {
-    addInventoryItem(run, { id: uid('consumable'), kind: 'consumable', ...consumable })
+    const quantity = consumable.quantity ?? 1
+    for (let i = 0; i < quantity; i += 1) {
+      const instance = { id: uid('consumable'), kind: 'consumable', ...consumable }
+      addInventoryItem(run, instance)
+      grantedItems.push(instance)
+    }
   }
   if (rewards.loot) {
     const item = buildLootItem({
@@ -1509,12 +1527,21 @@ export function turnInQuest(run, questId) {
       forcedSlot: rewards.loot.forcedSlot ?? null,
     })
     addInventoryItem(run, item)
+    grantedItems.push(item)
   }
 
   run.player.quests.active = run.player.quests.active.filter((id) => id !== questId)
   run.player.quests.completed.push(questId)
   appendLog(run, `Quete accomplie : ${quest.name}.`)
-  return { ok: true }
+  return {
+    ok: true,
+    questName: quest.name,
+    rewards: {
+      gold: rewards.gold ?? 0,
+      materials: grantedMaterials,
+      items: grantedItems,
+    },
+  }
 }
 
 export function equipItem(run, itemId) {
@@ -1669,6 +1696,14 @@ function enemyMaterialDrops(enemy) {
   if (enemy.isBoss && chance(BOSS_DROP_SHARD_CHANCE)) {
     gained.push({ material: 'boss_shard', quantity: 1 })
   }
+  if (enemy.isBoss) {
+    if (chance(0.05)) {
+      gained.push({ material: 'spirit_chisel', quantity: 1 })
+    }
+    if (chance(0.04)) {
+      gained.push({ material: 'stability_shard', quantity: 1 })
+    }
+  }
   return gained
 }
 
@@ -1699,6 +1734,18 @@ function pickLootBase(slot, rarity) {
   const endIndex = Math.max(startIndex, Math.min(maxIndex, Math.ceil(maxIndex * maxRatio)))
   const pool = sorted.slice(startIndex, endIndex + 1)
   return randomChoice(pool) ?? sorted[maxIndex]
+}
+
+function rollSocketCount(rarity) {
+  const rule = SOCKET_RULES_BY_RARITY[rarity]
+  if (!rule || rule.max <= 0) {
+    return []
+  }
+  let count = rule.min
+  if (rule.max > rule.min && chance(rule.chance ?? 0.5)) {
+    count = rule.max
+  }
+  return new Array(count).fill(null)
 }
 
 function bonusCountForRarity(rarity) {
@@ -1803,6 +1850,8 @@ function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null,
     item.defense += 5
     item.value += 420
   }
+
+  item.sockets = rollSocketCount(rarity)
 
   return applyRandomBonusesToItem(run, item)
 }
@@ -1972,10 +2021,18 @@ export function openNearbyChest(run) {
   if (chance(CHEST_MISTY_HEART_CHANCE)) {
     addMaterial(run, 'misty_heart', 1)
     materials.push({ material: 'misty_heart', quantity: 1 })
-    appendLog(run, `Coffre ouvert: +${gold} or, +${MATERIAL_LABELS[chestMaterial]}, +Cœur brumeux, loot ${loots.map((item) => item.name).join(', ')}.`)
-  } else {
-    appendLog(run, `Coffre ouvert: +${gold} or, +${MATERIAL_LABELS[chestMaterial]}, loot ${loots.map((item) => item.name).join(', ')}.`)
   }
+  if (chance(0.035)) {
+    const specialMaterial = randomChoice(['spirit_chisel', 'stability_shard'])
+    addMaterial(run, specialMaterial, 1)
+    materials.push({ material: specialMaterial, quantity: 1 })
+  }
+  if (chance(0.05)) {
+    const stone = buildSpiritStone(run, rarityRoll({ isBoss: false }))
+    addInventoryItem(run, stone)
+    loots.push(stone)
+  }
+  appendLog(run, `Coffre ouvert: +${gold} or, ${materials.map((m) => `+${MATERIAL_LABELS[m.material]}`).join(', ')}, loot ${loots.map((item) => item.name).join(', ')}.`)
   return { ok: true, chest, loots, gold, materials, chestEvent: null }
 }
 
@@ -2003,13 +2060,22 @@ function grantXp(run, xp) {
   }
 }
 
+// Au-delà du niveau 15, l'équipement mythique/transcendé commence à trivialiser
+// les combats (voir plan de rééquilibrage) : on ajoute un facteur d'échelle
+// supplémentaire sur HP/attaque des ennemis de haut niveau pour compenser,
+// sans toucher au début de partie.
+function endgameEnemyScale(level) {
+  return 1 + Math.max(0, level - 15) * 0.025
+}
+
 function applyDifficultyToEnemy(template, difficulty) {
   const tactical = difficulty.enemyTacticsMultiplier ?? 1
   const statBoost = ENEMY_BASE_STAT_BOOST
+  const endgameScale = endgameEnemyScale(template.level ?? 1)
   return {
-    maxHp: Math.floor(template.maxHp * difficulty.enemyHpMultiplier * statBoost),
+    maxHp: Math.floor(template.maxHp * difficulty.enemyHpMultiplier * statBoost * endgameScale),
     maxMana: template.maxMana,
-    attack: Math.floor(template.attack * difficulty.enemyDamageMultiplier * statBoost),
+    attack: Math.floor(template.attack * difficulty.enemyDamageMultiplier * statBoost * endgameScale),
     defense: Math.floor(template.defense * difficulty.enemyArmorMultiplier * statBoost),
     speed: template.speed,
     ap: template.ap,
@@ -2070,6 +2136,9 @@ function resolveEnemyDeath(run, enemyRef) {
   const loots = Array.from({ length: lootCount }, () =>
     buildLootItem({ run, isBoss: enemy.isBoss, sourceName: template?.name ?? 'Boss' }),
   )
+  if (enemy.isBoss && chance(0.12)) {
+    loots.push(buildSpiritStone(run, rarityRoll({ isBoss: true })))
+  }
   loots.forEach((item) => addInventoryItem(run, item))
 
   run.pendingLootModal = {
@@ -3953,7 +4022,9 @@ export function craftItem(run, recipeId) {
     run.player.materials[material] -= qty
   }
 
-  if (recipe.result.kind === 'consumable') {
+  if (recipe.result.kind === 'material') {
+    addMaterial(run, recipe.result.material, recipe.result.quantity ?? 1)
+  } else if (recipe.result.kind === 'consumable') {
     addInventoryItem(run, {
       id: uid('consumable'),
       kind: 'consumable',
@@ -3982,6 +4053,8 @@ export function craftItem(run, recipeId) {
     if (recipe.result.slot === 'weapon') {
       item.weaponType = recipe.result.weaponType ?? 'melee'
     }
+
+    item.sockets = new Array(SOCKET_CAP_BY_RARITY[recipe.result.rarity] ?? 0).fill(null)
 
     addInventoryItem(run, applyRandomBonusesToItem(run, item))
   }
@@ -4199,9 +4272,16 @@ export function getWanderingMerchantStock(run, npcId) {
   const npc = mapState.npcs.find((n) => n.id === npcId && n.role === 'wandering_merchant')
   if (!npc) return []
   if (!npc.stock) {
-    const rarityBiases = ['uncommon', 'uncommon', 'rare', 'rare', 'epic', 'rare']
-    npc.stock = rarityBiases.map((bias) => {
-      const item = buildLootItem({ run, isBoss: false, rarityBias: bias })
+    // Rareté réellement aléatoire par emplacement (jamais mythique, légendaire rare).
+    const merchantRarityWeights = [
+      { value: 'uncommon', weight: 34 },
+      { value: 'rare', weight: 38 },
+      { value: 'epic', weight: 21 },
+      { value: 'legendary', weight: 7 },
+    ]
+    npc.stock = Array.from({ length: 6 }, () => {
+      const rarity = weightedChoice(merchantRarityWeights)
+      const item = buildLootItem({ run, isBoss: false, forcedRarity: rarity })
       item.merchantPrice = Math.max(100, Math.floor((item.value ?? 50) * 2.2 + randomInt(20, 80)))
       item.soldOut = false
       return item
@@ -4350,12 +4430,17 @@ function upgradeCostsForItem(item) {
   return UPGRADE_COSTS_BY_RARITY[rarity] ?? UPGRADE_COSTS
 }
 
-export function upgradeItem(run, itemId) {
+export function upgradeItem(run, itemId, useStabilityShard = false) {
   const item = findItemAnywhere(run, itemId)
   if (!item) return { ok: false, reason: 'Objet introuvable.' }
   if (item.kind !== 'equipment') return { ok: false, reason: 'Seuls les équipements peuvent être améliorés.' }
   const currentLevel = item.enhancementLevel ?? 0
   if (currentLevel >= 5) return { ok: false, reason: 'Amélioration maximale (+5) atteinte.' }
+
+  const wantsShard = Boolean(useStabilityShard)
+  if (wantsShard && (run.player.materials.stability_shard ?? 0) < 1) {
+    return { ok: false, reason: 'Aucun Éclat de stabilité en stock.' }
+  }
 
   const cost = upgradeCostsForItem(item)[currentLevel]
   if (run.player.gold < cost.goldCost) {
@@ -4383,6 +4468,12 @@ export function upgradeItem(run, itemId) {
     const name = itemDisplayName(item)
     appendLog(run, `Forge réussie ! ${name} obtenu.`)
     return { ok: true, success: true, newLevel: item.enhancementLevel }
+  } else if (wantsShard) {
+    run.player.materials.stability_shard -= 1
+    applyEnhancementStats(item)
+    const name = itemDisplayName(item)
+    appendLog(run, `Forge échouée — ${name} protégé par un Éclat de stabilité (pas de rétrogradation).`)
+    return { ok: true, success: false, protectedByShard: true, newLevel: item.enhancementLevel }
   } else {
     item.enhancementLevel = Math.max(0, currentLevel - 1)
     applyEnhancementStats(item)
@@ -4392,13 +4483,27 @@ export function upgradeItem(run, itemId) {
   }
 }
 
+// Taux de réussite de la transcendance de rareté, par palier de destination.
+// Passer mythique reste un vrai choix risqué : échec = matériaux perdus, rang conservé.
+const RARITY_TRANSCENDENCE_SUCCESS_RATE = {
+  uncommon: 1.00,
+  rare: 1.00,
+  epic: 0.90,
+  legendary: 0.70,
+  mythic: 0.50,
+}
+
 function rarityUpgradeCost(item) {
   const currentRarityIndex = RARITY_ORDER.indexOf(item.rarity ?? 'common')
   const nextRarityId = RARITY_ORDER[currentRarityIndex + 1]
+  const successRate = RARITY_TRANSCENDENCE_SUCCESS_RATE[nextRarityId] ?? 1.00
   if (nextRarityId === 'mythic') {
-    return { goldCost: 0, materials: { misty_heart: 1 }, successRate: 1.00 }
+    return { goldCost: 0, materials: { misty_heart: 1, boss_shard: 2 }, successRate }
   }
-  return { goldCost: 0, materials: {}, successRate: 1.00 }
+  if (nextRarityId === 'legendary') {
+    return { goldCost: 0, materials: { boss_shard: 1 }, successRate }
+  }
+  return { goldCost: 0, materials: {}, successRate }
 }
 
 export function upgradeItemRarity(run, itemId) {
@@ -4427,8 +4532,14 @@ export function upgradeItemRarity(run, itemId) {
     run.player.materials[mat] = (run.player.materials[mat] ?? 0) - qty
   }
 
-  const oldRarity = RARITIES[item.rarity]
   const newRarityId = RARITY_ORDER[currentRarityIndex + 1]
+
+  if (!chance(cost.successRate)) {
+    appendLog(run, `Transcendance échouée — ${itemDisplayName(item)} reste ${RARITIES[item.rarity].label} (matériaux perdus).`)
+    return { ok: true, success: false, newRarity: item.rarity }
+  }
+
+  const oldRarity = RARITIES[item.rarity]
   const newRarity = RARITIES[newRarityId]
   const ratio = newRarity.powerMultiplier / oldRarity.powerMultiplier
   item.rarity = newRarityId
@@ -4440,6 +4551,11 @@ export function upgradeItemRarity(run, itemId) {
   item.affixes = []
   applyRandomBonusesToItem(run, item)
   item.value = Math.round((item.value ?? 0) * newRarity.valueMultiplier / (oldRarity.valueMultiplier || 1))
+  const capBefore = item.sockets?.length ?? 0
+  const capAfter = SOCKET_CAP_BY_RARITY[newRarityId] ?? capBefore
+  if (capAfter > capBefore) {
+    item.sockets = [...(item.sockets ?? []), ...new Array(capAfter - capBefore).fill(null)]
+  }
   appendLog(run, `Transcendance réussie ! ${itemDisplayName(item)} est maintenant ${newRarity.label}.`)
   return { ok: true, success: true, newRarity: newRarityId, affixes: item.affixes ?? [] }
 }
@@ -4466,4 +4582,134 @@ export function rarityUpgradeCostInfo(run, itemId) {
   const canAfford = run.player.gold >= cost.goldCost &&
     Object.entries(cost.materials).every(([mat, qty]) => (run.player.materials[mat] ?? 0) >= qty)
   return { ...cost, canAfford, nextRarity: nextRarityId, requiresMistyHeart: nextRarityId === 'mythic' }
+}
+
+// ─── Pierres d'esprit (emplacements/sockets) ──────────────────────────────────
+// Les pierres sont de vrais objets d'inventaire (kind: 'spirit_stone'), classées
+// par rareté ; chacune roule ses propres bonus aléatoires à sa création. Les
+// sertir peut les briser (perte définitive), avec un risque qui augmente avec
+// leur rareté et le mode de difficulté (voir SPIRIT_STONE_SOCKET_SUCCESS_RATE).
+
+function stoneValueForRarity(rarity) {
+  const rarityData = RARITIES[rarity]
+  return Math.round(40 * (rarityData?.valueMultiplier ?? 1))
+}
+
+function rollSpiritStoneBonuses(run, rarity) {
+  const count = SPIRIT_STONE_BONUS_COUNT_BY_RARITY[rarity] ?? 1
+  const rarityIndex = Math.max(0, RARITY_ORDER.indexOf(rarity))
+  const scale = 1 + rarityIndex * 0.15 + (run.player.level ?? 1) * 0.01
+  const bonusStats = {}
+  const affixes = []
+  const pool = EQUIPMENT_BONUS_POOL.map((entry) => ({ ...entry }))
+  for (let i = 0; i < count; i += 1) {
+    if (!pool.length) break
+    const pickedId = weightedChoice(pool.map((entry) => ({ value: entry.id, weight: entry.weight ?? 1 })))
+    const index = pool.findIndex((entry) => entry.id === pickedId)
+    if (index < 0) continue
+    const picked = pool.splice(index, 1)[0]
+    const rolled = picked.min + Math.random() * (picked.max - picked.min)
+    const value = picked.percent
+      ? Number.parseFloat((rolled * scale).toFixed(3))
+      : Math.max(1, Math.round(rolled * scale))
+    bonusStats[picked.key] = (bonusStats[picked.key] ?? 0) + value
+    affixes.push(picked.percent ? `+${Math.round(value * 100)}% ${picked.label}` : `+${value} ${picked.label}`)
+  }
+  return { bonusStats, affixes }
+}
+
+export function buildSpiritStone(run, rarity) {
+  const rarityData = RARITIES[rarity] ?? RARITIES.common
+  const { bonusStats, affixes } = rollSpiritStoneBonuses(run, rarity)
+  return {
+    id: uid('spirit_stone'),
+    kind: 'spirit_stone',
+    name: `Pierre d'esprit ${rarityData.label.toLowerCase()}`,
+    rarity,
+    bonusStats,
+    affixes,
+    icon: SPIRIT_STONE_ICON,
+    value: stoneValueForRarity(rarity),
+  }
+}
+
+function socketSuccessRateFor(run, stoneRarity) {
+  const difficultyId = run.metadata?.difficulty ?? 'normal'
+  const table = SPIRIT_STONE_SOCKET_SUCCESS_RATE[stoneRarity] ?? SPIRIT_STONE_SOCKET_SUCCESS_RATE.common
+  return table[difficultyId] ?? table.normal
+}
+
+export function socketInfoForItem(run, itemId) {
+  const item = findItemAnywhere(run, itemId)
+  if (!item || item.kind !== 'equipment') return null
+  const cap = SOCKET_CAP_BY_RARITY[item.rarity] ?? 0
+  const sockets = item.sockets ?? []
+  return {
+    sockets: sockets.map((socket) => (socket ? { ...socket } : null)),
+    cap,
+    canAddSocket: sockets.length < cap && (run.player.materials.spirit_chisel ?? 0) >= 1,
+    chiselStock: run.player.materials.spirit_chisel ?? 0,
+    availableStones: run.player.inventory
+      .filter((i) => i.kind === 'spirit_stone')
+      .map((stone) => ({ ...stone, successRate: socketSuccessRateFor(run, stone.rarity) })),
+  }
+}
+
+export function insertSpiritStone(run, itemId, socketIndex, stoneItemId) {
+  const item = findItemAnywhere(run, itemId)
+  if (!item || item.kind !== 'equipment') return { ok: false, reason: 'Objet introuvable.' }
+  const sockets = item.sockets ?? []
+  if (socketIndex < 0 || socketIndex >= sockets.length) {
+    return { ok: false, reason: 'Emplacement invalide.' }
+  }
+  if (sockets[socketIndex]) {
+    return { ok: false, reason: 'Emplacement déjà occupé — retire la pierre en place avant.' }
+  }
+  const stoneIndex = run.player.inventory.findIndex((i) => i.id === stoneItemId && i.kind === 'spirit_stone')
+  if (stoneIndex < 0) {
+    return { ok: false, reason: 'Pierre introuvable.' }
+  }
+  const stone = run.player.inventory[stoneIndex]
+  const successRate = socketSuccessRateFor(run, stone.rarity)
+  run.player.inventory.splice(stoneIndex, 1)
+
+  if (!chance(successRate)) {
+    appendLog(run, `${stone.name} s'est brisée en tentant de la sertir sur ${itemDisplayName(item)}.`)
+    return { ok: true, success: false, broken: true, stoneName: stone.name }
+  }
+
+  sockets[socketIndex] = { rarity: stone.rarity, bonusStats: stone.bonusStats, affixes: stone.affixes, name: stone.name }
+  item.sockets = sockets
+  appendLog(run, `${stone.name} sertie sur ${itemDisplayName(item)}.`)
+  return { ok: true, success: true }
+}
+
+export function removeSpiritStone(run, itemId, socketIndex) {
+  const item = findItemAnywhere(run, itemId)
+  if (!item || item.kind !== 'equipment') return { ok: false, reason: 'Objet introuvable.' }
+  const sockets = item.sockets ?? []
+  if (!sockets[socketIndex]) {
+    return { ok: false, reason: 'Emplacement déjà vide.' }
+  }
+  sockets[socketIndex] = null
+  item.sockets = sockets
+  appendLog(run, `Pierre d'esprit retirée de ${itemDisplayName(item)} (perdue).`)
+  return { ok: true }
+}
+
+export function addSocketToItem(run, itemId) {
+  const item = findItemAnywhere(run, itemId)
+  if (!item || item.kind !== 'equipment') return { ok: false, reason: 'Objet introuvable.' }
+  const cap = SOCKET_CAP_BY_RARITY[item.rarity] ?? 0
+  const sockets = item.sockets ?? []
+  if (sockets.length >= cap) {
+    return { ok: false, reason: `Plafond d'emplacements atteint pour cette rareté (${cap}).` }
+  }
+  if ((run.player.materials.spirit_chisel ?? 0) < 1) {
+    return { ok: false, reason: 'Aucun Ciseau des esprits en stock.' }
+  }
+  run.player.materials.spirit_chisel -= 1
+  item.sockets = [...sockets, null]
+  appendLog(run, `Nouvel emplacement de pierre d'esprit ouvert sur ${itemDisplayName(item)}.`)
+  return { ok: true }
 }

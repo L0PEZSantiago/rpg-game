@@ -57,6 +57,10 @@ import {
   openNearbyChest,
   performChallengeRoll,
   rarityUpgradeCostInfo,
+  socketInfoForItem,
+  insertSpiritStone,
+  removeSpiritStone,
+  addSocketToItem,
   startNextLevel,
   stepWanderingNpcs,
   playerNormalAttack,
@@ -136,6 +140,10 @@ const chestEvent = ref(null)
 const combatMobilePanel = ref(/** @type {null|'skills'|'actions'|'inventory'} */(null))
 let chestEventTimer = null
 const challengeModal = ref(/** @type {{ npcId: string, npcName: string, result: null | { won: boolean, playerRoll: number, npcRoll: number, gold: number, xp: number, penalty: number } } | null} */(null))
+const challengeRolling = ref(false)
+const challengeAnimPlayer = ref(2)
+const challengeAnimNpc = ref(2)
+let challengeAnimTimer = null
 const wanderingMerchantModal = ref(/** @type {{ npcId: string, npcName: string, portrait: string } | null} */(null))
 const merchantArrivalModal = ref(/** @type {{ npcName: string } | null} */(null))
 const merchantDepartedModal = ref(/** @type {{ npcName: string } | null} */(null))
@@ -156,6 +164,8 @@ const hubTab = ref('character')
 const invSubTab = ref('equipment')
 const forgeSelectedItemId = ref(null)
 const forgeResult = ref(null)
+const forgeUseStabilityShard = ref(false)
+const armedStoneId = ref(null)
 let forgeResultTimer = null
 const exitChoiceModal = ref(/** @type {{ portalType: 'exit'|'secret', targetMapId: string|null, currentMapId: string } | null} */(null))
 const inventoryTrackingPrimed = ref(false)
@@ -505,6 +515,9 @@ const forgeUpgradeCost = computed(() =>
 const forgeRarityUpgradeCost = computed(() =>
   run.value && forgeSelectedItemId.value ? rarityUpgradeCostInfo(run.value, forgeSelectedItemId.value) : null,
 )
+const forgeSocketInfo = computed(() =>
+  run.value && forgeSelectedItemId.value ? socketInfoForItem(run.value, forgeSelectedItemId.value) : null,
+)
 const hubEquipmentItems = computed(() => {
   if (!run.value) return []
   const items = []
@@ -671,6 +684,9 @@ function inventoryTypeLabel(item) {
   if (item.kind === 'consumable') {
     return 'Categorie: Consommable'
   }
+  if (item.kind === 'spirit_stone') {
+    return 'Categorie: Pierre d\'esprit'
+  }
   return `Categorie: ${item.kind ?? 'Divers'}`
 }
 
@@ -730,6 +746,9 @@ function itemDescription(item) {
       bonuses.push(`DEF +${item.defense}`)
     }
     return bonuses.join(' | ') || 'Equipement'
+  }
+  if (item.kind === 'spirit_stone') {
+    return (item.affixes ?? []).join(', ') || 'À sertir dans un emplacement d\'équipement.'
   }
   return ''
 }
@@ -831,6 +850,17 @@ function handleHubUseConsumable(itemId) {
   if (!run.value) return
   const result = useConsumable(run.value, itemId)
   if (!result.ok) setInfo(result.reason)
+  persistRun()
+}
+
+function handleHubSell(itemId) {
+  if (!run.value) return
+  const result = sellItem(run.value, itemId)
+  if (!result.ok) {
+    setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.sellOrBuy, 0.3)
+  }
   persistRun()
 }
 
@@ -1129,6 +1159,8 @@ const MATERIAL_ICONS = {
   bone_dust:          { col: 2, row: 1 },
   boss_shard:         { col: 3, row: 1 },
   misty_heart:        { path: '/assets/Icons/coeur_brumeux.png' },
+  stability_shard:    { path: '/assets/Icons/stability_shard.svg' },
+  spirit_chisel:      { path: '/assets/Icons/spirit_chisel.svg' },
 }
 
 function materialIconStyle(key) {
@@ -2968,7 +3000,17 @@ function rarityColor(rarity) {
 }
 
 function itemAffixes(item) {
-  return item?.affixes ?? []
+  const affixes = [...(item?.affixes ?? [])]
+  const sockets = item?.sockets ?? []
+  if (sockets.length > 0) {
+    const filled = sockets.filter(Boolean).length
+    affixes.push(`⛋ Emplacements de pierre d'esprit : ${filled}/${sockets.length}`)
+  }
+  for (const socket of sockets) {
+    if (!socket) continue
+    affixes.push(`✧ ${socket.name} : ${(socket.affixes ?? []).join(', ')}`)
+  }
+  return affixes
 }
 
 function cellIcon(cell) {
@@ -3513,12 +3555,14 @@ function handleGoToNextLevel() {
 function handleForgeUpgrade() {
   if (!run.value || !forgeSelectedItemId.value) return
   clearTimeout(forgeResultTimer)
-  const result = upgradeItem(run.value, forgeSelectedItemId.value)
+  const result = upgradeItem(run.value, forgeSelectedItemId.value, forgeUseStabilityShard.value)
   forgeResult.value = result
   if (result.ok && result.success) {
     playUiSound(UI_SOUND_BANK.craft, 0.35)
   } else if (result.ok && result.success === false) {
     playUiSound(UI_SOUND_BANK.forgeFail, 0.32)
+  } else {
+    setInfo(result.reason)
   }
   forgeResultTimer = setTimeout(() => { forgeResult.value = null }, 3500)
   persistRun()
@@ -3529,7 +3573,74 @@ function handleForgeRarityUpgrade() {
   clearTimeout(forgeResultTimer)
   const result = upgradeItemRarity(run.value, forgeSelectedItemId.value)
   forgeResult.value = result
+  if (result.ok && result.success) {
+    playUiSound(UI_SOUND_BANK.craft, 0.35)
+  } else if (result.ok && result.success === false) {
+    playUiSound(UI_SOUND_BANK.forgeFail, 0.32)
+  }
   forgeResultTimer = setTimeout(() => { forgeResult.value = null }, 3500)
+  persistRun()
+}
+
+function handleInsertSpiritStone(socketIndex, stoneItemId) {
+  if (!run.value || !forgeSelectedItemId.value || !stoneItemId) return
+  const result = insertSpiritStone(run.value, forgeSelectedItemId.value, socketIndex, stoneItemId)
+  armedStoneId.value = null
+  if (!result.ok) {
+    setInfo(result.reason)
+  } else if (result.success) {
+    playUiSound(UI_SOUND_BANK.craft, 0.3)
+    setInfo('Pierre sertie avec succès.')
+  } else {
+    playUiSound(UI_SOUND_BANK.forgeFail, 0.32)
+    setInfo(`${result.stoneName} s'est brisée...`)
+  }
+  persistRun()
+}
+
+function handleStoneDragStart(stoneId, event) {
+  armedStoneId.value = stoneId
+  if (event.dataTransfer) {
+    event.dataTransfer.setData('text/plain', stoneId)
+    event.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function handleStoneTap(stoneId) {
+  armedStoneId.value = armedStoneId.value === stoneId ? null : stoneId
+}
+
+function handleSocketDrop(socketIndex, event, isOccupied) {
+  event.preventDefault()
+  if (isOccupied) return
+  const stoneId = event.dataTransfer?.getData('text/plain') || armedStoneId.value
+  handleInsertSpiritStone(socketIndex, stoneId)
+}
+
+function handleSocketTap(socketIndex) {
+  if (!armedStoneId.value) return
+  handleInsertSpiritStone(socketIndex, armedStoneId.value)
+}
+
+function handleRemoveSpiritStone(socketIndex) {
+  if (!run.value || !forgeSelectedItemId.value) return
+  const result = removeSpiritStone(run.value, forgeSelectedItemId.value, socketIndex)
+  if (!result.ok) {
+    setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.uiConfirm, 0.26)
+  }
+  persistRun()
+}
+
+function handleAddSocket() {
+  if (!run.value || !forgeSelectedItemId.value) return
+  const result = addSocketToItem(run.value, forgeSelectedItemId.value)
+  if (!result.ok) {
+    setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.craft, 0.35)
+  }
   persistRun()
 }
 
@@ -3911,6 +4022,13 @@ function openChestAction() {
   persistRun()
 }
 
+function closeChallengeModal() {
+  clearInterval(challengeAnimTimer)
+  challengeAnimTimer = null
+  challengeRolling.value = false
+  challengeModal.value = null
+}
+
 function rollChallengeGame() {
   if (!run.value || !challengeModal.value) return
   const result = performChallengeRoll(run.value, challengeModal.value.npcId)
@@ -3919,8 +4037,25 @@ function rollChallengeGame() {
     challengeModal.value = null
     return
   }
-  challengeModal.value = { ...challengeModal.value, result }
   persistRun()
+  challengeRolling.value = true
+  clearInterval(challengeAnimTimer)
+  let ticks = 0
+  const maxTicks = 10
+  challengeAnimTimer = setInterval(() => {
+    challengeAnimPlayer.value = Math.floor(Math.random() * 6) + 1 + Math.floor(Math.random() * 6) + 1
+    challengeAnimNpc.value = Math.floor(Math.random() * 6) + 1 + Math.floor(Math.random() * 6) + 1
+    ticks += 1
+    if (ticks >= maxTicks) {
+      clearInterval(challengeAnimTimer)
+      challengeAnimTimer = null
+      challengeRolling.value = false
+      if (challengeModal.value) {
+        challengeModal.value = { ...challengeModal.value, result }
+      }
+      playUiSound(UI_SOUND_BANK.uiConfirm, 0.25)
+    }
+  }, 90)
 }
 
 function buyFromWanderingMerchant(itemId) {
@@ -4062,6 +4197,13 @@ function npcAction(action, payload = null) {
     if (!result.ok) {
       setInfo(result.reason)
     } else {
+      lootModal.value = {
+        enemyName: `Quête accomplie : ${result.questName}`,
+        xp: 0,
+        gold: result.rewards.gold,
+        materials: result.rewards.materials,
+        items: result.rewards.items,
+      }
       setInfo('Quête terminée ! Récompense reçue.')
       playUiSound(UI_SOUND_BANK.levelUp, 0.3)
     }
@@ -4202,6 +4344,13 @@ function doRecycleItem(itemId) {
   if (!result.ok) {
     setInfo(result.reason)
   } else {
+    lootModal.value = {
+      enemyName: 'Objet recyclé',
+      xp: 0,
+      gold: 0,
+      materials: result.gained,
+      items: [],
+    }
     setInfo(`Recycle: ${materialGainsLabel(result.gained) || 'rien de notable'}.`)
     playUiSound(UI_SOUND_BANK.craft, 0.28)
   }
@@ -4879,6 +5028,7 @@ onBeforeUnmount(() => {
           <div class="hub-sub-tabs">
             <button class="hub-sub-tab-btn" :class="{ active: invSubTab === 'equipment' }" @click="invSubTab = 'equipment'">Équipement</button>
             <button class="hub-sub-tab-btn" :class="{ active: invSubTab === 'consumables' }" @click="invSubTab = 'consumables'">Consommables</button>
+            <button class="hub-sub-tab-btn" :class="{ active: invSubTab === 'stones' }" @click="invSubTab = 'stones'">Pierres d'esprit</button>
           </div>
 
           <!-- Sous-onglet : Équipement -->
@@ -4896,6 +5046,10 @@ onBeforeUnmount(() => {
                   <template v-if="item.attack > 0">⚔️ {{ item.attack }} </template>
                   <template v-if="item.defense > 0">🛡️ {{ item.defense }}</template>
                   <span v-if="(item.enhancementLevel ?? 0) > 0" class="hub-enhance-badge">+{{ item.enhancementLevel }}</span>
+                  <span v-if="(item.sockets?.length ?? 0) > 0" class="hub-socket-badge"
+                    :title="`${item.sockets.filter(Boolean).length}/${item.sockets.length} emplacements de pierre d'esprit`">
+                    ⛋ {{ item.sockets.filter(Boolean).length }}/{{ item.sockets.length }}
+                  </span>
                 </span>
                 <span class="hub-inv-rarity" :style="{ color: RARITIES[item.rarity]?.color }">
                   {{ RARITIES[item.rarity]?.label }}
@@ -4906,8 +5060,11 @@ onBeforeUnmount(() => {
                   @click="equipItem(run, item.id); persistRun()">Équiper</button>
                 <button class="hub-action-btn hub-btn-forge"
                   @click="forgeSelectedItemId = item.id; hubTab = 'forge'">Forger</button>
+                <button class="hub-action-btn hub-btn-sell" @click="recycleAction(item.id)">
+                  <img src="/assets/Icons/recycle.png" alt="" class="recycle-btn-icon" /> Recycler
+                </button>
                 <button class="hub-action-btn hub-btn-sell"
-                  @click="sellItem(run, item.id); persistRun()">
+                  @click="handleHubSell(item.id)">
                   <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
                 </button>
               </div>
@@ -4933,7 +5090,34 @@ onBeforeUnmount(() => {
                 <button class="hub-action-btn hub-btn-equip"
                   @click="handleHubUseConsumable(item.id)">Utiliser</button>
                 <button class="hub-action-btn hub-btn-sell"
-                  @click="sellItem(run, item.id); persistRun()">
+                  @click="handleHubSell(item.id)">
+                  <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
+                </button>
+              </div>
+            </div>
+          </div>
+          </template>
+
+          <!-- Sous-onglet : Pierres d'esprit -->
+          <template v-else-if="invSubTab === 'stones'">
+          <p v-if="run.player.inventory.filter(i => i.kind === 'spirit_stone').length === 0" class="hub-empty">
+            Aucune pierre d'esprit en stock. Elles se trouvent sur les boss et dans les coffres.
+          </p>
+          <div class="hub-inv-grid">
+            <div v-for="item in run.player.inventory.filter(i => i.kind === 'spirit_stone')" :key="item.id"
+              class="hub-inv-card card">
+              <img :src="itemIcon(item)" class="hub-inv-icon" alt="" />
+              <div class="hub-inv-info">
+                <span class="hub-inv-name" :style="{ color: RARITIES[item.rarity]?.color }">{{ item.name }}</span>
+                <span class="hub-inv-stats">{{ (item.affixes ?? []).join(', ') }}</span>
+                <span class="hub-inv-rarity" :style="{ color: RARITIES[item.rarity]?.color }">
+                  {{ RARITIES[item.rarity]?.label }}
+                </span>
+              </div>
+              <div class="hub-inv-actions">
+                <button class="hub-action-btn hub-btn-forge" @click="hubTab = 'forge'">Sertir en forge</button>
+                <button class="hub-action-btn hub-btn-sell"
+                  @click="handleHubSell(item.id)">
                   <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
                 </button>
               </div>
@@ -5010,8 +5194,15 @@ onBeforeUnmount(() => {
                 {{ forgeUpgradeCost.successRate >= 1 ? 'Succès garanti' : `${Math.round(forgeUpgradeCost.successRate * 100)}% de réussite` }}
               </div>
               <p v-if="forgeUpgradeCost.successRate < 1" class="hub-forge-fail-warn">
-                Échec → rétrogradé d'un niveau
+                Échec → rétrogradé d'un niveau (sauf protection)
               </p>
+              <label v-if="forgeUpgradeCost.successRate < 1" class="hub-forge-shard-toggle"
+                :class="{ disabled: (run.player.materials.stability_shard ?? 0) < 1 }">
+                <input type="checkbox" v-model="forgeUseStabilityShard"
+                  :disabled="(run.player.materials.stability_shard ?? 0) < 1" />
+                <span class="material-icon material-icon-sm" :style="materialIconStyle('stability_shard')"></span>
+                Protéger contre la rétrogradation (1 Éclat de stabilité, x{{ run.player.materials.stability_shard ?? 0 }} en stock)
+              </label>
               <button class="hub-forge-btn" :disabled="!forgeUpgradeCost.canAfford" @click="handleForgeUpgrade">
                 Améliorer
               </button>
@@ -5041,11 +5232,75 @@ onBeforeUnmount(() => {
                 <span v-if="Object.keys(forgeRarityUpgradeCost.materials).length === 0 && forgeRarityUpgradeCost.goldCost === 0"
                   class="hub-forge-cost-line cost-ok">Gratuit</span>
               </div>
-              <div class="hub-forge-success-rate rate-sure">Succès garanti</div>
+              <div class="hub-forge-success-rate"
+                :class="forgeRarityUpgradeCost.successRate >= 1 ? 'rate-sure' : forgeRarityUpgradeCost.successRate >= 0.6 ? 'rate-good' : 'rate-risky'">
+                {{ forgeRarityUpgradeCost.successRate >= 1 ? 'Succès garanti' : `${Math.round(forgeRarityUpgradeCost.successRate * 100)}% de réussite` }}
+              </div>
+              <p v-if="forgeRarityUpgradeCost.successRate < 1" class="hub-forge-fail-warn">
+                Échec → rareté conservée, matériaux perdus
+              </p>
               <button class="hub-forge-btn hub-rarity-btn" :disabled="!forgeRarityUpgradeCost.canAfford"
                 @click="handleForgeRarityUpgrade">
                 Transcender
               </button>
+            </div>
+
+            <!-- Emplacements de pierres d'esprit -->
+            <div v-if="forgeSocketInfo" class="hub-forge-cost-block hub-socket-block">
+              <h4 class="hub-forge-cost-title">✧ Pierres d'esprit</h4>
+              <p class="hub-forge-fail-warn">
+                Glisse une pierre sur un emplacement (ou tape la pierre puis l'emplacement sur mobile). Une pierre peut se briser à la pose — plus elle est rare, plus le risque est élevé.
+              </p>
+              <p v-if="forgeSocketInfo.sockets.length === 0" class="hub-empty-inline">
+                Aucun emplacement sur cet objet.
+              </p>
+              <div v-else class="hub-socket-list">
+                <div v-for="(socket, idx) in forgeSocketInfo.sockets" :key="idx" class="hub-socket-slot"
+                  :class="{ 'drop-armed': !socket && armedStoneId }"
+                  @dragover.prevent
+                  @drop="handleSocketDrop(idx, $event, Boolean(socket))"
+                  @click="!socket && handleSocketTap(idx)">
+                  <template v-if="socket">
+                    <span class="hub-socket-icon-wrap" :style="{ borderColor: RARITIES[socket.rarity]?.color }">
+                      <img src="/assets/Icons/spirit_stone.svg" class="hub-socket-icon" alt="" />
+                    </span>
+                    <span class="hub-socket-label" :style="{ color: RARITIES[socket.rarity]?.color }">{{ socket.name }}</span>
+                    <span class="hub-socket-desc">{{ (socket.affixes ?? []).join(', ') }}</span>
+                    <button class="hub-action-btn hub-btn-sell" @click.stop="handleRemoveSpiritStone(idx)">Retirer</button>
+                  </template>
+                  <template v-else>
+                    <span class="hub-socket-empty">Emplacement vide — glisser/taper une pierre ici</span>
+                  </template>
+                </div>
+              </div>
+              <button class="hub-forge-btn" :disabled="!forgeSocketInfo.canAddSocket" @click="handleAddSocket">
+                Créer une châsse vide (1 Ciseau des esprits, x{{ forgeSocketInfo.chiselStock }} en stock, plafond {{ forgeSocketInfo.cap }})
+              </button>
+
+              <div class="hub-stone-tray">
+                <h5 class="hub-stone-tray-title">Tes pierres d'esprit</h5>
+                <p v-if="forgeSocketInfo.availableStones.length === 0" class="hub-empty-inline">
+                  Aucune pierre en stock.
+                </p>
+                <div v-else class="hub-stone-tray-list">
+                  <div v-for="stone in forgeSocketInfo.availableStones" :key="stone.id" class="hub-stone-card"
+                    :class="{ armed: armedStoneId === stone.id }"
+                    draggable="true"
+                    @dragstart="handleStoneDragStart(stone.id, $event)"
+                    @dragend="armedStoneId = null"
+                    @click="handleStoneTap(stone.id)">
+                    <img src="/assets/Icons/spirit_stone.svg" class="hub-stone-card-icon" alt="" />
+                    <div class="hub-stone-card-info">
+                      <span class="hub-stone-card-name" :style="{ color: RARITIES[stone.rarity]?.color }">{{ stone.name }}</span>
+                      <span class="hub-stone-card-affixes">{{ (stone.affixes ?? []).join(', ') }}</span>
+                      <span class="hub-stone-card-rate"
+                        :class="stone.successRate >= 0.8 ? 'rate-good' : stone.successRate >= 0.5 ? 'rate-mid' : 'rate-risky'">
+                        {{ Math.round(stone.successRate * 100) }}% de réussite au sertissage
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Résultat -->
@@ -5062,6 +5317,8 @@ onBeforeUnmount(() => {
                     </template>
                   </span>
                 </template>
+                <span v-else-if="forgeResult.protectedByShard">✗ Échec — protégé par un Éclat de stabilité (pas de rétrogradation)</span>
+                <span v-else-if="forgeResult.newRarity !== undefined">✗ Transcendance échouée — rareté conservée</span>
                 <span v-else>✗ Échec — rétrogradé</span>
               </div>
             </Transition>
@@ -6141,8 +6398,8 @@ onBeforeUnmount(() => {
               <em :style="{ color: rarityColor(sellConfirmModal.rarity) }" class="sell-confirm-rarity">Rareté : {{ rarityLabel(sellConfirmModal.rarity) }}</em>
               <span class="sell-confirm-warning">
                 {{ sellConfirmModal.type?.startsWith('recycle')
-                  ? 'Cet objet sera d�truit pour r�cup�rer des mat�riaux. Cette action est irr�versible.'
-                  : 'Cet objet est de grande valeur, cette action est irr�versible.' }}
+                  ? 'Cet objet sera d�truit pour r�cup�rer des mat�riaux. Cette action est irr�versible.'
+                  : 'Cet objet est de grande valeur, cette action est irr�versible.' }}
               </span>
             </p>
           </div>
@@ -6155,18 +6412,32 @@ onBeforeUnmount(() => {
 
 
 
-      <div v-if="challengeModal" class="overlay-meta" @click="challengeModal = null">
+      <div v-if="challengeModal" class="overlay-meta" @click="closeChallengeModal">
         <article class="meta-modal challenge-modal" @click.stop>
-          <button type="button" class="modal-x-btn" @click="challengeModal = null">✕</button>
+          <button type="button" class="modal-x-btn" @click="closeChallengeModal">✕</button>
           <header class="challenge-modal-header">
             <div class="challenge-icon">⚔</div>
             <h2>{{ challengeModal.npcName }}</h2>
             <p class="challenge-subtitle">Défi : Lancer de dés (2d6). Le plus haut total l'emporte.</p>
           </header>
-          <div v-if="!challengeModal.result" class="challenge-pending">
+          <div v-if="!challengeModal.result && !challengeRolling" class="challenge-pending">
             <p class="challenge-rules">Enjeux : Victoire → or + XP · Défaite → perte d'or</p>
             <button class="primary challenge-roll-btn" @click="rollChallengeGame">Lancer les dés</button>
-            <button class="secondary" @click="challengeModal = null">Refuser le défi</button>
+            <button class="secondary" @click="closeChallengeModal">Refuser le défi</button>
+          </div>
+          <div v-else-if="challengeRolling" class="challenge-result challenge-rolling-state">
+            <div class="dice-results">
+              <div class="dice-block">
+                <div class="dice-label">Vous</div>
+                <div class="dice-value dice-spinning">{{ challengeAnimPlayer }}</div>
+              </div>
+              <div class="dice-vs">VS</div>
+              <div class="dice-block">
+                <div class="dice-label">{{ challengeModal.npcName }}</div>
+                <div class="dice-value dice-spinning">{{ challengeAnimNpc }}</div>
+              </div>
+            </div>
+            <p class="challenge-rolling-label">Les dés roulent…</p>
           </div>
           <div v-else class="challenge-result" :class="challengeModal.result.won ? 'won' : 'lost'">
             <div class="dice-results">
@@ -6185,7 +6456,7 @@ onBeforeUnmount(() => {
               <span v-if="challengeModal.result.won"> +{{ challengeModal.result.gold }} or · +{{ challengeModal.result.xp }} XP</span>
               <span v-else> −{{ challengeModal.result.penalty }} or</span>
             </div>
-            <button class="secondary" @click="challengeModal = null">Fermer</button>
+            <button class="secondary" @click="closeChallengeModal">Fermer</button>
           </div>
         </article>
       </div>
@@ -11724,6 +11995,20 @@ button.danger {
   border: 2px solid currentColor;
   background: rgba(0,0,0,0.3);
 }
+.dice-value.dice-spinning {
+  color: #fcd596;
+  animation: dice-spin 0.09s linear infinite;
+}
+@keyframes dice-spin {
+  0% { transform: rotate(-8deg) scale(1); }
+  50% { transform: rotate(8deg) scale(1.08); }
+  100% { transform: rotate(-8deg) scale(1); }
+}
+.challenge-rolling-label {
+  font-size: 0.8rem;
+  color: rgba(255,217,156,0.6);
+  font-style: italic;
+}
 .dice-vs {
   font-size: 0.85rem;
   font-weight: 700;
@@ -12055,6 +12340,15 @@ button.danger {
 .hub-enhance-badge {
   background: #c89a20;
   color: #1a0e00;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.hub-socket-badge {
+  background: rgba(112,216,240,0.18);
+  color: #70d8f0;
+  border: 1px solid rgba(112,216,240,0.4);
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 0.68rem;
@@ -12562,6 +12856,84 @@ button.danger {
 .rate-good  { background: rgba(60,160,220,0.15); color: #70d0f0; border: 1px solid rgba(60,160,220,0.3); }
 .rate-risky { background: rgba(220,80,40,0.15); color: #f09060; border: 1px solid rgba(220,80,40,0.3); }
 .hub-forge-fail-warn { margin: 0; font-size: 0.74rem; color: rgba(255,217,156,0.4); }
+.hub-forge-shard-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: #fcd596;
+  cursor: pointer;
+}
+.hub-forge-shard-toggle.disabled { opacity: 0.45; cursor: not-allowed; }
+.hub-socket-list { display: flex; flex-direction: column; gap: 8px; }
+.hub-socket-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px dashed rgba(255,217,156,0.25);
+  border-radius: 8px;
+}
+.hub-socket-icon { width: 26px; height: 26px; object-fit: contain; }
+.hub-socket-label { font-weight: 700; color: #fcd596; font-size: 0.8rem; }
+.hub-socket-desc { font-size: 0.72rem; color: rgba(255,217,156,0.6); flex: 1 1 auto; }
+.hub-socket-empty { font-size: 0.76rem; color: rgba(255,217,156,0.4); font-style: italic; }
+.hub-socket-select {
+  background: rgba(0,0,0,0.35);
+  color: #fcd596;
+  border: 1px solid rgba(255,217,156,0.3);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 0.76rem;
+}
+.hub-socket-slot.drop-armed {
+  border-color: rgba(112,216,240,0.7);
+  background: rgba(112,216,240,0.08);
+  cursor: pointer;
+}
+.hub-socket-icon-wrap {
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(255,217,156,0.3);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.hub-stone-tray { margin-top: 10px; border-top: 1px dashed rgba(255,217,156,0.2); padding-top: 10px; }
+.hub-stone-tray-title { margin: 0 0 6px; font-size: 0.82rem; color: #fcd596; }
+.hub-stone-tray-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hub-stone-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255,217,156,0.25);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+  cursor: grab;
+  max-width: 220px;
+  user-select: none;
+}
+.hub-stone-card:active { cursor: grabbing; }
+.hub-stone-card.armed {
+  border-color: rgba(112,216,240,0.8);
+  background: rgba(112,216,240,0.12);
+}
+.hub-stone-card-icon { width: 24px; height: 24px; object-fit: contain; flex-shrink: 0; }
+.hub-stone-card-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.hub-stone-card-name { font-size: 0.76rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-stone-card-affixes { font-size: 0.68rem; color: rgba(255,217,156,0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hub-stone-card-rate { font-size: 0.66rem; font-weight: 700; }
+.hub-stone-card-rate.rate-good { color: #70e870; }
+.hub-stone-card-rate.rate-mid { color: #70d0f0; }
+.hub-stone-card-rate.rate-risky { color: #f09060; }
 .hub-forge-btn {
   padding: 9px 20px;
   background: linear-gradient(135deg, #5a2a08, #8b4a14);

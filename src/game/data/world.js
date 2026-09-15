@@ -82,7 +82,7 @@ export const MAPS = {
           },
           {
             id: 'riddle_ashen_key',
-            question: 'J\'ouvre ce qui est ferme sans toucher la serrure. Je traverse les murs sans laisser de trace. Qui suis-je ?',
+            question: 'On ne peut ni me voir ni me toucher, pourtant je peux ouvrir un esprit fermé. Aucun mur, aucune frontière ne peut m\'arrêter. Qui suis-je ?',
             options: [
               { id: 'key', text: 'Une cle' },
               { id: 'thought', text: 'Une idée' },
@@ -184,13 +184,13 @@ export const MAPS = {
           },
           {
             id: 'riddle_ashen_end',
-            question: 'Je suis le debut de la fin et la fin de tout lieu. On me trouve au milieu de chaque jour. Qui suis-je ?',
+            question: 'Plus tu avances vers moi, plus je recule. Je borde le monde entier mais nul voyageur ne m\'a jamais atteint. Qui suis-je ?',
             options: [
-              { id: 'letter_e', text: 'La lettre E' },
+              { id: 'horizon', text: 'L\'horizon' },
               { id: 'death', text: 'La mort' },
               { id: 'night', text: 'La nuit' },
             ],
-            correctOptionId: 'letter_e',
+            correctOptionId: 'horizon',
             successText: 'Iria sourit. Le portail cache s\'ouvre.',
             failText: 'La cartographe ne réagit pas.',
             reward: {
@@ -837,7 +837,7 @@ export const MAPS = {
           },
           {
             id: 'riddle_sanctum_consume',
-            question: 'Je dévore tout: pierre, fer, rois. Le temps m\'affaiblit. Qui suis-je ?',
+            question: 'Je ronge le fer sans dents ni bouche. L\'humidité me nourrit, et plus le temps passe, plus je m\'étends. Qui suis-je ?',
             options: [
               { id: 'rust', text: 'La rouille' },
               { id: 'fire', text: 'Le feu' },
