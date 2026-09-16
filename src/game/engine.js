@@ -127,6 +127,24 @@ const SELL_RARITY_MULTIPLIER = {
   legendary: 1.2,
   mythic: 1.3,
 }
+// La qualité (piètre/bonne facture/divine) et le niveau d'optimisation en forge (+1..+5)
+// influent maintenant sur la valeur d'un équipement — vente comme recyclage.
+const QUALITY_VALUE_MULTIPLIER = {
+  poor: 0.8,
+  good: 1,
+  perfect: 1.3,
+}
+const ENHANCEMENT_VALUE_MULTIPLIER_PER_LEVEL = 0.1
+
+function itemOptimizationMultiplier(item) {
+  if (item?.kind !== 'equipment') {
+    return 1
+  }
+  const qualityMult = QUALITY_VALUE_MULTIPLIER[item.quality] ?? 1
+  const level = item.enhancementLevel ?? 0
+  const enhancementMult = 1 + level * ENHANCEMENT_VALUE_MULTIPLIER_PER_LEVEL
+  return qualityMult * enhancementMult
+}
 const RECYCLE_RULES_BY_RARITY = {
   common: { min: 1, max: 2, secondaryChance: 0.15, bossShardChance: 0 },
   uncommon: { min: 2, max: 3, secondaryChance: 0.25, bossShardChance: 0 },
@@ -4126,6 +4144,7 @@ function recycleMaterialEntriesForItem(item) {
   const rarity = item?.rarity ?? 'common'
   const rule = RECYCLE_RULES_BY_RARITY[rarity] ?? RECYCLE_RULES_BY_RARITY.common
   const slotMaterials = RECYCLE_MATERIALS_BY_SLOT[item?.slot] ?? RECYCLE_MATERIALS_BY_SLOT.weapon
+  const optimizationMult = itemOptimizationMultiplier(item)
   const gained = []
   const addGained = (material, quantity) => {
     if (!material || quantity <= 0) return
@@ -4134,9 +4153,9 @@ function recycleMaterialEntriesForItem(item) {
     else gained.push({ material, quantity })
   }
 
-  addGained(slotMaterials.primary, randomInt(rule.min, rule.max))
+  addGained(slotMaterials.primary, Math.max(1, Math.round(randomInt(rule.min, rule.max) * optimizationMult)))
   if (chance(rule.secondaryChance)) {
-    addGained(slotMaterials.secondary, randomInt(1, Math.max(1, Math.ceil(rule.max / 2))))
+    addGained(slotMaterials.secondary, Math.max(1, Math.round(randomInt(1, Math.max(1, Math.ceil(rule.max / 2))) * optimizationMult)))
   }
   if (chance(rule.bossShardChance)) {
     addGained('boss_shard', randomInt(1, rule.bossShardMax ?? 1))
@@ -4182,7 +4201,8 @@ export function sellItem(run, itemId) {
 export function sellValueForItem(item) {
   const rarity = item?.rarity ?? 'common'
   const rarityMult = SELL_RARITY_MULTIPLIER[rarity] ?? 1
-  return Math.max(1, Math.floor((item?.value ?? 12) * SELL_PRICE_FACTOR * rarityMult))
+  const optimizationMult = itemOptimizationMultiplier(item)
+  return Math.max(1, Math.floor((item?.value ?? 12) * SELL_PRICE_FACTOR * rarityMult * optimizationMult))
 }
 
 function recipeById(recipeId) {
