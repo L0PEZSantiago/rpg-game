@@ -12,3 +12,4 @@ libre, attribution requise). Elles ont été recolorées pour ce projet.
 | `assets/Icons/stability_shard.svg` | Crystal Shine | Lorc |
 | `assets/Icons/spirit_chisel.svg` | Chisel | Delapouite |
 | `assets/Icons/revive_charm.svg` | Totem Mask | Lorc |
+| `assets/Icons/lunar_altar.svg` | Moon | Lorc |

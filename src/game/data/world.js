@@ -2289,6 +2289,15 @@ export const MAPS = {
         portrait: WIZZARD_ASSET,
         dialogue: 'Tu as trouvé une zone secrete. Ici, chaque erreur coûte cher.',
       },
+      {
+        id: 'npc_lunar_altar',
+        name: 'Autel Lunaire',
+        role: 'shrine',
+        x: 8,
+        y: 6,
+        portrait: '/assets/Icons/lunar_altar.svg',
+        dialogue: 'Un autel de pierre baigné d\'une lumière argentée. Il semble attendre une présence.',
+      },
     ],
     resources: [
       { id: 'lunar_ore_1', type: 'ore', x: 11, y: 2, charges: 4 },

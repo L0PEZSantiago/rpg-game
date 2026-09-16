@@ -291,6 +291,7 @@ export function generateProceduralSecretRoom(run) {
     ...chest,
     rarityBias: rarities[idx % rarities.length],
   }))
+  clone.originTemplateId = templateId
   MAPS[newId] = clone
   run.world.generatedMaps ??= {}
   run.world.generatedMaps[newId] = clone
@@ -321,6 +322,7 @@ export function generateProceduralSecretDungeon(run) {
   // Recalibre la puissance des ennemis/boss (mêmes templates que la forme d'origine,
   // mais rééchelonnés pour coller au niveau réel de la map d'où vient le portail).
   clone.levelScale = clamp(sourceLevel / Math.max(1, nativeLevel), 0.55, 2.4)
+  clone.originTemplateId = templateId
   MAPS[newId] = clone
   run.world.generatedMaps ??= {}
   run.world.generatedMaps[newId] = clone
@@ -655,11 +657,12 @@ function createMapState(mapId, spawnCounters = { sinceSocketer: 0, sinceIdentifi
 
   const pool = walkablePool(map, tiles, blocked)
 
-  // Portail de camp : disponible dès le niveau 1, sur toute map régulière, pour
-  // permettre d'aller se préparer (forge/craft) avant d'affronter le boss sans
-  // attendre de l'avoir vaincu. Jamais sur les maps secrètes/tutoriel.
+  // Portail de camp : uniquement sur la toute première map de la progression, pour
+  // permettre d'aller se préparer (forge/craft) avant d'affronter son boss sans
+  // attendre de l'avoir vaincu. Pas sur les maps suivantes (elles ont déjà le portail
+  // de retour au camp normal une fois leur propre boss vaincu), ni sur les secrètes/tutoriel.
   let campPortal = null
-  if (!map.isSecret && !map.isSecretRoom && mapId !== TUTORIAL_MAP_ID) {
+  if (mapId === MAP_ORDER[0] && !map.isSecret && !map.isSecretRoom && mapId !== TUTORIAL_MAP_ID) {
     const campCell = takeCellFromPool(pool, blocked, start, 2)
     if (campCell) {
       blocked.add(toKey(campCell.x, campCell.y))
@@ -876,6 +879,8 @@ export function createRun({ name, classId, difficulty }) {
       passiveResetsUsed: 0,
       quests: { active: [], completed: [], killCounts: {} },
       discoveredSecretRooms: [],
+      shrineBlessing: {},
+      lunarBlessingReceived: false,
     },
     world: {
       currentMapId: firstMapId,
@@ -947,6 +952,8 @@ function ensurePlayerState(run) {
   run.player.quests.completed ??= []
   run.player.quests.killCounts ??= {}
   run.player.discoveredSecretRooms ??= []
+  run.player.shrineBlessing ??= {}
+  run.player.lunarBlessingReceived ??= false
 }
 
 function ensureShopStockState(run) {
@@ -1086,6 +1093,7 @@ export function derivedStats(run) {
   addBonuses(allBonuses, passives)
   addBonuses(allBonuses, innate)
   addBonuses(allBonuses, gearBonuses)
+  addBonuses(allBonuses, run.player.shrineBlessing ?? {})
 
   const equipmentAttack = gear.reduce((sum, item) => sum + (item.attack ?? 0), 0)
   const equipmentDefense = gear.reduce((sum, item) => sum + (item.defense ?? 0), 0)
@@ -2361,8 +2369,12 @@ function transitionToMap(run, targetMapId) {
   if (nextIsHidden && !leavingIsHidden) {
     run.world.returnMapId = leavingMap.id
   }
-  if (nextIsHidden && !run.player.discoveredSecretRooms.includes(nextMap.id)) {
-    run.player.discoveredSecretRooms.push(nextMap.id)
+  if (nextIsHidden) {
+    for (const discoveredId of [nextMap.id, nextMap.originTemplateId].filter(Boolean)) {
+      if (!run.player.discoveredSecretRooms.includes(discoveredId)) {
+        run.player.discoveredSecretRooms.push(discoveredId)
+      }
+    }
   }
   if (!nextIsHidden && targetMapId === 'return') {
     run.world.returnMapId = null
@@ -4152,6 +4164,9 @@ function recipeUsesBaseCost(recipe) {
   if (recipe.result?.kind === 'consumable' && (recipe.result?.effect === 'heal_80' || recipe.result?.effect === 'mana_60')) {
     return true
   }
+  if (recipe.id === 'recipe_stability_shard') {
+    return true
+  }
   return false
 }
 
@@ -4857,6 +4872,24 @@ export function identifySpiritStone(run, stoneItemId) {
   stone.identified = true
   appendLog(run, `${stone.name} identifiée contre ${cost} XP.`)
   return { ok: true, stone, cost }
+}
+
+const LUNAR_SHRINE_BLESSING = {
+  maxHpFlat: 45,
+  attackFlat: 6,
+  defenseFlat: 6,
+  critChanceFlat: 0.02,
+}
+
+export function activateLunarShrine(run) {
+  if (run.player.lunarBlessingReceived) {
+    return { ok: false, reason: 'L\'autel est apaisé. Sa lumière ne répondra plus.' }
+  }
+  run.player.shrineBlessing ??= {}
+  addBonuses(run.player.shrineBlessing, LUNAR_SHRINE_BLESSING)
+  run.player.lunarBlessingReceived = true
+  appendLog(run, 'L\'autel lunaire répond à votre présence : une bénédiction permanente vous imprègne.')
+  return { ok: true, blessing: LUNAR_SHRINE_BLESSING }
 }
 
 function socketSuccessRateFor(run, stoneRarity) {

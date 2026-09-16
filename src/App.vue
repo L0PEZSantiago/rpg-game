@@ -63,6 +63,7 @@ import {
   removeSpiritStone,
   addSocketToItem,
   identifySpiritStone,
+  activateLunarShrine,
   identifyXpCostForStone,
   startNextLevel,
   stepWanderingNpcs,
@@ -161,6 +162,7 @@ const portalConfirmModal = ref(null)
 const tutorialIntroModal = ref(false)
 const tutorialEndModal = ref(false)
 const tutorialWarnModal = ref(false)
+const newGameWarnModal = ref(false)
 const locationToast = ref('')
 let locationToastTimer = null
 const inventoryTab = ref('weapon')
@@ -2702,7 +2704,7 @@ function animateEnemyMove(enemy, nx, ny) {
 }
 
 function tickEnemyRandomMove() {
-  if (!run.value || run.value.combat || run.value.gameOver) {
+  if (!run.value || run.value.combat || run.value.gameOver || run.value.phase === 'hub') {
     return
   }
   const state = activeMapState.value
@@ -3018,6 +3020,9 @@ function rarityColor(rarity) {
 }
 
 function itemAffixes(item) {
+  if (item?.kind === 'spirit_stone' && !item.identified) {
+    return []
+  }
   const affixes = [...(item?.affixes ?? [])]
   const sockets = item?.sockets ?? []
   if (sockets.length > 0) {
@@ -3318,6 +3323,14 @@ function showLocationToast(mapName) {
   if (locationToastTimer) clearTimeout(locationToastTimer)
   locationToast.value = mapName
   locationToastTimer = setTimeout(() => { locationToast.value = '' }, 3500)
+}
+
+function handleStartNewGameClick() {
+  if (hasSave.value) {
+    newGameWarnModal.value = true
+  } else {
+    startNewGame()
+  }
 }
 
 function startNewGame() {
@@ -4247,6 +4260,25 @@ function npcAction(action, payload = null) {
     }
   }
 
+  if (action === 'shrine') {
+    const result = activateLunarShrine(run.value)
+    const shrineDialogue = result.ok
+      ? 'Une lumière argentée vous traverse. Vous sentez une force nouvelle, permanente.'
+      : result.reason
+    if (npcDialogueSceneEnabled.value) {
+      startNpcDialogueAnimation(shrineDialogue)
+    } else {
+      stopNpcDialogueAnimation()
+      npcDialogueText.value = shrineDialogue
+    }
+    if (!result.ok) {
+      setInfo(result.reason)
+    } else {
+      setInfo('Bénédiction de l\'autel lunaire reçue !')
+      playUiSound(UI_SOUND_BANK.levelUp, 0.28)
+    }
+  }
+
   if (action === 'respec') {
     const result = resetPassiveTree(run.value)
     if (!result.ok) {
@@ -4949,7 +4981,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <button class="primary" @click="startNewGame">Lancer la campagne</button>
+          <button class="primary" @click="handleStartNewGameClick">Lancer la campagne</button>
           <button class="secondary" :disabled="!hasSave" @click="continueSavedGame">Continuer sauvegarde</button>
           <button class="danger" :disabled="!hasSave" @click="abandonAndDeleteSave">Effacer sauvegarde</button>
           <button class="tutorial-btn" @click="tutorialWarnModal = true">Jouer le tutoriel</button>
@@ -4963,6 +4995,17 @@ onBeforeUnmount(() => {
             <div class="tutorial-warn-actions">
               <button class="secondary" @click="tutorialWarnModal = false">Annuler</button>
               <button class="danger" @click="tutorialWarnModal = false; startTutorial()">Lancer le tutoriel</button>
+            </div>
+          </article>
+        </div>
+
+        <div v-if="newGameWarnModal" class="overlay-meta" @click="newGameWarnModal = false">
+          <article class="meta-modal tutorial-warn-modal" @click.stop>
+            <h3>⚠ Attention</h3>
+            <p>Lancer une nouvelle campagne <strong>effacera ta sauvegarde en cours</strong>. Cette action est irréversible.</p>
+            <div class="tutorial-warn-actions">
+              <button class="secondary" @click="newGameWarnModal = false">Annuler</button>
+              <button class="danger" @click="newGameWarnModal = false; startNewGame()">Lancer la campagne</button>
             </div>
           </article>
         </div>
@@ -6528,7 +6571,8 @@ onBeforeUnmount(() => {
               @click="claimChallengeRewardAction">
               Récupérer la récompense (+{{ challengeModal.result.gold }} or, +{{ challengeModal.result.xp }} XP)
             </button>
-            <button class="secondary" @click="closeChallengeModal">Fermer</button>
+            <button v-if="!(challengeModal.result.won && !challengeModal.result.claimed)" class="secondary"
+              @click="closeChallengeModal">Fermer</button>
           </div>
         </article>
       </div>
@@ -6820,6 +6864,10 @@ onBeforeUnmount(() => {
               <span class="no-wrap-line">
                 Soin complet 55 <img src="/assets/Icons/gold_coin.png" alt="" class="gold-btn-icon" />
               </span>
+            </button>
+            <button v-if="currentNpc.role === 'shrine'" :disabled="run.player.lunarBlessingReceived"
+              @click="npcAction('shrine')">
+              {{ run.player.lunarBlessingReceived ? 'Autel apaisé' : 'Se recueillir devant l\'autel' }}
             </button>
             <template v-if="currentNpc.role === 'merchant'">
               <button v-for="shop in merchantShopEntries" :key="shop.id" :disabled="shopItemDisabled(shop)"
