@@ -58,12 +58,14 @@ export const ARMOR_PERFECT_ATTACK_BONUS = {
 
 // Bijoux : même plage appliquée indépendamment à l'attaque et à la défense.
 export const TRINKET_STAT_RANGES = {
-  common: { poor: [2, 4], good: [5, 6], perfect: [7, 8] },
-  uncommon: { poor: [8, 9], good: [10, 11], perfect: [12, 13] },
-  rare: { poor: [13, 14], good: [15, 16], perfect: [16, 17] },
-  epic: { poor: [17, 18], good: [19, 20], perfect: [21, 22] },
-  legendary: { poor: [22, 23], good: [24, 25], perfect: [26, 27] },
-  mythic: { poor: [27, 28], good: [29, 30], perfect: [31, 32] },
+  // Même échelle/progression que les autres emplacements, mais toutes les valeurs
+  // divisées par 2 : les bijoux donnaient trop de stats brutes par rapport aux autres.
+  common: { poor: [1, 2], good: [3, 3], perfect: [4, 4] },
+  uncommon: { poor: [4, 5], good: [5, 6], perfect: [6, 7] },
+  rare: { poor: [7, 7], good: [8, 8], perfect: [8, 9] },
+  epic: { poor: [9, 9], good: [10, 10], perfect: [11, 11] },
+  legendary: { poor: [11, 12], good: [12, 13], perfect: [13, 14] },
+  mythic: { poor: [14, 14], good: [15, 15], perfect: [16, 16] },
 }
 
 // Distribution de rareté du loot d'équipement (somme = 100).
