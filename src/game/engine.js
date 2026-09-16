@@ -35,6 +35,7 @@ import {
   ARMOR_PERFECT_ATTACK_BONUS,
   TRINKET_STAT_RANGES,
   EQUIPMENT_RARITY_DROP_WEIGHTS,
+  TRAP_TYPES,
 } from './data'
 import { chance, clamp, deepClone, randomChoice, randomInt, toKey, uid, weightedChoice } from './utils'
 
@@ -59,6 +60,7 @@ const SECRET_ROOM_IDS = ['secret_room_vault', 'secret_room_hollow', 'secret_room
 const SECRET_DUNGEON_IDS = ['library_underweb', 'ember_cache', 'lunar_shrine', 'forgotten_foundry', 'echoing_vault']
 const CHALLENGER_NPC_SPAWN_CHANCE = 0.42
 const WANDERING_MERCHANT_SPAWN_CHANCE = 0.15
+const RANDOM_TRAP_SPAWN_CHANCE = 0.4
 const CHALLENGER_NAMES = ['Mercenaire Borgne', 'Duelliste des Ombres', 'Champion Errant', 'Vétéran des Ruines', 'Gladiateur Exilé']
 const WANDERING_MERCHANT_NAMES = ['Caravane Spectrale', 'Marchand Sans Visage', 'Trafiquant des Ombres', 'Colporteur Maudit']
 const SPIRIT_SOCKETER_NAMES = ['Sertisseur Errant', 'Artisan des Châsses', 'Ancienne des Pierres']
@@ -532,6 +534,88 @@ function placeRandomizedEntities(map, tiles, entities, pool, blockedSet, startCe
   })
 }
 
+const TRAP_CLUSTER_DIRECTIONS = [
+  { dx: 1, dy: 0 },
+  { dx: -1, dy: 0 },
+  { dx: 0, dy: 1 },
+  { dx: 0, dy: -1 },
+]
+
+function shuffled(list) {
+  const copy = [...list]
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = randomInt(0, i)
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy
+}
+
+// Place une grappe de pièges sur 2-3 cases voisines alignées, en vérifiant à chaque
+// étape que la case est bien du sol franc (jamais un mur ni une case déjà occupée) —
+// avec repli sur une grappe plus courte, voire une case unique, si l'espace manque.
+function placeTrapCluster(map, tiles, trapDef, pool, blockedSet, startCell) {
+  const isFreeFloor = (x, y) => mapIsWalkable(map, x, y, tiles) && !blockedSet.has(toKey(x, y))
+
+  // Note : takeCellFromPool réserve déjà la case dans blockedSet en la retournant —
+  // ne pas la re-vérifier avec isFreeFloor (qui échouerait systématiquement).
+  let origin = null
+  if (trapDef.fixed && trapDef.x != null && trapDef.y != null && isFreeFloor(trapDef.x, trapDef.y)) {
+    origin = { x: trapDef.x, y: trapDef.y }
+  } else {
+    origin = takeCellFromPool(pool, blockedSet, startCell, 2)
+  }
+  if (!origin) {
+    return []
+  }
+
+  const desiredCount = Math.max(1, trapDef.count ?? randomInt(2, 3))
+  const directions =
+    trapDef.direction === 'horizontal'
+      ? [{ dx: 1, dy: 0 }, { dx: -1, dy: 0 }]
+      : trapDef.direction === 'vertical'
+        ? [{ dx: 0, dy: 1 }, { dx: 0, dy: -1 }]
+        : shuffled(TRAP_CLUSTER_DIRECTIONS)
+
+  for (let size = desiredCount; size >= 1; size -= 1) {
+    for (const dir of directions) {
+      const cells = [origin]
+      let ok = true
+      for (let i = 1; i < size; i += 1) {
+        const nx = origin.x + dir.dx * i
+        const ny = origin.y + dir.dy * i
+        if (!isFreeFloor(nx, ny)) {
+          ok = false
+          break
+        }
+        cells.push({ x: nx, y: ny })
+      }
+      if (ok) {
+        for (const cell of cells) {
+          blockedSet.add(toKey(cell.x, cell.y))
+        }
+        return cells.map((cell, idx) => ({
+          id: `${trapDef.id}_${idx}`,
+          type: trapDef.type,
+          x: cell.x,
+          y: cell.y,
+          triggered: false,
+        }))
+      }
+    }
+  }
+
+  blockedSet.add(toKey(origin.x, origin.y))
+  return [{ id: `${trapDef.id}_0`, type: trapDef.type, x: origin.x, y: origin.y, triggered: false }]
+}
+
+function placeTrapGroups(map, tiles, trapDefs, pool, blockedSet, startCell) {
+  const traps = []
+  for (const trapDef of trapDefs) {
+    traps.push(...placeTrapCluster(map, tiles, trapDef, pool, blockedSet, startCell))
+  }
+  return traps
+}
+
 function defaultBackPortalForMap(mapId, map) {
   const index = MAP_ORDER.indexOf(mapId)
   if (index <= 0 || !map || mapId === TUTORIAL_MAP_ID) {
@@ -718,6 +802,17 @@ function createMapState(mapId, spawnCounters = { sinceSocketer: 0, sinceIdentifi
     icon: CHEST_ICON,
   }))
 
+  // Pièges de terrain : visibles sur la carte (contrairement aux coffres piégés),
+  // à usage unique — désamorcés après un premier passage. Placés par grappes de 2-3
+  // cases voisines en ligne droite, jamais dans un mur. En plus des pièges authorés à
+  // la main (ex: tutoriel), une map régulière a une chance d'en générer une grappe
+  // aléatoire — pas systématique, pour que ça reste une surprise ponctuelle.
+  const effectiveTrapDefs = [...(map.traps ?? [])]
+  if (!map.isSecret && !map.isSecretRoom && mapId !== TUTORIAL_MAP_ID && chance(RANDOM_TRAP_SPAWN_CHANCE)) {
+    effectiveTrapDefs.push({ id: uid('trap_spike'), type: 'spike', fixed: false })
+  }
+  const traps = placeTrapGroups(map, tiles, effectiveTrapDefs, pool, blocked, start)
+
   const enemySpawns = [
     ...(map.enemies ?? []),
     ...proceduralSpiderSpawnsForMap(mapId, map),
@@ -795,6 +890,7 @@ function createMapState(mapId, spawnCounters = { sinceSocketer: 0, sinceIdentifi
     enemies,
     resources,
     chests,
+    traps,
     solvedRiddles: [],
     failedRiddles: [],
     selectedRiddles: {},
@@ -1048,6 +1144,7 @@ export function hydrateRun(rawSnapshot) {
     state.secretPortal ??= map.secretPortal ? { ...map.secretPortal } : null
     state.backPortal ??= defaultBackPortalForMap(mapId, map) ? { ...defaultBackPortalForMap(mapId, map) } : null
     state.campPortal ??= null
+    state.traps ??= []
     if (state.exit && map.exit) {
       state.exit.targetMapId = map.exit.targetMapId
     }
@@ -1488,6 +1585,23 @@ export function moveEnemyTo(run, enemy, nx, ny) {
 
 function chestAtPosition(run, x, y, mapId = run.world.currentMapId) {
   return ensureMapState(run, mapId).chests.find((chest) => !chest.opened && chest.x === x && chest.y === y) ?? null
+}
+
+function trapAtPosition(run, x, y, mapId = run.world.currentMapId) {
+  return ensureMapState(run, mapId).traps?.find((trap) => !trap.triggered && trap.x === x && trap.y === y) ?? null
+}
+
+function triggerTrap(run, trap) {
+  trap.triggered = true
+  const def = TRAP_TYPES[trap.type] ?? TRAP_TYPES.spike
+  const stats = derivedStats(run)
+  const hpLost = Math.max(1, Math.floor(stats.maxHp * def.damagePercent))
+  run.player.hp = Math.max(1, run.player.hp - hpLost)
+  appendLog(run, `${def.label} ! ${def.triggerText} (−${hpLost} PV)`)
+  if (def.debuff) {
+    pushPreparedBuff(run, { type: 'debuff', stat: def.debuff.stat, value: def.debuff.value, turns: def.debuff.turns })
+  }
+  return { type: trap.type, label: def.label, icon: def.icon, hpLost }
 }
 
 export function nearbyNpc(run) {
@@ -2528,15 +2642,18 @@ export function attemptMove(run, dx, dy, options = {}) {
     run.player.visionBoostSteps = visionBoost - 1
   }
 
+  const trap = trapAtPosition(run, nx, ny, map.id)
+  const trapEvent = trap ? triggerTrap(run, trap) : null
+
   const enemy = enemyAtPosition(run, nx, ny)
   if (enemy) {
     startCombat(run, enemy)
-    return { ok: true, combat: true }
+    return { ok: true, combat: true, trapEvent }
   }
   const adjacentEnemy = enemyAdjacentToPosition(run, nx, ny, map.id)
   if (adjacentEnemy) {
     startCombat(run, adjacentEnemy)
-    return { ok: true, combat: true }
+    return { ok: true, combat: true, trapEvent }
   }
 
   const deferPortalTransition = options.deferPortalTransition ?? false
@@ -2544,12 +2661,12 @@ export function attemptMove(run, dx, dy, options = {}) {
   if (portal) {
     if (portal.type === 'exit' && !mapState.bossDefeated) {
       appendLog(run, 'Sortie verrouillee: le boss de la zone est encore vivant.')
-      return { ok: true, blockedExit: true }
+      return { ok: true, blockedExit: true, trapEvent }
     }
     if (deferPortalTransition) {
-      return { ok: true, portalPrompt: portal }
+      return { ok: true, portalPrompt: portal, trapEvent }
     }
-    return resolvePortal(run, portal, mapState)
+    return { ...resolvePortal(run, portal, mapState), trapEvent }
   }
 
   const chest = chestAtPosition(run, nx, ny)
@@ -2557,7 +2674,7 @@ export function attemptMove(run, dx, dy, options = {}) {
     appendLog(run, 'Un coffre ancien est à proximité. Ouvre-le pour récupèrer son contenu.')
   }
 
-  return { ok: true }
+  return { ok: true, trapEvent }
 }
 
 function consumeCooldowns(cooldowns) {
@@ -4987,7 +5104,7 @@ export function insertSpiritStone(run, itemId, socketIndex, stoneItemId) {
     return { ok: false, reason: 'Emplacement invalide.' }
   }
   if (sockets[socketIndex]) {
-    return { ok: false, reason: 'Emplacement déjà occupé — retire la pierre en place avant.' }
+    return { ok: false, reason: 'Emplacement déjà occupé, retire la pierre en place avant.' }
   }
   const stoneIndex = run.player.inventory.findIndex((i) => i.id === stoneItemId && i.kind === 'spirit_stone')
   if (stoneIndex < 0) {

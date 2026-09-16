@@ -2589,6 +2589,9 @@ export const MAPS = {
     chests: [
       { id: 'chest_tuto_1', fixed: true, x: 9, y: 6, rarityBias: 'common' },
     ],
+    traps: [
+      { id: 'trap_tuto_spikes', type: 'spike', fixed: true, x: 9, y: 4, count: 3, direction: 'horizontal' },
+    ],
     enemies: [
       { id: 'e_tuto_1', templateId: 'tutorial_dummy', fixed: true, x: 2, y: 5 },
     ],

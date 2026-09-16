@@ -264,7 +264,7 @@ const RAW_CLASS_DEFINITIONS = [
       defense: 8,
       speed: 14,
       critChance: 0.2,
-      ap: 7,
+      ap: 6,
       mp: 4,
     },
     skills: [

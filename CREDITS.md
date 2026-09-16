@@ -16,3 +16,4 @@ libre, attribution requise). Elles ont été recolorées pour ce projet.
 | `assets/Icons/quality_poor.svg` | Cracked Shield | Lorc |
 | `assets/Icons/quality_good.svg` | Gear Hammer | Lorc |
 | `assets/Icons/quality_perfect.svg` | Laurel Crown | Lorc |
+| `assets/Icons/trap_spike.svg` | Caltrops | Delapouite |

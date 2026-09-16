@@ -14,7 +14,7 @@ import {
   RECIPES,
   RESOURCE_TABLE,
 } from './game/data'
-import { TUTORIAL_MAP_ID, EQUIPMENT_QUALITY } from './game/data'
+import { TUTORIAL_MAP_ID, EQUIPMENT_QUALITY, TRAP_TYPES } from './game/data'
 import {
   PASSIVE_RESET_RULES,
   acceptQuest,
@@ -127,6 +127,18 @@ const questPanelToggleStyle = computed(() => ({
 let suppressQuestPanelClick = false
 const craftFilter = ref('all')
 const infoMessage = ref('')
+const damageFlashActive = ref(false)
+let damageFlashTimer = null
+function triggerDamageFlash() {
+  damageFlashActive.value = false
+  requestAnimationFrame(() => {
+    damageFlashActive.value = true
+    clearTimeout(damageFlashTimer)
+    damageFlashTimer = setTimeout(() => {
+      damageFlashActive.value = false
+    }, 400)
+  })
+}
 const exportMessage = ref('')
 const enemyTimer = ref(null)
 const infoTimer = ref(null)
@@ -1149,6 +1161,7 @@ const UI_SOUND_BANK = {
   forgeFail: ['/assets/sounds/forge_upgrade_fail.wav'],
   drinkPotion: ['/assets/sounds/drink_potion.wav'],
   passiveGet: ['/assets/sounds/passive_get.mp3'],
+  hurt: ['/assets/sounds/hurt_sound.mp3'],
 }
 
 const MAP_PLAYER_SPRITES = {
@@ -2828,6 +2841,14 @@ function buildMapCellSprite(cell) {
       className: 'entity-resource',
     }
   }
+  if (cell.trap) {
+    return {
+      src: TRAP_TYPES[cell.trap.type]?.icon ?? TRAP_TYPES.spike.icon,
+      frames: 1,
+      staticFit: true,
+      className: `entity-trap trap-${cell.trap.type}`,
+    }
+  }
   if (cell.chestFxFrame != null) {
     return {
       src: MAP_CHEST_SPRITE,
@@ -2897,6 +2918,7 @@ const mapCells = computed(() => {
         ? mapState.resources.find((entry) => entry.charges > 0 && entry.x === x && entry.y === y)
         : null
       const chest = discovered ? mapState.chests.find((entry) => !entry.opened && entry.x === x && entry.y === y) : null
+      const trap = discovered ? mapState.traps?.find((entry) => !entry.triggered && entry.x === x && entry.y === y) : null
       const isExit = discovered && mapState.exit?.x === x && mapState.exit?.y === y
       const hasPortal =
         discovered &&
@@ -2942,6 +2964,7 @@ const mapCells = computed(() => {
         npc,
         resource,
         chest,
+        trap,
         isExit,
         hasPortal,
         hasBackPortal,
@@ -3052,6 +3075,9 @@ function cellLabel(cell) {
   if (cell.chest) {
     return 'C'
   }
+  if (cell.trap) {
+    return '!'
+  }
   if (cell.resource) {
     return 'R'
   }
@@ -3112,6 +3138,7 @@ function cellClass(cell) {
     npc: Boolean(cell.npc),
     resource: Boolean(cell.resource),
     chest: Boolean(cell.chest || cell.chestFxFrame != null),
+    trap: Boolean(cell.trap),
     exit: cell.isExit,
     secret: cell.hasPortal,
     back: cell.hasBackPortal,
@@ -3364,6 +3391,7 @@ const TUTORIAL_WELCOME_PAGES = [
   'Bienvenue, aventurier ! Je suis le Guide Mystique, gardien de cette chambre d\'initiation.',
   'Explore les environs : des ressources à récolter, des coffres à ouvrir, et des ennemis qui patrouillent. Approche-toi des objets ou appuie sur E pour interagir.',
   'Les ennemis apparaissent en rouge sur la carte et ont une portée d\'agro — approche-toi trop près et le combat s\'enclenche ! En combat, dépense tes PA (Points d\'Action) pour agir à chaque tour.',
+  'Attention aux pièges ! Des chausse-trapes se cachent parfois au sol, à peine visibles, souvent groupées sur plusieurs cases — inflige-toi des dégâts en marchant dessus par mégarde.',
   'Le portail de sortie est verrouillé tant que le boss vit. Vaincs le Gardien du sceau pour l\'activer. Bonne chance !',
 ]
 
@@ -3871,6 +3899,11 @@ function handleMove(dx, dy) {
     }
     if (result.blockedExit) {
       setInfo('Sortie verrouillee: boss encore vivant.')
+    }
+    if (result.trapEvent) {
+      setInfo(`${result.trapEvent.label} ! −${result.trapEvent.hpLost} PV`)
+      playUiSound(UI_SOUND_BANK.hurt, 0.35)
+      triggerDamageFlash()
     }
     if (!run.value.combat && !movedToAnotherMap && !result.portalPrompt) {
       const px = run.value.world.playerPosition.x
@@ -4936,6 +4969,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="layout">
+    <div class="damage-flash" :class="{ active: damageFlashActive }"></div>
     <section v-if="loading" class="loading-screen">
       <h1>Chargement du moteur RPG...</h1>
     </section>
@@ -7871,6 +7905,29 @@ button.danger {
 
 .tile-sprite.entity-chest.opening {
   filter: brightness(1.12);
+}
+
+.tile-sprite.entity-trap {
+  opacity: 0.4;
+  filter: grayscale(0.25) drop-shadow(0 0 2px rgba(0, 0, 0, 0.5));
+}
+
+.damage-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  pointer-events: none;
+  background: rgba(200, 20, 20, 0.32);
+  opacity: 0;
+}
+
+.damage-flash.active {
+  animation: damage-flash-pulse 0.4s ease-out;
+}
+
+@keyframes damage-flash-pulse {
+  0% { opacity: 0.75; }
+  100% { opacity: 0; }
 }
 
 .map-enemy-token {

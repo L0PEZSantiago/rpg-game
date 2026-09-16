@@ -6,4 +6,5 @@ export * from './economy'
 export * from './quests'
 export * from './spiritStones'
 export * from './equipmentQuality'
+export * from './traps'
 
