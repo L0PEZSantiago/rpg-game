@@ -14,7 +14,7 @@ import {
   RECIPES,
   RESOURCE_TABLE,
 } from './game/data'
-import { TUTORIAL_MAP_ID } from './game/data'
+import { TUTORIAL_MAP_ID, EQUIPMENT_QUALITY } from './game/data'
 import {
   PASSIVE_RESET_RULES,
   acceptQuest,
@@ -737,6 +737,11 @@ function consumableDescription(effect, item = null) {
     return 'Retire les debuffs et donne un bouclier.'
   }
   return 'Objet utilitaire.'
+}
+
+function itemQuality(item) {
+  if (item?.kind !== 'equipment' || !item.quality) return null
+  return EQUIPMENT_QUALITY[item.quality] ?? null
 }
 
 function itemDescription(item) {
@@ -6355,6 +6360,10 @@ onBeforeUnmount(() => {
                       <span v-if="itemIsNew(item.id)" class="new-badge">Nouveau</span>
                     </div>
                     <p :class="item.rarity">{{ rarityLabel(item.rarity) }}</p>
+                    <p v-if="itemQuality(item)" class="item-quality-row">
+                      <img :src="itemQuality(item).icon" alt="" class="item-quality-icon" />
+                      {{ itemQuality(item).label }}
+                    </p>
 
                     <p class="inventory-type">{{ inventoryTypeLabel(item) }}</p>
                     <p v-if="item.kind === 'consumable'" class="inventory-qty">Quantite: {{ item.quantity ?? 0 }}</p>
@@ -6471,6 +6480,10 @@ onBeforeUnmount(() => {
                   <strong :style="{ color: rarityColor(item.rarity) }">{{ itemDisplayName(item) }}</strong>
                   <p class="loot-item-rarity" :style="{ color: rarityColor(item.rarity) }">{{ rarityLabel(item.rarity)
                   }}</p>
+                  <p v-if="itemQuality(item)" class="item-quality-row">
+                    <img :src="itemQuality(item).icon" alt="" class="item-quality-icon" />
+                    {{ itemQuality(item).label }}
+                  </p>
                   <p>{{ inventoryTypeLabel(item) }}</p>
                   <p v-if="itemDescription(item)">{{ itemDescription(item) }}</p>
                   <p v-for="bonus in itemAffixes(item)" :key="bonus" class="item-affix">{{ bonus }}</p>
@@ -8657,6 +8670,20 @@ button.danger {
 .item-affix {
   font-size: 0.76rem;
   color: #bde7ff;
+}
+
+.item-quality-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: #d8cdb8;
+}
+
+.item-quality-icon {
+  width: 13px;
+  height: 13px;
+  object-fit: contain;
 }
 
 .row-actions {

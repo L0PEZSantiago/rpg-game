@@ -13,3 +13,6 @@ libre, attribution requise). Elles ont été recolorées pour ce projet.
 | `assets/Icons/spirit_chisel.svg` | Chisel | Delapouite |
 | `assets/Icons/revive_charm.svg` | Totem Mask | Lorc |
 | `assets/Icons/lunar_altar.svg` | Moon | Lorc |
+| `assets/Icons/quality_poor.svg` | Cracked Shield | Lorc |
+| `assets/Icons/quality_good.svg` | Gear Hammer | Lorc |
+| `assets/Icons/quality_perfect.svg` | Laurel Crown | Lorc |

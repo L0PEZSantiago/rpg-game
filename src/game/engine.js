@@ -28,6 +28,13 @@ import {
   SPIRIT_STONE_SOCKET_SUCCESS_RATE,
   SPIRIT_STONE_ICON,
   IDENTIFY_XP_COST_BY_RARITY,
+  EQUIPMENT_QUALITY,
+  EQUIPMENT_QUALITY_ORDER,
+  WEAPON_ATTACK_RANGES,
+  ARMOR_DEFENSE_RANGES,
+  ARMOR_PERFECT_ATTACK_BONUS,
+  TRINKET_STAT_RANGES,
+  EQUIPMENT_RARITY_DROP_WEIGHTS,
 } from './data'
 import { chance, clamp, deepClone, randomChoice, randomInt, toKey, uid, weightedChoice } from './utils'
 
@@ -825,6 +832,7 @@ function createStarterInventory(selectedClass, difficulty) {
       slot: 'weapon',
       name: starter.name,
       rarity: 'common',
+      quality: 'good',
       attack: starter.attack,
       defense: starter.defense,
       value: 45,
@@ -954,6 +962,16 @@ function ensurePlayerState(run) {
   run.player.discoveredSecretRooms ??= []
   run.player.shrineBlessing ??= {}
   run.player.lunarBlessingReceived ??= false
+  // Migration : les objets créés avant l'introduction du système de qualité n'ont pas
+  // de champ `quality` — on leur attribue "bonne facture" par défaut (ni le pire, ni
+  // le meilleur), sans retoucher leurs stats déjà attribuées.
+  const allEquipment = [
+    ...run.player.inventory.filter((i) => i.kind === 'equipment'),
+    ...Object.values(run.player.equipment).filter(Boolean),
+  ]
+  for (const item of allEquipment) {
+    item.quality ??= 'good'
+  }
 }
 
 function ensureShopStockState(run) {
@@ -1827,14 +1845,7 @@ function rarityWeights(isBoss) {
       { value: 'mythic', weight: BOSS_MYTHIC_WEIGHT },
     ]
   }
-  return [
-    { value: 'common', weight: 68 },
-    { value: 'uncommon', weight: 20 },
-    { value: 'rare', weight: 8 },
-    { value: 'epic', weight: 3 },
-    { value: 'legendary', weight: 1 },
-    { value: 'mythic', weight: 0 },
-  ]
+  return RARITY_ORDER.map((value) => ({ value, weight: EQUIPMENT_RARITY_DROP_WEIGHTS[value] ?? 0 }))
 }
 
 function rarityRoll({ isBoss, bias }) {
@@ -1850,11 +1861,38 @@ function rarityRoll({ isBoss, bias }) {
       }
     })
   }
-  const rolled = weightedChoice(base)
-  if (!isBoss && rolled === 'mythic') {
-    return 'legendary'
+  return weightedChoice(base) ?? 'common'
+}
+
+// Qualité d'un objet, indépendante de sa rareté : détermine où, dans la plage fixe de
+// la rareté, tombent ses stats principales. `forcedWeights` permet au craft d'exclure
+// la piètre qualité pour rester strictement meilleur que le loot aléatoire.
+function rollEquipmentQuality(forcedWeights = null) {
+  const weights = forcedWeights ?? EQUIPMENT_QUALITY_ORDER.map((id) => ({
+    value: id,
+    weight: EQUIPMENT_QUALITY[id].dropWeight,
+  }))
+  return weightedChoice(weights) ?? 'poor'
+}
+
+function rollInRange(range) {
+  if (!range) return 0
+  const [min, max] = range
+  return randomInt(min, max)
+}
+
+function rollEquipmentPrimaryStats(slot, rarity, quality) {
+  if (slot === 'weapon') {
+    const range = WEAPON_ATTACK_RANGES[rarity]?.[quality] ?? WEAPON_ATTACK_RANGES.common.poor
+    return { attack: rollInRange(range), defense: 0 }
   }
-  return rolled ?? 'common'
+  if (slot === 'armor') {
+    const range = ARMOR_DEFENSE_RANGES[rarity]?.[quality] ?? ARMOR_DEFENSE_RANGES.common.poor
+    const attackBonus = quality === 'perfect' ? (ARMOR_PERFECT_ATTACK_BONUS[rarity] ?? 0) : 0
+    return { attack: attackBonus, defense: rollInRange(range) }
+  }
+  const range = TRINKET_STAT_RANGES[rarity]?.[quality] ?? TRINKET_STAT_RANGES.common.poor
+  return { attack: rollInRange(range), defense: rollInRange(range) }
 }
 
 function enemyMaterialDrops(enemy) {
@@ -2002,7 +2040,8 @@ function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null,
   const difficulty = difficultyFor(run)
   const rarityData = RARITIES[rarity]
   const scale = 1 + run.player.level * 0.045
-  const multiplier = rarityData.powerMultiplier * scale * difficulty.lootMultiplier
+  const quality = rollEquipmentQuality()
+  const primaryStats = rollEquipmentPrimaryStats(slot, rarity, quality)
 
   const item = {
     id: uid('loot'),
@@ -2010,9 +2049,10 @@ function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null,
     slot,
     name: base.name,
     rarity,
-    attack: Math.max(0, Math.floor(base.attack * multiplier)),
-    defense: Math.max(0, Math.floor(base.defense * multiplier)),
-    value: Math.max(1, Math.floor(base.value * rarityData.valueMultiplier * scale)),
+    quality,
+    attack: primaryStats.attack,
+    defense: primaryStats.defense,
+    value: Math.max(1, Math.floor(base.value * rarityData.valueMultiplier * scale * difficulty.lootMultiplier)),
     icon: base.icon ?? SLOT_DEFAULT_ICON[slot],
   }
 
@@ -2022,8 +2062,6 @@ function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null,
 
   if (isBoss && rarity === 'mythic') {
     item.name = `Relique mythique: ${sourceName}`
-    item.attack += 5
-    item.defense += 5
     item.value += 420
   }
 
@@ -2091,7 +2129,7 @@ export function openNearbyChest(run) {
       appendLog(run, `Coffre piégé ! Un vortex dévore ${drained} XP.`)
       chestEvent = { type: 'trap', title: 'Drain d\'expérience !', desc: `Un vortex dévore votre expérience. −${drained} XP.` }
     } else {
-      const matKeys = Object.keys(run.player.materials ?? {}).filter((k) => (run.player.materials[k] ?? 0) > 0)
+      const matKeys = Object.keys(run.player.materials ?? {}).filter((k) => k !== 'misty_heart' && (run.player.materials[k] ?? 0) > 0)
       if (matKeys.length > 0) {
         const lostMat = randomChoice(matKeys)
         const lostQty = Math.min(run.player.materials[lostMat], 2)
@@ -2242,7 +2280,7 @@ function grantXp(run, xp) {
 // supplémentaire sur HP/attaque des ennemis de haut niveau pour compenser,
 // sans toucher au début de partie.
 function endgameEnemyScale(level) {
-  return 1 + Math.max(0, level - 15) * 0.025
+  return 1 + Math.max(0, level - 15) * 0.02
 }
 
 function applyDifficultyToEnemy(template, difficulty, extraScale = 1) {
@@ -4232,15 +4270,22 @@ export function craftItem(run, recipeId) {
     })
   } else {
     const rarityData = RARITIES[recipe.result.rarity]
-    const scale = rarityData.powerMultiplier * (1 + run.player.level * 0.03)
+    // Le craft est délibéré : il exclut la "piètre qualité" pour rester strictement
+    // meilleur qu'un objet trouvé au hasard, à rareté égale.
+    const quality = rollEquipmentQuality([
+      { value: 'good', weight: 70 },
+      { value: 'perfect', weight: 30 },
+    ])
+    const primaryStats = rollEquipmentPrimaryStats(recipe.result.slot, recipe.result.rarity, quality)
     const item = {
       id: uid('equipment'),
       kind: 'equipment',
       slot: recipe.result.slot,
       name: recipe.result.baseName,
       rarity: recipe.result.rarity,
-      attack: Math.floor(recipe.result.attack * scale),
-      defense: Math.floor(recipe.result.defense * scale),
+      quality,
+      attack: primaryStats.attack,
+      defense: primaryStats.defense,
       value: Math.floor(recipe.result.value * rarityData.valueMultiplier),
       icon: recipe.result.icon ?? SLOT_DEFAULT_ICON[recipe.result.slot],
     }
@@ -4756,10 +4801,10 @@ export function upgradeItemRarity(run, itemId) {
 
   const oldRarity = RARITIES[item.rarity]
   const newRarity = RARITIES[newRarityId]
-  const ratio = newRarity.powerMultiplier / oldRarity.powerMultiplier
   item.rarity = newRarityId
-  item.baseAttack = Math.round(item.attack * ratio)
-  item.baseDefense = Math.round(item.defense * ratio)
+  const rerolled = rollEquipmentPrimaryStats(item.slot, newRarityId, item.quality ?? 'good')
+  item.baseAttack = rerolled.attack
+  item.baseDefense = rerolled.defense
   item.enhancementLevel = 0
   applyEnhancementStats(item)
   item.bonusStats = null
