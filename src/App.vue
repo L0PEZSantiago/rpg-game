@@ -5374,7 +5374,7 @@ onBeforeUnmount(() => {
           <div class="hub-equip-row">
             <div v-for="slot in ['weapon','armor','trinket']" :key="slot"
               class="hub-equip-card card"
-              :class="{ 'hub-equip-selected': run.player.equipment[slot]?.id === forgeSelectedItemId }"
+              :class="{ 'hub-equip-selected': run.player.equipment[slot]?.id === forgeSelectedItemId, 'item-perfect': run.player.equipment[slot]?.quality === 'perfect' }"
               @click="openItemDetail(run.player.equipment[slot])">
               <img v-if="run.player.equipment[slot]" :src="itemIcon(run.player.equipment[slot])"
                 class="hub-equip-icon" alt="" />
@@ -5449,7 +5449,7 @@ onBeforeUnmount(() => {
           <p v-if="hubInventoryEquipment.length === 0" class="hub-empty">Aucun équipement dans l'inventaire.</p>
           <div class="hub-inv-grid">
             <div v-for="item in hubInventoryEquipment" :key="item.id"
-              class="hub-inv-card card hub-card-clickable" :class="{ 'hub-inv-selected': item.id === forgeSelectedItemId }"
+              class="hub-inv-card card hub-card-clickable" :class="{ 'hub-inv-selected': item.id === forgeSelectedItemId, 'item-perfect': item.quality === 'perfect' }"
               @click="openItemDetail(item)">
               <img :src="itemIcon(item)" :data-rarity="item?.rarity" class="hub-inv-icon" :class="{ 'icon-wide': itemIcon(item).includes('anneau.png') }" alt="" />
               <div class="hub-inv-info">
@@ -6007,7 +6007,7 @@ onBeforeUnmount(() => {
             <div class="equipment-grid">
               <div class="equip-slot">
                 <h3>Arme</h3>
-                <div v-if="run.player.equipment.weapon" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.weapon)">
+                <div v-if="run.player.equipment.weapon" class="equip-item equip-item-clickable" :class="{ 'item-perfect': run.player.equipment.weapon.quality === 'perfect' }" @click="openItemDetail(run.player.equipment.weapon)">
                   <img :src="itemIcon(run.player.equipment.weapon)" :data-rarity="run.player.equipment.weapon?.rarity" alt="arme" />
                   <div>
                     <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">
@@ -6027,7 +6027,7 @@ onBeforeUnmount(() => {
 
               <div class="equip-slot">
                 <h3>Armure</h3>
-                <div v-if="run.player.equipment.armor" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.armor)">
+                <div v-if="run.player.equipment.armor" class="equip-item equip-item-clickable" :class="{ 'item-perfect': run.player.equipment.armor.quality === 'perfect' }" @click="openItemDetail(run.player.equipment.armor)">
                   <img :src="itemIcon(run.player.equipment.armor)" :data-rarity="run.player.equipment.armor?.rarity" alt="armure" />
                   <div>
                     <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">
@@ -6047,7 +6047,7 @@ onBeforeUnmount(() => {
 
               <div class="equip-slot">
                 <h3>Anneau</h3>
-                <div v-if="run.player.equipment.trinket" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.trinket)">
+                <div v-if="run.player.equipment.trinket" class="equip-item equip-item-clickable" :class="{ 'item-perfect': run.player.equipment.trinket.quality === 'perfect' }" @click="openItemDetail(run.player.equipment.trinket)">
                   <img :src="itemIcon(run.player.equipment.trinket)" :data-rarity="run.player.equipment.trinket?.rarity" alt="trinket" />
                   <div>
                     <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">
@@ -6240,7 +6240,7 @@ onBeforeUnmount(() => {
           <div class="equipment-grid">
             <div class="equip-slot">
               <h3>Arme</h3>
-              <div v-if="run.player.equipment.weapon" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.weapon)">
+              <div v-if="run.player.equipment.weapon" class="equip-item equip-item-clickable" :class="{ 'item-perfect': run.player.equipment.weapon.quality === 'perfect' }" @click="openItemDetail(run.player.equipment.weapon)">
                 <img :src="itemIcon(run.player.equipment.weapon)" :data-rarity="run.player.equipment.weapon?.rarity" alt="arme" />
                 <div>
                   <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">{{
@@ -6257,7 +6257,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="equip-slot">
               <h3>Armure</h3>
-              <div v-if="run.player.equipment.armor" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.armor)">
+              <div v-if="run.player.equipment.armor" class="equip-item equip-item-clickable" :class="{ 'item-perfect': run.player.equipment.armor.quality === 'perfect' }" @click="openItemDetail(run.player.equipment.armor)">
                 <img :src="itemIcon(run.player.equipment.armor)" :data-rarity="run.player.equipment.armor?.rarity" alt="armure" />
                 <div>
                   <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">{{
@@ -6274,7 +6274,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="equip-slot">
               <h3>Bibelot</h3>
-              <div v-if="run.player.equipment.trinket" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.trinket)">
+              <div v-if="run.player.equipment.trinket" class="equip-item equip-item-clickable" :class="{ 'item-perfect': run.player.equipment.trinket.quality === 'perfect' }" @click="openItemDetail(run.player.equipment.trinket)">
                 <img :src="itemIcon(run.player.equipment.trinket)" :data-rarity="run.player.equipment.trinket?.rarity" alt="trinket" />
                 <div>
                   <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">{{
@@ -6640,6 +6640,7 @@ onBeforeUnmount(() => {
               </div>
               <ul>
                 <li v-for="item in inventoryActiveGroup.items" :key="`modal-${inventoryActiveGroup.id}-${item.id}`"
+                :class="{ 'item-perfect': item.quality === 'perfect' }"
                   @mouseenter="showInventoryItemTooltip(item, $event)" @mousemove="moveInventoryItemTooltip($event)"
                   @focusin="showInventoryItemTooltip(item, $event)" @mouseleave="hideInventoryItemTooltip"
                   @focusout="hideInventoryItemTooltip"
@@ -6763,6 +6764,7 @@ onBeforeUnmount(() => {
             <h3 class="loot-section-title">Objets</h3>
             <ul class="loot-items">
               <li v-for="item in lootModal.items" :key="`loot-item-${item.id}`"
+                :class="{ 'item-perfect': item.quality === 'perfect' }"
                 @mouseenter="showInventoryItemTooltip(item, $event)" @mouseleave="hideInventoryItemTooltip()"
                 @mousemove="moveInventoryItemTooltip($event)"
                 @touchstart="handleInventoryItemTouch(item, $event)">
@@ -9188,6 +9190,8 @@ img[data-rarity="mythic"] {
   flex-direction: column;
   gap: 14px;
 }
+.item-perfect { position: relative; overflow: hidden; }
+.item-perfect::after { content: ''; position: absolute; top: -20%; bottom: -20%; left: 0; width: 40%; pointer-events: none; background: linear-gradient(105deg, transparent 0%, rgba(255, 236, 190, 0) 30%, rgba(255, 236, 190, 0.22) 50%, rgba(255, 236, 190, 0) 70%, transparent 100%); transform: translateX(-130%) skewX(-18deg); animation: idm-shine-sweep 3.6s ease-in-out infinite; z-index: 3; }
 .idm-shine { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; z-index: 0; }
 .idm-shine::before { content: ''; position: absolute; top: -20%; bottom: -20%; left: 0; width: 45%; background: linear-gradient(105deg, transparent 0%, rgba(255, 236, 190, 0) 30%, rgba(255, 236, 190, 0.28) 50%, rgba(255, 236, 190, 0) 70%, transparent 100%); transform: translateX(-130%) skewX(-18deg); animation: idm-shine-sweep 3.6s ease-in-out infinite; }
 @keyframes idm-shine-sweep { 0% { transform: translateX(-130%) skewX(-18deg); } 55%, 100% { transform: translateX(330%) skewX(-18deg); } }
