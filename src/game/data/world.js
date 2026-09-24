@@ -2579,7 +2579,7 @@ export const MAPS = {
         x: 6,
         y: 7,
         portrait: WIZZARD_ASSET,
-        dialogue: 'Bonne exploration ! Souviens-toi : les PNJ comme moi sont repérables en jaune sur la carte. Appuie sur E pour nous parler. Certains proposent des soins, du commerce ou des énigmes.',
+        dialogue: 'Bonne exploration ! Rappelle-toi : les PNJ comme moi sont en jaune sur la carte. Approche-toi et appuie sur E pour nous parler — certains soignent, vendent des objets ou posent des énigmes.',
         riddlePool: [],
       },
     ],

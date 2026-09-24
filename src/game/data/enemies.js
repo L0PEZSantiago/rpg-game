@@ -1,3 +1,4 @@
+import { BOSS_PATTERNS } from './bossPatterns'
 import {
   ORC_ASSET,
   ORC_ROGUE_ASSET,
@@ -1730,10 +1731,13 @@ export const ENEMY_TEMPLATES = Object.fromEntries(
       {
         ...template,
         ...combatDefaults,
-        skills: (template.skills ?? []).map((skill) => ({
+        skills: [...(template.skills ?? []), ...(BOSS_PATTERNS[templateId]?.extraSkills ?? [])].map((skill) => ({
           ...skill,
           ...ENEMY_SKILL_STATUS_AUGMENTS[skill.id],
         })),
+        pattern: BOSS_PATTERNS[templateId]
+          ? { phases: BOSS_PATTERNS[templateId].phases, enrage: BOSS_PATTERNS[templateId].enrage ?? null }
+          : null,
       },
     ]
   }),

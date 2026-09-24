@@ -1980,7 +1980,42 @@ function rarityWeights(isBoss) {
   return RARITY_ORDER.map((value) => ({ value, weight: EQUIPMENT_RARITY_DROP_WEIGHTS[value] ?? 0 }))
 }
 
-function rarityRoll({ isBoss, bias }) {
+// Barrières de rareté maximale selon la progression : les 2 premières maps du
+// parcours ne lâchent que du rare au plus, les 2 suivantes de l'épique, les 3
+// suivantes du légendaire, puis tout (mythique inclus). Les taux relatifs ne
+// changent pas : les raretés au-dessus de la barrière sont simplement exclues.
+const RARITY_CAP_BY_MAP_INDEX = [
+  { fromIndex: 0, cap: 'rare' },
+  { fromIndex: 2, cap: 'epic' },
+  { fromIndex: 4, cap: 'legendary' },
+  { fromIndex: 7, cap: 'mythic' },
+]
+
+function progressionMapIndex(run) {
+  const world = run?.world
+  if (!world) return -1
+  let index = MAP_ORDER.indexOf(world.currentMapId)
+  if (index < 0 && world.returnMapId) {
+    index = MAP_ORDER.indexOf(world.returnMapId)
+  }
+  return index
+}
+
+export function maxRarityForRun(run) {
+  const index = progressionMapIndex(run)
+  if (index < 0) return 'mythic'
+  let cap = 'rare'
+  for (const step of RARITY_CAP_BY_MAP_INDEX) {
+    if (index >= step.fromIndex) cap = step.cap
+  }
+  return cap
+}
+
+function rarityAllowedForRun(run, rarity) {
+  return RARITY_ORDER.indexOf(rarity) <= RARITY_ORDER.indexOf(maxRarityForRun(run))
+}
+
+function rarityRoll({ run = null, isBoss, bias }) {
   const base = rarityWeights(isBoss).map((entry) => ({ ...entry }))
   if (bias && RARITY_ORDER.includes(bias)) {
     const index = RARITY_ORDER.indexOf(bias)
@@ -1992,6 +2027,11 @@ function rarityRoll({ isBoss, bias }) {
         entry.weight = Math.max(0, entry.weight - 2)
       }
     })
+  }
+  if (run) {
+    for (const entry of base) {
+      if (!rarityAllowedForRun(run, entry.value)) entry.weight = 0
+    }
   }
   return weightedChoice(base) ?? 'common'
 }
@@ -2167,7 +2207,7 @@ function buildLootItem({ run, isBoss, sourceName = 'Relique', rarityBias = null,
     { value: 'trinket', weight: 23 },
   ])
 
-  const rarity = forcedRarity ?? rarityRoll({ isBoss, bias: rarityBias })
+  const rarity = forcedRarity ?? rarityRoll({ run, isBoss, bias: rarityBias })
   const base = pickLootBase(slot, rarity) ?? randomChoice(LOOT_BASES[slot])
   const difficulty = difficultyFor(run)
   const rarityData = RARITIES[rarity]
@@ -2344,7 +2384,7 @@ export function openNearbyChest(run) {
   }
 
   const lootCount = (map?.isSecret || map?.isSecretRoom) ? 2 : 1
-  const chestHasMythic = chance(CHEST_MYTHIC_CHANCE)
+  const chestHasMythic = chance(CHEST_MYTHIC_CHANCE) && rarityAllowedForRun(run, 'mythic')
   const mythicIndex = chestHasMythic ? randomInt(0, lootCount - 1) : -1
   const loots = Array.from({ length: lootCount }, (_, index) =>
     buildLootItem({
@@ -2375,7 +2415,7 @@ export function openNearbyChest(run) {
   }
   const isBonusLootMap = Boolean(map?.isSecret || map?.isSecretRoom)
   if (chance(isBonusLootMap ? 0.18 : 0.07)) {
-    const stone = buildSpiritStone(run, rarityRoll({ isBoss: false, bias: isBonusLootMap ? 'rare' : null }))
+    const stone = buildSpiritStone(run, rarityRoll({ run, isBoss: false, bias: isBonusLootMap ? 'rare' : null }))
     addInventoryItem(run, stone)
     loots.push(stone)
   }
@@ -2487,7 +2527,7 @@ function resolveEnemyDeath(run, enemyRef) {
     const map = currentMap(run)
     const isBonusLootMap = Boolean(map?.isSecret || map?.isSecretRoom)
     if (chance(isBonusLootMap ? 0.28 : 0.15)) {
-      loots.push(buildSpiritStone(run, rarityRoll({ isBoss: true, bias: isBonusLootMap ? 'epic' : null })))
+      loots.push(buildSpiritStone(run, rarityRoll({ run, isBoss: true, bias: isBonusLootMap ? 'epic' : null })))
     }
   }
   loots.forEach((item) => addInventoryItem(run, item))
@@ -3969,16 +4009,97 @@ function enemyMove(run) {
   return false
 }
 
+// ── Patterns de boss (voir data/bossPatterns.js) ───────────────────────────
+function enterBossPhase(run, phase) {
+  const battle = run.combat
+  const maxHp = battle.enemyStats.maxHp
+  const enter = phase.onEnter ?? {}
+  if (enter.text) {
+    appendLog(run, `${battle.enemyName} : ${enter.text}`)
+  }
+  if (enter.cleanse) {
+    battle.enemyEffects = battle.enemyEffects.filter((e) => e.type !== 'debuff' && e.type !== 'dot')
+  }
+  if (enter.heal) {
+    battle.enemyHp = clamp(battle.enemyHp + Math.floor(maxHp * enter.heal), 0, maxHp)
+  }
+  if (enter.shield) {
+    battle.enemyEffects.push({ id: uid('shield'), type: 'shield', value: Math.floor(maxHp * enter.shield), turns: 4 })
+  }
+  if (enter.buff) {
+    battle.enemyEffects.push({ id: uid('buff'), type: 'buff', stat: enter.buff.stat, value: enter.buff.value, turns: enter.buff.turns ?? 99 })
+  }
+}
+
+function updateBossPattern(run, pattern) {
+  const battle = run.combat
+  const ratio = battle.enemyHp / Math.max(1, battle.enemyStats.maxHp)
+  let target = 0
+  pattern.phases.forEach((phase, index) => {
+    if (ratio <= phase.hpBelow) target = index
+  })
+  battle.patternPhase ??= 0
+  while (battle.patternPhase < target) {
+    battle.patternPhase += 1
+    battle.patternStep = 0
+    enterBossPhase(run, pattern.phases[battle.patternPhase])
+  }
+  if (pattern.enrage && !battle.enraged && (battle.turn ?? 1) >= pattern.enrage.turn) {
+    battle.enraged = true
+    appendLog(run, `${battle.enemyName} : ${pattern.enrage.text}`)
+    battle.enemyEffects.push({ id: uid('buff'), type: 'buff', stat: pattern.enrage.buff.stat, value: pattern.enrage.buff.value, turns: 99 })
+  }
+}
+
+function patternEnemyAction(run, template) {
+  const battle = run.combat
+  const pattern = template.pattern
+  updateBossPattern(run, pattern)
+
+  if (battle.enemyCharge) {
+    const charge = battle.enemyCharge
+    battle.enemyCharge = null
+    const skill = template.skills.find((entry) => entry.id === charge.skillId)
+    if (skill) {
+      return { skill: { ...skill, power: (skill.power ?? 1) * charge.mult }, charged: true }
+    }
+  }
+
+  const rotation = pattern.phases[battle.patternPhase ?? 0].rotation
+  const start = battle.patternStep ?? 0
+  for (let n = 0; n < rotation.length; n += 1) {
+    const skill = template.skills.find((entry) => entry.id === rotation[(start + n) % rotation.length])
+    if (skill && skillCanBeUsed('enemy', skill, battle.enemyAp, battle.enemyMana, battle.enemyCooldowns)) {
+      battle.patternStep = (start + n + 1) % rotation.length
+      return { skill }
+    }
+  }
+  return { skill: null }
+}
+
 export function runEnemyTurn(run) {
   const battle = run.combat
   if (!battle || battle.actor !== 'enemy') {
     return
   }
 
+  const bossTemplate = currentEnemyTemplate(run)
+  if (battle.enemyCharge && battle.enemyAp <= 0) {
+    battle.enemyCharge = null
+    appendLog(run, `${battle.enemyName} est interrompu : sa attaque chargée échoue !`)
+  }
+
   let safety = 10
   while (run.combat?.actor === 'enemy' && safety > 0) {
     safety -= 1
-    const skill = bestEnemySkill(run)
+    const action = bossTemplate?.pattern ? patternEnemyAction(run, bossTemplate) : { skill: bestEnemySkill(run) }
+    const skill = action.skill
+    if (skill?.telegraph && !action.charged) {
+      battle.enemyCharge = { skillId: skill.id, mult: skill.telegraph.chargeMult ?? 1.5, text: skill.telegraph.text }
+      appendLog(run, `${battle.enemyName} : ${skill.telegraph.text} (attaque puissante au prochain tour — étourdissez-le ou tenez-vous prêt !)`)
+      battle.enemyAp = 0
+      break
+    }
     if (skill) {
       applySkill(run, 'enemy', skill)
       if (!run.combat || run.combat.actor !== 'enemy') {
@@ -5071,7 +5192,16 @@ export function activateLunarShrine(run) {
   addBonuses(run.player.shrineBlessing, LUNAR_SHRINE_BLESSING)
   run.player.lunarBlessingReceived = true
   appendLog(run, 'L\'autel lunaire répond à votre présence : une bénédiction permanente vous imprègne.')
-  return { ok: true, blessing: LUNAR_SHRINE_BLESSING }
+  return {
+    ok: true,
+    blessing: LUNAR_SHRINE_BLESSING,
+    lines: [
+      `+${LUNAR_SHRINE_BLESSING.maxHpFlat} PV max`,
+      `+${LUNAR_SHRINE_BLESSING.attackFlat} Attaque`,
+      `+${LUNAR_SHRINE_BLESSING.defenseFlat} Défense`,
+      `+${Math.round(LUNAR_SHRINE_BLESSING.critChanceFlat * 100)}% Chance de critique`,
+    ],
+  }
 }
 
 function socketSuccessRateFor(run, stoneRarity) {
@@ -5111,6 +5241,9 @@ export function insertSpiritStone(run, itemId, socketIndex, stoneItemId) {
     return { ok: false, reason: 'Pierre introuvable.' }
   }
   const stone = run.player.inventory[stoneIndex]
+  if (!stone.identified) {
+    return { ok: false, reason: 'Cette pierre doit d\'abord être identifiée pour être sertie.' }
+  }
   const successRate = socketSuccessRateFor(run, stone.rarity)
   run.player.inventory.splice(stoneIndex, 1)
 

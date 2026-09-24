@@ -21,12 +21,12 @@ export const SPIRIT_STONE_BONUS_COUNT_BY_RARITY = {
 // par rareté de la pierre et par mode de difficulté. Les échelons intermédiaires
 // (mode "hard") sont interpolés entre normal et hardcore.
 export const SPIRIT_STONE_SOCKET_SUCCESS_RATE = {
-  common: { normal: 0.98, hard: 0.94, hardcore: 0.9 },
-  uncommon: { normal: 0.94, hard: 0.88, hardcore: 0.8 },
-  rare: { normal: 0.88, hard: 0.78, hardcore: 0.66 },
-  epic: { normal: 0.78, hard: 0.64, hardcore: 0.5 },
-  legendary: { normal: 0.62, hard: 0.48, hardcore: 0.34 },
-  mythic: { normal: 0.45, hard: 0.32, hardcore: 0.2 },
+  common: { normal: 1, hard: 1, hardcore: 1 },
+  uncommon: { normal: 0.85, hard: 0.8, hardcore: 0.7 },
+  rare: { normal: 0.7, hard: 0.62, hardcore: 0.52 },
+  epic: { normal: 0.6, hard: 0.52, hardcore: 0.42 },
+  legendary: { normal: 0.55, hard: 0.46, hardcore: 0.36 },
+  mythic: { normal: 0.5, hard: 0.4, hardcore: 0.3 },
 }
 
 // Nombre d'emplacements générés à la création d'un équipement (loot). Pas

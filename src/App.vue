@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   CLASS_DEFINITIONS,
   CONSUMABLES_SHOP,
@@ -14,7 +14,8 @@ import {
   RECIPES,
   RESOURCE_TABLE,
 } from './game/data'
-import { TUTORIAL_MAP_ID, EQUIPMENT_QUALITY, TRAP_TYPES } from './game/data'
+import { TUTORIAL_MAP_ID, EQUIPMENT_QUALITY, TRAP_TYPES, EQUIPMENT_BONUS_POOL, WEAPON_ATTACK_RANGES } from './game/data'
+import ItemMeta from './components/ItemMeta.vue'
 import {
   PASSIVE_RESET_RULES,
   acceptQuest,
@@ -175,6 +176,8 @@ const tutorialIntroModal = ref(false)
 const tutorialEndModal = ref(false)
 const tutorialWarnModal = ref(false)
 const newGameWarnModal = ref(false)
+const shrineBlessingModal = ref(null)
+const itemDetailModal = ref(null)
 const locationToast = ref('')
 let locationToastTimer = null
 const inventoryTab = ref('weapon')
@@ -649,6 +652,25 @@ const hoveredInventoryItem = computed(() => {
   }
   return run.value.player.inventory.find((item) => item.id === hoveredInventoryItemId.value) ?? null
 })
+const itemDetailItem = computed(() => {
+  if (!run.value || !itemDetailModal.value) return null
+  const id = itemDetailModal.value
+  return (
+    run.value.player.inventory.find((entry) => entry.id === id) ??
+    Object.values(run.value.player.equipment).find((entry) => entry?.id === id) ??
+    null
+  )
+})
+const itemDetailIsEquipped = computed(() => {
+  const item = itemDetailItem.value
+  return Boolean(item && run.value?.player.equipment?.[item.slot]?.id === item.id)
+})
+
+function openItemDetail(item) {
+  if (item?.kind !== 'equipment') return
+  hideInventoryItemTooltip()
+  itemDetailModal.value = item.id
+}
 const inventoryTooltipStyle = computed(() => ({
   left: `${inventoryTooltip.x}px`,
   top: `${inventoryTooltip.y}px`,
@@ -779,7 +801,7 @@ function itemDescription(item) {
   }
   if (item.kind === 'spirit_stone') {
     if (!item.identified) {
-      return 'Non identifiée — sertissez-la (risque de casse) ou faites-la identifier par un PNJ pour révéler ses effets.'
+      return 'Non identifiée — faites-la identifier par un PNJ avant de pouvoir la sertir.'
     }
     return (item.affixes ?? []).join(', ') || 'À sertir dans un emplacement d\'équipement.'
   }
@@ -1082,6 +1104,51 @@ function equipmentCompareRows(item) {
   ]
 }
 
+
+const BONUS_DEFS = Object.fromEntries(EQUIPMENT_BONUS_POOL.map((entry) => [entry.key, entry]))
+
+function itemBonusTotals(item) {
+  const totals = {}
+  const add = (source) => {
+    for (const [key, value] of Object.entries(source ?? {})) {
+      totals[key] = (totals[key] ?? 0) + value
+    }
+  }
+  add(item?.bonusStats)
+  for (const socket of item?.sockets ?? []) {
+    if (socket) add(socket.bonusStats)
+  }
+  return totals
+}
+
+function formatBonusValue(key, value) {
+  return BONUS_DEFS[key]?.percent ? `${Math.round(value * 100)}%` : `${Math.round(value)}`
+}
+
+function bonusCompareRows(item) {
+  if (item?.kind !== 'equipment') {
+    return []
+  }
+  const candidate = itemBonusTotals(item)
+  const equipped = itemBonusTotals(equippedItemForComparison(item))
+  const keys = [...new Set([...Object.keys(candidate), ...Object.keys(equipped)])]
+  return keys.map((key) => {
+    const c = candidate[key] ?? 0
+    const e = equipped[key] ?? 0
+    const delta = c - e
+    const percent = BONUS_DEFS[key]?.percent
+    const deltaText = delta === 0 ? '0' : `${delta > 0 ? '+' : '−'}${percent ? `${Math.round(Math.abs(delta) * 100)}%` : Math.round(Math.abs(delta))}`
+    return {
+      id: key,
+      label: BONUS_DEFS[key]?.label ?? key,
+      candidate: formatBonusValue(key, c),
+      equipped: formatBonusValue(key, e),
+      delta: Math.round(delta * 1000),
+      deltaText,
+    }
+  })
+}
+
 function statDeltaLabel(delta) {
   if (delta > 0) {
     return `+${delta}`
@@ -1237,6 +1304,7 @@ const combatSpriteMeta = reactive({
     frameHeight: 1,
     occupiedWidth: 1,
     occupiedHeight: 1,
+    bottomGapRatio: 0,
   },
   enemy: {
     src: '',
@@ -1245,6 +1313,7 @@ const combatSpriteMeta = reactive({
     frameHeight: 1,
     occupiedWidth: 1,
     occupiedHeight: 1,
+    bottomGapRatio: 0,
   },
 })
 const combatSpriteSet = reactive({
@@ -1528,6 +1597,7 @@ function loadSpriteMeta(source) {
 
       let maxOccupiedWidth = 1
       let maxOccupiedHeight = 1
+      let lowestOccupiedRow = 0
       for (let frameIndex = 0; frameIndex < base.frames; frameIndex += 1) {
         const frameStartX = frameIndex * base.frameWidth
         let minX = base.frameWidth
@@ -1563,6 +1633,7 @@ function loadSpriteMeta(source) {
           const occupiedHeight = maxY - minY + 1
           maxOccupiedWidth = Math.max(maxOccupiedWidth, occupiedWidth)
           maxOccupiedHeight = Math.max(maxOccupiedHeight, occupiedHeight)
+          lowestOccupiedRow = Math.max(lowestOccupiedRow, maxY + 1)
         }
       }
 
@@ -1570,6 +1641,7 @@ function loadSpriteMeta(source) {
         ...base,
         occupiedWidth: maxOccupiedWidth,
         occupiedHeight: maxOccupiedHeight,
+        bottomGapRatio: lowestOccupiedRow > 0 ? (base.frameHeight - lowestOccupiedRow) / base.frameHeight : 0,
       }
       spriteMetaCache.set(source, meta)
       resolve(meta)
@@ -1718,6 +1790,7 @@ function setCombatSpriteSource(side, source) {
     combatSpriteMeta[side].frameHeight = 1
     combatSpriteMeta[side].occupiedWidth = 1
     combatSpriteMeta[side].occupiedHeight = 1
+    combatSpriteMeta[side].bottomGapRatio = 0
     restartSpriteTicker(side)
     return
   }
@@ -1731,6 +1804,7 @@ function setCombatSpriteSource(side, source) {
     combatSpriteMeta[side].frameHeight = meta.frameHeight
     combatSpriteMeta[side].occupiedWidth = meta.occupiedWidth
     combatSpriteMeta[side].occupiedHeight = meta.occupiedHeight
+    combatSpriteMeta[side].bottomGapRatio = meta.bottomGapRatio ?? 0
     restartSpriteTicker(side)
   })
 }
@@ -1745,8 +1819,9 @@ function battleSpriteViewportStyle(side) {
 function battleSpriteTransformStyle(side) {
   const scale = combatSpriteScale.value[side] ?? 1
   const xScale = side === 'enemy' ? -scale : scale
+  const feetShift = (combatSpriteMeta[side].bottomGapRatio ?? 0) * scale * 100
   return {
-    transform: `scale(${xScale}, ${scale})`,
+    transform: `translateY(${feetShift}%) scale(${xScale}, ${scale})`,
   }
 }
 
@@ -2775,6 +2850,9 @@ function uiSpriteFrameCount(source, fallbackFrames = 4) {
 }
 
 function animatedSpriteStripStyle(source, fallbackFrames = 4, pace = 1) {
+  if (typeof source === 'string' && source.endsWith('.svg')) {
+    return { width: '100%' }
+  }
   const frames = Math.max(1, uiSpriteFrameCount(source, fallbackFrames))
   const frame = Math.floor(mapAnimTick.value / Math.max(1, pace)) % frames
   return {
@@ -2800,10 +2878,12 @@ function buildMapCellSprite(cell) {
     return null
   }
   if (cell.npc) {
+    const isStaticPortrait = (cell.npc.portrait ?? '').endsWith('.svg')
     return {
       src: cell.npc.portrait ?? '',
-      frames: 4,
-      className: 'entity-npc',
+      frames: isStaticPortrait ? 1 : 4,
+      staticFit: isStaticPortrait,
+      className: isStaticPortrait ? 'entity-npc entity-shrine' : 'entity-npc',
     }
   }
   if (cell.lever) {
@@ -3388,11 +3468,14 @@ function startNewGame() {
 const TUTO_GUIDE_SPRITE = "/assets/Entities/Npc's/Wizzard/Idle/Idle-Sheet.png"
 
 const TUTORIAL_WELCOME_PAGES = [
-  'Bienvenue, aventurier ! Je suis le Guide Mystique, gardien de cette chambre d\'initiation.',
-  'Explore les environs : des ressources à récolter, des coffres à ouvrir, et des ennemis qui patrouillent. Approche-toi des objets ou appuie sur E pour interagir.',
-  'Les ennemis apparaissent en rouge sur la carte et ont une portée d\'agro — approche-toi trop près et le combat s\'enclenche ! En combat, dépense tes PA (Points d\'Action) pour agir à chaque tour.',
-  'Attention aux pièges ! Des chausse-trapes se cachent parfois au sol, à peine visibles, souvent groupées sur plusieurs cases — inflige-toi des dégâts en marchant dessus par mégarde.',
-  'Le portail de sortie est verrouillé tant que le boss vit. Vaincs le Gardien du sceau pour l\'activer. Bonne chance !',
+  "Bienvenue, aventurier ! Je suis le Guide Mystique. Cette chambre d'initiation va t'apprendre les bases du jeu, étape par étape.",
+  "Pour te déplacer, utilise les touches Z Q S D (ou les flèches du clavier). Sur mobile, utilise les boutons fléchés à l'écran. Tu peux aussi cliquer sur une case voisine.",
+  "Approche-toi d'une ressource ou d'un coffre pour interagir : F récolte une ressource, C ouvre un coffre. Sur mobile, le bouton E fait tout cela.",
+  "Les PNJ (personnages non joueurs) apparaissent en jaune sur la carte. Approche-toi d'eux et appuie sur E pour leur parler : ils peuvent te soigner, te vendre des objets, te poser des énigmes ou te confier des quêtes.",
+  "Les monstres apparaissent en rouge sur la carte. Chacun a une zone de détection : les cases juste autour de lui. Dès que tu entres dedans, le combat s'enclenche automatiquement — prépare-toi avant de t'approcher !",
+  "Le combat se joue au tour par tour. À chaque tour, tu disposes de PA (Points d'Action) : chaque attaque ou compétence en consomme. Je t'expliquerai où les voir dès ton premier combat.",
+  "Méfie-toi des pièges : des chausse-trapes à peine visibles se cachent au sol, souvent sur 2 ou 3 cases d'affilée. Marcher dessus te fait perdre des PV.",
+  "Enfin, le portail de sortie reste verrouillé tant que le boss de la zone est vivant. Vaincs le Gardien du sceau pour l'ouvrir. Bonne chance !",
 ]
 
 const tutorialWelcomeText = ref('')
@@ -3401,7 +3484,134 @@ const tutorialTyping = ref(false)
 let tutorialWelcomeTimer = null
 
 const tutorialTip = ref(null)
-const tutorialShownTips = reactive({ chest: false, resource: false, npc: false, portal: false })
+const tutorialShownTips = reactive({ chest: false, resource: false, npc: false, portal: false, combatAp: false })
+
+const TUTORIAL_AP_STEPS = [
+  {
+    key: 'player-ap',
+    title: "Tes PA (Points d'Action)",
+    text: "Ces bulles bleues sont tes PA. Chaque bulle allumée est un PA disponible : tu en récupères le maximum à chaque début de tour.",
+  },
+  {
+    key: 'actions',
+    title: 'Dépenser tes PA',
+    text: "Chaque action coûte des PA. L'attaque normale en coûte 2, et chaque compétence affiche son coût (« PA 3 ») sur son bouton. Tu peux enchaîner plusieurs actions tant qu'il te reste des PA.",
+  },
+  {
+    key: 'endturn',
+    title: 'Terminer ton tour',
+    text: "Quand tu n'as plus de PA — ou plus envie d'agir — clique sur « Fin du tour ». Tes PA sont restaurés au début de ton prochain tour, mais ceux que tu n'as pas utilisés sont perdus.",
+  },
+  {
+    key: 'enemy-ap',
+    title: "Les PA de l'ennemi",
+    text: "Le monstre a aussi ses PA (bulles orange). Ses gros coups en coûtent beaucoup, donc il agit moins souvent avec des attaques puissantes. Fuir coûte aussi 2 PA.",
+  },
+]
+const tutorialCombatStep = ref(null)
+const tutoCoachRef = ref(null)
+const tutoCoachPos = reactive({ left: 8, top: 8, arrowX: 30, placement: 'none' })
+let tutoCoachTimer = null
+const tutorialHighlight = computed(() =>
+  tutorialCombatStep.value == null ? null : TUTORIAL_AP_STEPS[tutorialCombatStep.value]?.key ?? null,
+)
+
+function nextTutorialCombatStep() {
+  if (tutorialCombatStep.value == null) return
+  tutorialCombatStep.value += 1
+  if (tutorialCombatStep.value >= TUTORIAL_AP_STEPS.length) {
+    tutorialCombatStep.value = null
+  }
+}
+
+function skipTutorialCombatSteps() {
+  tutorialCombatStep.value = null
+}
+
+function scrollGameToTop() {
+  const reset = () => {
+    window.scrollTo(0, 0)
+    document.documentElement.scrollTop = 0
+    document.body.scrollTop = 0
+    document.querySelector('.layout')?.scrollTo?.(0, 0)
+  }
+  reset()
+  requestAnimationFrame(reset)
+  setTimeout(reset, 250)
+}
+
+watch(
+  () => Boolean(run.value),
+  (hasRun) => {
+    if (hasRun) nextTick(scrollGameToTop)
+  },
+)
+
+function findTutorialTarget(key) {
+  const candidates = [...document.querySelectorAll(`[data-tuto="${key}"]`)]
+  return candidates.find((el) => {
+    const rect = el.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+  }) ?? null
+}
+
+function updateTutorialCoachPosition() {
+  const card = tutoCoachRef.value
+  if (tutorialCombatStep.value == null || !card) return
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const cw = card.offsetWidth
+  const ch = card.offsetHeight
+  const gap = 16
+  const pad = 8
+  const target = findTutorialTarget(tutorialHighlight.value)
+  if (!target) {
+    tutoCoachPos.placement = 'none'
+    tutoCoachPos.left = Math.max(pad, (vw - cw) / 2)
+    tutoCoachPos.top = Math.max(pad, vh - ch - 16)
+    return
+  }
+  const rect = target.getBoundingClientRect()
+  const left = Math.min(Math.max(rect.left + rect.width / 2 - cw / 2, pad), Math.max(pad, vw - cw - pad))
+  let placement = 'below'
+  let top = rect.bottom + gap
+  if (top + ch > vh - pad) {
+    placement = 'above'
+    top = rect.top - ch - gap
+  }
+  if (top < pad) {
+    placement = 'none'
+    top = Math.max(pad, vh - ch - 16)
+  }
+  tutoCoachPos.left = left
+  tutoCoachPos.top = top
+  tutoCoachPos.placement = placement
+  tutoCoachPos.arrowX = Math.min(Math.max(rect.left + rect.width / 2 - left, 20), Math.max(20, cw - 20))
+}
+
+watch(tutorialCombatStep, (step) => {
+  clearInterval(tutoCoachTimer)
+  tutoCoachTimer = null
+  if (step == null) return
+  nextTick(() => {
+    findTutorialTarget(tutorialHighlight.value)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    updateTutorialCoachPosition()
+  })
+  tutoCoachTimer = setInterval(updateTutorialCoachPosition, 250)
+})
+
+watch(
+  () => [Boolean(run.value?.combat), combatIntroActive.value],
+  ([inCombat, intro]) => {
+    if (!inCombat) {
+      tutorialCombatStep.value = null
+      return
+    }
+    if (intro || !run.value?.metadata?.isTutorial || tutorialShownTips.combatAp) return
+    tutorialShownTips.combatAp = true
+    tutorialCombatStep.value = 0
+  },
+)
 
 function startTutorialTypewriter() {
   const page = TUTORIAL_WELCOME_PAGES[tutorialWelcomePage.value]
@@ -3514,6 +3724,11 @@ function startTutorial() {
     run.value.world.currentMapId = TUTORIAL_MAP_ID
     run.value.world.playerPosition = { ...tutMap.start }
     run.value.metadata.isTutorial = true
+    const starterWeapon = run.value.player.equipment.weapon
+    if (starterWeapon) {
+      starterWeapon.quality = 'perfect'
+      starterWeapon.attack = WEAPON_ATTACK_RANGES.common.perfect[0]
+    }
     revealAround(run.value, TUTORIAL_MAP_ID, tutMap.start.x, tutMap.start.y, 3)
   }
   syncMapPlayerToRun()
@@ -3528,6 +3743,7 @@ function startTutorial() {
   tutorialShownTips.resource = false
   tutorialShownTips.npc = false
   tutorialShownTips.portal = false
+  tutorialShownTips.combatAp = false
   tutorialTip.value = null
   tutorialWelcomePage.value = 0
   tutorialIntroModal.value = true
@@ -3662,7 +3878,20 @@ function handleInsertSpiritStone(socketIndex, stoneItemId) {
   persistRun()
 }
 
+function stoneIsSocketable(stoneId) {
+  const stone = run.value?.player.inventory.find((i) => i.id === stoneId)
+  if (stone && !stone.identified) {
+    setInfo("Cette pierre doit d'abord être identifiée (PNJ identificateur) avant d'être sertie.")
+    return false
+  }
+  return true
+}
+
 function handleStoneDragStart(stoneId, event) {
+  if (!stoneIsSocketable(stoneId)) {
+    event.preventDefault()
+    return
+  }
   armedStoneId.value = stoneId
   if (event.dataTransfer) {
     event.dataTransfer.setData('text/plain', stoneId)
@@ -3671,6 +3900,7 @@ function handleStoneDragStart(stoneId, event) {
 }
 
 function handleStoneTap(stoneId) {
+  if (!stoneIsSocketable(stoneId)) return
   armedStoneId.value = armedStoneId.value === stoneId ? null : stoneId
 }
 
@@ -4314,6 +4544,7 @@ function npcAction(action, payload = null) {
     } else {
       setInfo('Bénédiction de l\'autel lunaire reçue !')
       playUiSound(UI_SOUND_BANK.levelUp, 0.28)
+      shrineBlessingModal.value = { lines: result.lines }
     }
   }
 
@@ -4922,6 +5153,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  clearInterval(tutoCoachTimer)
   window.removeEventListener('resize', clampQuestPanelToggleToViewport)
   document.removeEventListener('touchstart', onDocumentTouchStart)
   window.removeEventListener('pointerdown', primeUiSounds)
@@ -4989,14 +5221,17 @@ onBeforeUnmount(() => {
             Nom du hero
             <input v-model="creation.name" type="text" maxlength="24" />
           </label>
-          <label>
-            Classe
-            <select v-model="creation.classId">
-              <option v-for="entry in CLASS_DEFINITIONS" :key="entry.id" :value="entry.id">
-                {{ entry.name }} - {{ entry.fantasy }}
-              </option>
-            </select>
-          </label>
+          <div class="class-picker-field">
+            <span>Classe</span>
+            <div class="class-picker">
+              <button v-for="entry in CLASS_DEFINITIONS" :key="entry.id" type="button" class="class-pick"
+                :class="{ active: creation.classId === entry.id }" @click="creation.classId = entry.id">
+                <img :src="`/assets/Icons/class_${entry.id}.svg`" alt="" class="class-pick-icon" />
+                <span class="class-pick-name">{{ entry.name }}</span>
+              </button>
+            </div>
+            <small class="class-pick-fantasy">{{ selectedClass.fantasy }}</small>
+          </div>
           <label>
             Difficulte
             <select v-model="creation.difficulty">
@@ -5116,21 +5351,21 @@ onBeforeUnmount(() => {
             </div>
             <div class="hub-char-vitals">
               <div class="hub-vital-row">
-                <span class="hub-vital-label">PV</span>
+                <span class="hub-vital-label"><img src="/assets/Icons/heart.png" alt="PV" class="hub-vital-icon" /></span>
                 <div class="hub-vital-bar-wrap"><div class="hub-vital-bar hub-bar-hp"
                   :style="{ width: Math.round(run.player.hp / stats.maxHp * 100) + '%' }"></div></div>
                 <span class="hub-vital-val">{{ run.player.hp }}/{{ stats.maxHp }}</span>
               </div>
               <div class="hub-vital-row">
-                <span class="hub-vital-label">Mana</span>
+                <span class="hub-vital-label"><img src="/assets/Icons/mana_drop.svg" alt="Mana" class="hub-vital-icon" /></span>
                 <div class="hub-vital-bar-wrap"><div class="hub-vital-bar hub-bar-mp"
                   :style="{ width: Math.round(run.player.mana / stats.maxMana * 100) + '%' }"></div></div>
                 <span class="hub-vital-val">{{ run.player.mana }}/{{ stats.maxMana }}</span>
               </div>
               <div class="hub-stat-pills">
-                <span class="hub-pill">⚔️ {{ stats.attack }}</span>
-                <span class="hub-pill">🛡️ {{ stats.defense }}</span>
-                <span class="hub-pill hub-pill-gold">💰 {{ run.player.gold }} or</span>
+                <span class="hub-pill"><img src="/assets/Icons/sword.png" alt="Attaque" class="hub-pill-icon" /> {{ stats.attack }}</span>
+                <span class="hub-pill"><img src="/assets/Icons/armor.png" alt="Défense" class="hub-pill-icon" /> {{ stats.defense }}</span>
+                <span class="hub-pill hub-pill-gold"><img src="/assets/Icons/gold_coin.png" alt="Or" class="hub-pill-icon" /> {{ run.player.gold }} or</span>
               </div>
             </div>
           </div>
@@ -5140,7 +5375,7 @@ onBeforeUnmount(() => {
             <div v-for="slot in ['weapon','armor','trinket']" :key="slot"
               class="hub-equip-card card"
               :class="{ 'hub-equip-selected': run.player.equipment[slot]?.id === forgeSelectedItemId }"
-              @click="if(run.player.equipment[slot]) { forgeSelectedItemId = run.player.equipment[slot].id; hubTab = 'forge' }">
+              @click="openItemDetail(run.player.equipment[slot])">
               <img v-if="run.player.equipment[slot]" :src="itemIcon(run.player.equipment[slot])"
                 class="hub-equip-icon" alt="" />
               <div class="hub-equip-info">
@@ -5153,8 +5388,16 @@ onBeforeUnmount(() => {
                   <template v-if="run.player.equipment[slot].attack > 0">⚔️ {{ run.player.equipment[slot].attack }} </template>
                   <template v-if="run.player.equipment[slot].defense > 0">🛡️ {{ run.player.equipment[slot].defense }}</template>
                 </span>
+                <ItemMeta v-if="run.player.equipment[slot]" :item="run.player.equipment[slot]" compact />
+                <div v-if="run.player.equipment[slot]" class="hub-equip-actions">
+                  <button type="button" class="hub-detail-btn"
+                    @click.stop="openItemDetail(run.player.equipment[slot])">Détails</button>
+                  <button type="button" class="hub-detail-btn hub-unequip-btn"
+                    @click.stop="unequipAction(slot)">Déséquiper</button>
+                </div>
               </div>
-              <span v-if="run.player.equipment[slot]" class="hub-forge-hint">Forger →</span>
+              <span v-if="run.player.equipment[slot]" class="hub-forge-hint"
+                @click.stop="forgeSelectedItemId = run.player.equipment[slot].id; hubTab = 'forge'">Forger →</span>
             </div>
           </div>
 
@@ -5206,8 +5449,9 @@ onBeforeUnmount(() => {
           <p v-if="hubInventoryEquipment.length === 0" class="hub-empty">Aucun équipement dans l'inventaire.</p>
           <div class="hub-inv-grid">
             <div v-for="item in hubInventoryEquipment" :key="item.id"
-              class="hub-inv-card card" :class="{ 'hub-inv-selected': item.id === forgeSelectedItemId }">
-              <img :src="itemIcon(item)" class="hub-inv-icon" :class="{ 'icon-wide': itemIcon(item).includes('anneau.png') }" alt="" />
+              class="hub-inv-card card hub-card-clickable" :class="{ 'hub-inv-selected': item.id === forgeSelectedItemId }"
+              @click="openItemDetail(item)">
+              <img :src="itemIcon(item)" :data-rarity="item?.rarity" class="hub-inv-icon" :class="{ 'icon-wide': itemIcon(item).includes('anneau.png') }" alt="" />
               <div class="hub-inv-info">
                 <span class="hub-inv-name" :style="{ color: RARITIES[item.rarity]?.color }">
                   {{ itemDisplayName(item) }}
@@ -5224,8 +5468,9 @@ onBeforeUnmount(() => {
                 <span class="hub-inv-rarity" :style="{ color: RARITIES[item.rarity]?.color }">
                   {{ RARITIES[item.rarity]?.label }}
                 </span>
+                <ItemMeta :item="item" compact />
               </div>
-              <div class="hub-inv-actions">
+              <div class="hub-inv-actions" @click.stop>
                 <button class="hub-action-btn hub-btn-equip"
                   @click="equipItem(run, item.id); persistRun()">Équiper</button>
                 <button class="hub-action-btn hub-btn-forge"
@@ -5235,7 +5480,7 @@ onBeforeUnmount(() => {
                 </button>
                 <button class="hub-action-btn hub-btn-sell"
                   @click="sellAction(item.id)">
-                  <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
+                  Vendre <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> <strong class="hub-price">{{ sellValueForItem(item) }}</strong>
                 </button>
               </div>
             </div>
@@ -5250,7 +5495,7 @@ onBeforeUnmount(() => {
           <div class="hub-inv-grid">
             <div v-for="item in run.player.inventory.filter(i => i.kind === 'consumable')" :key="item.id"
               class="hub-inv-card card">
-              <img :src="itemIcon(item)" class="hub-inv-icon" :class="{ 'icon-wide': itemIcon(item).includes('anneau.png') }" alt="" />
+              <img :src="itemIcon(item)" :data-rarity="item?.rarity" class="hub-inv-icon" :class="{ 'icon-wide': itemIcon(item).includes('anneau.png') }" alt="" />
               <div class="hub-inv-info">
                 <span class="hub-inv-name">{{ item.name }}</span>
                 <span class="hub-inv-stats">{{ item.description ?? '' }}</span>
@@ -5258,10 +5503,10 @@ onBeforeUnmount(() => {
               </div>
               <div class="hub-inv-actions">
                 <button class="hub-action-btn hub-btn-equip"
-                  @click="handleHubUseConsumable(item.id)">Utiliser</button>
+                  @click="handleHubUseConsumable(item.id)"><img src="/assets/Icons/use_action.svg" alt="" class="use-btn-icon" />Utiliser</button>
                 <button class="hub-action-btn hub-btn-sell"
                   @click="sellAction(item.id)">
-                  <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
+                  Vendre <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> <strong class="hub-price">{{ sellValueForItem(item) }}</strong>
                 </button>
               </div>
             </div>
@@ -5276,7 +5521,7 @@ onBeforeUnmount(() => {
           <div class="hub-inv-grid">
             <div v-for="item in run.player.inventory.filter(i => i.kind === 'spirit_stone')" :key="item.id"
               class="hub-inv-card card">
-              <img :src="itemIcon(item)" class="hub-inv-icon" alt="" />
+              <img :src="itemIcon(item)" :data-rarity="item?.rarity" class="hub-inv-icon" alt="" />
               <div class="hub-inv-info">
                 <span class="hub-inv-name" :style="{ color: RARITIES[item.rarity]?.color }">{{ item.name }}</span>
                 <span class="hub-inv-stats" :class="{ 'stone-unidentified': !item.identified }">{{ stoneDisplayAffixes(item) }}</span>
@@ -5288,7 +5533,7 @@ onBeforeUnmount(() => {
                 <button class="hub-action-btn hub-btn-forge" @click="hubTab = 'forge'">Sertir en forge</button>
                 <button class="hub-action-btn hub-btn-sell"
                   @click="sellAction(item.id)">
-                  <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> {{ sellValueForItem(item) }}
+                  Vendre <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> <strong class="hub-price">{{ sellValueForItem(item) }}</strong>
                 </button>
               </div>
             </div>
@@ -5305,10 +5550,11 @@ onBeforeUnmount(() => {
               <button v-for="eq in [...hubEquipmentItems, ...hubInventoryEquipment]" :key="eq.id"
                 class="hub-forge-item-btn" :class="{ selected: eq.id === forgeSelectedItemId }"
                 @click="forgeSelectedItemId = eq.id; forgeResult = null">
-                <img :src="itemIcon(eq)" class="hub-forge-item-icon" alt="" />
+                <img :src="itemIcon(eq)" :data-rarity="eq?.rarity" class="hub-forge-item-icon" alt="" />
                 <span class="hub-forge-item-label" :style="{ color: RARITIES[eq.rarity]?.color }">
                   {{ itemDisplayName(eq) }}
                 </span>
+                <img v-if="itemQuality(eq)" :src="itemQuality(eq).icon" :title="itemQuality(eq).label" alt="" class="item-quality-icon" />
                 <span v-if="eq._isEquipped" class="hub-equipped-tag">équipé</span>
               </button>
               <p v-if="hubEquipmentItems.length === 0 && hubInventoryEquipment.length === 0" class="hub-empty">
@@ -5320,7 +5566,7 @@ onBeforeUnmount(() => {
           <!-- Détail forge -->
           <div v-if="forgeSelectedItem" class="hub-forge-detail card">
             <div class="hub-forge-item-header">
-              <img :src="itemIcon(forgeSelectedItem)" class="hub-forge-detail-icon" alt="" />
+              <img :src="itemIcon(forgeSelectedItem)" :data-rarity="forgeSelectedItem?.rarity" class="hub-forge-detail-icon" alt="" />
               <div>
                 <div class="hub-forge-item-name" :style="{ color: RARITIES[forgeSelectedItem.rarity]?.color }">
                   {{ itemDisplayName(forgeSelectedItem) }}
@@ -5328,6 +5574,7 @@ onBeforeUnmount(() => {
                 <div class="hub-forge-item-rarity" :style="{ color: RARITIES[forgeSelectedItem.rarity]?.color }">
                   {{ RARITIES[forgeSelectedItem.rarity]?.label }}
                 </div>
+                <ItemMeta :item="forgeSelectedItem" />
               </div>
             </div>
 
@@ -5511,7 +5758,7 @@ onBeforeUnmount(() => {
           <div v-else class="hub-transcendance-list">
             <div v-for="item in transcendableItems" :key="item.id" class="hub-transcendance-card card">
               <div class="hub-transcendance-header">
-                <img :src="itemIcon(item)" alt="" class="hub-transcendance-icon" />
+                <img :src="itemIcon(item)" :data-rarity="item?.rarity" alt="" class="hub-transcendance-icon" />
                 <div class="hub-transcendance-info">
                   <span class="hub-transcendance-name" :style="{ color: RARITIES[item.rarity]?.color }">
                     {{ itemDisplayName(item) }}
@@ -5624,7 +5871,7 @@ onBeforeUnmount(() => {
             <img src="/assets/Icons/heart.png" alt="" class="hud-stat-icon" />
             PV {{ run.player.hp }} / {{ stats.maxHp }}
           </span>
-          <span>Mana {{ run.player.mana }} / {{ stats.maxMana }}</span>
+          <span class="hud-stat-pv"><img src="/assets/Icons/mana_drop.svg" alt="" class="hud-stat-icon" /> Mana {{ run.player.mana }} / {{ stats.maxMana }}</span>
           <span class="hud-stat-gold">
             <img src="/assets/Icons/gold_coin.png" alt="" class="hud-stat-icon" />
             Or {{ run.player.gold }}
@@ -5760,14 +6007,15 @@ onBeforeUnmount(() => {
             <div class="equipment-grid">
               <div class="equip-slot">
                 <h3>Arme</h3>
-                <div v-if="run.player.equipment.weapon" class="equip-item">
-                  <img :src="itemIcon(run.player.equipment.weapon)" alt="arme" />
+                <div v-if="run.player.equipment.weapon" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.weapon)">
+                  <img :src="itemIcon(run.player.equipment.weapon)" :data-rarity="run.player.equipment.weapon?.rarity" alt="arme" />
                   <div>
                     <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">
                       {{ itemDisplayName(run.player.equipment.weapon) }}
                     </strong>
                     <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0
                     }}</p>
+                    <p v-if="itemQuality(run.player.equipment.weapon)" class="item-quality-row"><img :src="itemQuality(run.player.equipment.weapon).icon" alt="" class="item-quality-icon" />{{ itemQuality(run.player.equipment.weapon).label }}</p>
                     <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{
                       bonus
                     }}</p>
@@ -5779,8 +6027,8 @@ onBeforeUnmount(() => {
 
               <div class="equip-slot">
                 <h3>Armure</h3>
-                <div v-if="run.player.equipment.armor" class="equip-item">
-                  <img :src="itemIcon(run.player.equipment.armor)" alt="armure" />
+                <div v-if="run.player.equipment.armor" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.armor)">
+                  <img :src="itemIcon(run.player.equipment.armor)" :data-rarity="run.player.equipment.armor?.rarity" alt="armure" />
                   <div>
                     <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">
                       {{ itemDisplayName(run.player.equipment.armor) }}
@@ -5788,6 +6036,7 @@ onBeforeUnmount(() => {
                     <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0
                     }}
                     </p>
+                    <p v-if="itemQuality(run.player.equipment.armor)" class="item-quality-row"><img :src="itemQuality(run.player.equipment.armor).icon" alt="" class="item-quality-icon" />{{ itemQuality(run.player.equipment.armor).label }}</p>
                     <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus
                     }}</p>
                     <button @click="unequipAction('armor')">Retirer</button>
@@ -5798,8 +6047,8 @@ onBeforeUnmount(() => {
 
               <div class="equip-slot">
                 <h3>Anneau</h3>
-                <div v-if="run.player.equipment.trinket" class="equip-item">
-                  <img :src="itemIcon(run.player.equipment.trinket)" alt="trinket" />
+                <div v-if="run.player.equipment.trinket" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.trinket)">
+                  <img :src="itemIcon(run.player.equipment.trinket)" :data-rarity="run.player.equipment.trinket?.rarity" alt="trinket" />
                   <div>
                     <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">
                       {{ itemDisplayName(run.player.equipment.trinket) }}
@@ -5807,6 +6056,7 @@ onBeforeUnmount(() => {
                     <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ??
                       0
                     }}</p>
+                    <p v-if="itemQuality(run.player.equipment.trinket)" class="item-quality-row"><img :src="itemQuality(run.player.equipment.trinket).icon" alt="" class="item-quality-icon" />{{ itemQuality(run.player.equipment.trinket).label }}</p>
                     <p v-for="bonus in itemAffixes(run.player.equipment.trinket)" :key="bonus" class="item-affix">{{
                       bonus
                     }}</p>
@@ -5866,6 +6116,10 @@ onBeforeUnmount(() => {
           <span class="mobile-hud-stat">
             <img src="/assets/Icons/heart.png" alt="" class="mobile-hud-icon" />
             {{ run.player.hp }}/{{ stats.maxHp }}
+          </span>
+          <span class="mobile-hud-stat">
+            <img src="/assets/Icons/mana_drop.svg" alt="" class="mobile-hud-icon" />
+            {{ run.player.mana }}/{{ stats.maxMana }}
           </span>
           <span class="mobile-hud-stat">
             <img src="/assets/Icons/gold_coin.png" alt="" class="mobile-hud-icon" />
@@ -5986,13 +6240,14 @@ onBeforeUnmount(() => {
           <div class="equipment-grid">
             <div class="equip-slot">
               <h3>Arme</h3>
-              <div v-if="run.player.equipment.weapon" class="equip-item">
-                <img :src="itemIcon(run.player.equipment.weapon)" alt="arme" />
+              <div v-if="run.player.equipment.weapon" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.weapon)">
+                <img :src="itemIcon(run.player.equipment.weapon)" :data-rarity="run.player.equipment.weapon?.rarity" alt="arme" />
                 <div>
                   <strong :style="{ color: rarityColor(run.player.equipment.weapon.rarity) }">{{
                     itemDisplayName(run.player.equipment.weapon) }}</strong>
                   <p>ATK {{ run.player.equipment.weapon.attack ?? 0 }} DEF {{ run.player.equipment.weapon.defense ?? 0
                     }}</p>
+                  <p v-if="itemQuality(run.player.equipment.weapon)" class="item-quality-row"><img :src="itemQuality(run.player.equipment.weapon).icon" alt="" class="item-quality-icon" />{{ itemQuality(run.player.equipment.weapon).label }}</p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.weapon)" :key="bonus" class="item-affix">{{ bonus
                     }}</p>
                   <button @click="unequipAction('weapon')">Retirer</button>
@@ -6002,13 +6257,14 @@ onBeforeUnmount(() => {
             </div>
             <div class="equip-slot">
               <h3>Armure</h3>
-              <div v-if="run.player.equipment.armor" class="equip-item">
-                <img :src="itemIcon(run.player.equipment.armor)" alt="armure" />
+              <div v-if="run.player.equipment.armor" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.armor)">
+                <img :src="itemIcon(run.player.equipment.armor)" :data-rarity="run.player.equipment.armor?.rarity" alt="armure" />
                 <div>
                   <strong :style="{ color: rarityColor(run.player.equipment.armor.rarity) }">{{
                     itemDisplayName(run.player.equipment.armor) }}</strong>
                   <p>ATK {{ run.player.equipment.armor.attack ?? 0 }} DEF {{ run.player.equipment.armor.defense ?? 0 }}
                   </p>
+                  <p v-if="itemQuality(run.player.equipment.armor)" class="item-quality-row"><img :src="itemQuality(run.player.equipment.armor).icon" alt="" class="item-quality-icon" />{{ itemQuality(run.player.equipment.armor).label }}</p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.armor)" :key="bonus" class="item-affix">{{ bonus
                     }}</p>
                   <button @click="unequipAction('armor')">Retirer</button>
@@ -6018,14 +6274,15 @@ onBeforeUnmount(() => {
             </div>
             <div class="equip-slot">
               <h3>Bibelot</h3>
-              <div v-if="run.player.equipment.trinket" class="equip-item">
-                <img :src="itemIcon(run.player.equipment.trinket)" alt="trinket" />
+              <div v-if="run.player.equipment.trinket" class="equip-item equip-item-clickable" @click="openItemDetail(run.player.equipment.trinket)">
+                <img :src="itemIcon(run.player.equipment.trinket)" :data-rarity="run.player.equipment.trinket?.rarity" alt="trinket" />
                 <div>
                   <strong :style="{ color: rarityColor(run.player.equipment.trinket.rarity) }">{{
                     itemDisplayName(run.player.equipment.trinket) }}</strong>
                   <p>ATK {{ run.player.equipment.trinket.attack ?? 0 }} DEF {{ run.player.equipment.trinket.defense ?? 0
                     }}
                   </p>
+                  <p v-if="itemQuality(run.player.equipment.trinket)" class="item-quality-row"><img :src="itemQuality(run.player.equipment.trinket).icon" alt="" class="item-quality-icon" />{{ itemQuality(run.player.equipment.trinket).label }}</p>
                   <p v-for="bonus in itemAffixes(run.player.equipment.trinket)" :key="bonus" class="item-affix">{{ bonus
                     }}
                   </p>
@@ -6060,10 +6317,13 @@ onBeforeUnmount(() => {
               <p class="combat-subline">
                 <span class="turn-pill" :class="{ enemy: run.combat?.actor === 'enemy' }">{{ combatTurnLabel }}</span>
               </p>
+              <p v-if="run.combat?.enemyCharge" class="boss-charge-warning">
+                ⚠ {{ run.combat.enemyCharge.text }} Attaque puissante au prochain tour !
+              </p>
               <div v-if="run.metadata?.isTutorial && run.combat" class="tuto-tip-bubble tuto-tip-turn">
-                <strong>{{ run.combat.actor === 'player' ? '🟦 Ton tour' : '🟥 Tour ennemi' }}</strong>
+                <strong>{{ run.combat.actor === 'player' ? '🔵 Ton tour' : '🔴 Tour ennemi' }}</strong>
                 {{ run.combat.actor === 'player'
-                  ? ' — Utilise tes PA pour attaquer ou lancer une compétence, puis clique Fin du tour.'
+                  ? (activeCombatView.playerAp <= 0 ? ' — Plus de PA ! Clique sur Fin du tour.' : ' — Utilise tes PA pour attaquer ou lancer une compétence, puis clique Fin du tour.')
                   : ' — L\'ennemi agit automatiquement. Attends qu\'il passe la main.' }}
               </div>
             </div>
@@ -6075,7 +6335,7 @@ onBeforeUnmount(() => {
 
                 <!-- MENU PRINCIPAL MOBILE -->
                 <div class="combat-mobile-menu">
-                  <button class="mobile-menu-btn mobile-menu-skills" @click="combatMobilePanel = 'skills'">
+                  <button class="mobile-menu-btn mobile-menu-skills" data-tuto="actions" :class="{ 'tuto-highlight': tutorialHighlight === 'actions' }" @click="combatMobilePanel = 'skills'">
                     <img src="/assets/Icons/skills.png" alt="" />
                     <span>Compétences</span>
                   </button>
@@ -6083,7 +6343,7 @@ onBeforeUnmount(() => {
                     <img src="/assets/Icons/potion.png" alt="" />
                     <span>Inventaire</span>
                   </button>
-                  <button class="mobile-menu-btn mobile-menu-endturn" :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }" :disabled="run.combat.actor !== 'player'" @click.prevent="endTurnAction">
+                  <button class="mobile-menu-btn mobile-menu-endturn" data-tuto="endturn" :class="{ 'end-turn-btn': shouldEmphasizeEndTurn, 'tuto-highlight': tutorialHighlight === 'endturn' }" :disabled="run.combat.actor !== 'player'" @click.prevent="endTurnAction">
                     <span>Fin du tour</span>
                   </button>
                   <button class="mobile-menu-btn mobile-menu-flee" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">
@@ -6095,7 +6355,7 @@ onBeforeUnmount(() => {
                 <button class="combat-mobile-back" @click="combatMobilePanel = null">←</button>
 
                 <!-- COMPÉTENCES -->
-                <div class="combat-skills-block">
+                <div class="combat-skills-block" data-tuto="actions" :class="{ 'tuto-highlight': tutorialHighlight === 'actions' }">
                   <h3 class="panel-title">
                     <img src="/assets/Icons/skills.png" alt="" />
                     Competences
@@ -6120,7 +6380,7 @@ onBeforeUnmount(() => {
                       </small>
                     </button>
                   </div>
-                  <button class="skills-panel-end-turn" :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
+                  <button class="skills-panel-end-turn" data-tuto="endturn" :class="{ 'end-turn-btn': shouldEmphasizeEndTurn, 'tuto-highlight': tutorialHighlight === 'endturn' }"
                     :disabled="run.combat.actor !== 'player'" @click.prevent="endTurnAction">
                     Fin du tour
                   </button>
@@ -6138,7 +6398,7 @@ onBeforeUnmount(() => {
                         Attaque (2 PA)<kbd></kbd>
                       </button>
                       <div class="combat-endturn-flee-row">
-                        <button :class="{ 'end-turn-btn': shouldEmphasizeEndTurn }"
+                        <button data-tuto="endturn" :class="{ 'end-turn-btn': shouldEmphasizeEndTurn, 'tuto-highlight': tutorialHighlight === 'endturn' }"
                           :disabled="run.combat.actor !== 'player'" type="button" @click.prevent="endTurnAction">
                           Fin du tour
                         </button>
@@ -6213,9 +6473,8 @@ onBeforeUnmount(() => {
                   <div class="battle-unit-hud">
                     <strong>{{ run.player.name }}</strong>
                     <p class="battle-hud-meta">
-                      <span>PV {{ run.player.hp }} / {{ stats.maxHp }}</span>
-                      <span>|</span>
-                      Mana {{ run.player.mana }} / {{ stats.maxMana }}
+                      <span class="battle-meta-stat"><img src="/assets/Icons/heart.png" alt="PV" />{{ run.player.hp }}/{{ stats.maxHp }}</span>
+                      <span class="battle-meta-stat"><img src="/assets/Icons/mana_drop.svg" alt="Mana" />{{ run.player.mana }}/{{ stats.maxMana }}</span>
                     </p>
                     <div class="battle-bars">
                       <div class="battle-bar hp">
@@ -6225,11 +6484,12 @@ onBeforeUnmount(() => {
                         <span :style="{ width: `${combatPlayerManaPercent}%` }"></span>
                       </div>
                     </div>
-                    <div class="battle-ap-spotlight">
-                      <img src="/assets/Icons/dagger.png" alt="" />
-                      <p class="battle-ap-label">PA : {{ activeCombatView.playerAp }} / {{ stats.ap }}</p>
+                    <div class="ap-panel" data-tuto="player-ap" :class="{ 'tuto-highlight': tutorialHighlight === 'player-ap' }">
+                      <div class="ap-pips">
+                        <span v-for="n in stats.ap" :key="n" class="ap-pip" :class="{ on: n <= activeCombatView.playerAp }"></span>
+                      </div>
                     </div>
-                    <div v-if="playerEffectPills.length" class="battle-effect-pills">
+                    <div class="battle-effect-pills">
                       <span v-for="pill in playerEffectPills" :key="pill.id" class="battle-effect-pill" :class="pill.cls">
                         {{ pill.label }}<small v-if="pill.turns > 0"> {{ pill.turns }}</small>
                       </span>
@@ -6258,11 +6518,8 @@ onBeforeUnmount(() => {
                       <span v-if="activeCombatView.enemyIsBoss">(BOSS)</span>
                     </strong>
                     <p class="battle-hud-meta">
-                      <span>PV {{ activeCombatView.enemyHp }} / {{ activeCombatView.enemyStats.maxHp }}</span>
-                      <template v-if="combatEnemyHasMana">
-                        <span>|</span>
-                        Mana {{ activeCombatView.enemyMana }} / {{ activeCombatView.enemyStats.maxMana }}
-                      </template>
+                      <span class="battle-meta-stat"><img src="/assets/Icons/heart.png" alt="PV" />{{ activeCombatView.enemyHp }}/{{ activeCombatView.enemyStats.maxHp }}</span>
+                      <span v-if="combatEnemyHasMana" class="battle-meta-stat"><img src="/assets/Icons/mana_drop.svg" alt="Mana" />{{ activeCombatView.enemyMana }}/{{ activeCombatView.enemyStats.maxMana }}</span>
                     </p>
                     <div class="battle-bars">
                       <div class="battle-bar hp">
@@ -6272,12 +6529,12 @@ onBeforeUnmount(() => {
                         <span :style="{ width: `${combatEnemyManaPercent}%` }"></span>
                       </div>
                     </div>
-                    <div class="battle-ap-spotlight enemy">
-                      <img src="/assets/Icons/dagger.png" alt="" />
-                      <p class="battle-ap-label">PA : {{ activeCombatView.enemyAp }} / {{ activeCombatView.enemyStats.ap
-                        }}</p>
+                    <div class="ap-panel enemy" data-tuto="enemy-ap" :class="{ 'tuto-highlight': tutorialHighlight === 'enemy-ap' }">
+                      <div class="ap-pips">
+                        <span v-for="n in activeCombatView.enemyStats.ap" :key="n" class="ap-pip" :class="{ on: n <= activeCombatView.enemyAp }"></span>
+                      </div>
                     </div>
-                    <div v-if="enemyEffectPills.length" class="battle-effect-pills">
+                    <div class="battle-effect-pills">
                       <span v-for="pill in enemyEffectPills" :key="pill.id" class="battle-effect-pill" :class="pill.cls">
                         {{ pill.label }}<small v-if="pill.turns > 0"> {{ pill.turns }}</small>
                       </span>
@@ -6407,7 +6664,7 @@ onBeforeUnmount(() => {
                       <button v-if="item.kind === 'equipment'" @click="equipAction(item.id)">Equiper</button>
                       <button v-if="item.kind === 'consumable'" :disabled="!canUseConsumable(item)"
                         :title="consumableDisableReason(item)" @click="consumeItem(item.id)">
-                        Utiliser
+                        <img src="/assets/Icons/use_action.svg" alt="" class="use-btn-icon" />Utiliser
                       </button>
                       <button v-if="item.kind === 'equipment'" class="secondary" @click="recycleAction(item.id)">
                         <img src="/assets/Icons/recycle.png" alt="" class="recycle-btn-icon" />
@@ -6638,10 +6895,11 @@ onBeforeUnmount(() => {
               <button v-for="eq in [...hubEquipmentItems, ...hubInventoryEquipment]" :key="eq.id"
                 class="hub-forge-item-btn" :class="{ selected: eq.id === forgeSelectedItemId }"
                 @click="forgeSelectedItemId = eq.id">
-                <img :src="itemIcon(eq)" class="hub-forge-item-icon" alt="" />
+                <img :src="itemIcon(eq)" :data-rarity="eq?.rarity" class="hub-forge-item-icon" alt="" />
                 <span class="hub-forge-item-label" :style="{ color: RARITIES[eq.rarity]?.color }">
                   {{ itemDisplayName(eq) }}
                 </span>
+                <img v-if="itemQuality(eq)" :src="itemQuality(eq).icon" :title="itemQuality(eq).label" alt="" class="item-quality-icon" />
                 <span v-if="eq._isEquipped" class="hub-equipped-tag">équipé</span>
               </button>
               <p v-if="hubEquipmentItems.length === 0 && hubInventoryEquipment.length === 0" class="hub-empty">
@@ -6751,7 +7009,7 @@ onBeforeUnmount(() => {
               @mousemove="moveInventoryItemTooltip($event)"
               @mouseleave="hideMerchantItemTooltip()"
               @touchstart="handleMerchantItemTouch(item, $event)">
-              <img :src="itemIcon(item)" class="merchant-item-icon" alt="" />
+              <img :src="itemIcon(item)" :data-rarity="item?.rarity" class="merchant-item-icon" alt="" />
               <div class="merchant-item-info">
                 <span class="merchant-item-name" :style="{ color: RARITIES[item.rarity]?.color }">{{ item.name }}</span>
                 <span class="merchant-item-rarity">{{ RARITIES[item.rarity]?.label }}</span>
@@ -6919,7 +7177,7 @@ onBeforeUnmount(() => {
             <template v-if="currentNpc.role === 'merchant'">
               <button v-for="shop in merchantShopEntries" :key="shop.id" :disabled="shopItemDisabled(shop)"
                 @click="npcAction('buy', shop.id)" class="shop-item-btn">
-                <img :src="itemIcon(shop)" alt="" class="shop-item-icon" />
+                <img :src="itemIcon(shop)" :data-rarity="shop?.rarity" alt="" class="shop-item-icon" />
                 <span class="shop-item-content">
                   <span class="no-wrap-line">
                     Acheter {{ shop.name }} ({{ shop.price }} <img src="/assets/Icons/gold_coin.png" alt=""
@@ -6946,7 +7204,7 @@ onBeforeUnmount(() => {
                     v-for="recipe in RECIPES.filter(r => !r.category && (craftFilter === 'all' || r.result.kind === craftFilter || r.result.slot === craftFilter))"
                     :key="recipe.id" :disabled="!canCraftRecipe(recipe)" @click="npcAction('craft', recipe.id)">
                     <span class="craft-recipe-header">
-                      <img :src="itemIcon(recipe.result)" alt="" class="craft-recipe-icon" :class="{ 'icon-wide': itemIcon(recipe.result).includes('anneau.png') }" />
+                      <img :src="itemIcon(recipe.result)" :data-rarity="recipe.result?.rarity" alt="" class="craft-recipe-icon" :class="{ 'icon-wide': itemIcon(recipe.result).includes('anneau.png') }" />
                       <span class="craft-recipe-name" :style="{ color: rarityColor(recipe.rarity) }">
                         {{ recipe.name }}
                         <span class="craft-recipe-rarity">({{ RARITIES[recipe.rarity].label }})</span>
@@ -7211,6 +7469,20 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- Tutorial contextual tip bubble -->
+    <div v-if="tutorialCombatStep != null" ref="tutoCoachRef" class="tuto-coach" :class="`placement-${tutoCoachPos.placement}`"
+      :style="{ left: `${tutoCoachPos.left}px`, top: `${tutoCoachPos.top}px`, '--arrow-x': `${tutoCoachPos.arrowX}px` }">
+      <span v-if="tutoCoachPos.placement !== 'none'" class="tuto-coach-arrow"></span>
+      <div class="tuto-coach-step">Étape {{ tutorialCombatStep + 1 }} / {{ TUTORIAL_AP_STEPS.length }}</div>
+      <strong class="tuto-coach-title">{{ TUTORIAL_AP_STEPS[tutorialCombatStep].title }}</strong>
+      <p class="tuto-coach-text">{{ TUTORIAL_AP_STEPS[tutorialCombatStep].text }}</p>
+      <div class="tuto-coach-actions">
+        <button type="button" class="secondary" @click="skipTutorialCombatSteps">Passer</button>
+        <button type="button" class="primary" @click="nextTutorialCombatStep">
+          {{ tutorialCombatStep >= TUTORIAL_AP_STEPS.length - 1 ? 'Compris' : 'Suivant' }}
+        </button>
+      </div>
+    </div>
+
     <Transition name="tuto-tip-slide">
       <div v-if="tutorialTip && run?.metadata?.isTutorial && !run?.combat" class="tuto-tip-card">
         <div class="tuto-tip-card-inner">
@@ -7239,6 +7511,100 @@ onBeforeUnmount(() => {
           <button class="primary" @click="startGameFromTutorial">Lancer la partie</button>
           <button class="secondary" @click="returnToMenuFromTutorial">Menu principal</button>
         </div>
+      </article>
+    </div>
+
+    <div v-if="shrineBlessingModal" class="overlay-meta" @click.self="shrineBlessingModal = null">
+      <article class="meta-modal portal-confirm-modal shrine-modal" @click.stop>
+        <header>
+          <h2 style="color: #c7d9f5">Bénédiction de l'autel lunaire</h2>
+        </header>
+        <p>Une lumière argentée vous traverse. Vous gagnez de façon permanente :</p>
+        <ul class="shrine-gains">
+          <li v-for="line in shrineBlessingModal.lines" :key="line">{{ line }}</li>
+        </ul>
+        <div class="row-actions">
+          <button class="primary" @click="shrineBlessingModal = null">Continuer</button>
+        </div>
+      </article>
+    </div>
+
+    <div v-if="itemDetailItem" class="idm-overlay" @click.self="itemDetailModal = null">
+      <article class="idm" :class="{ 'idm-perfect': itemDetailItem.quality === 'perfect' }" @click.stop>
+        <div v-if="itemDetailItem.quality === 'perfect'" class="idm-shine" aria-hidden="true"></div>
+        <button type="button" class="idm-close" aria-label="Fermer" @click="itemDetailModal = null">✕</button>
+
+        <header class="idm-head">
+          <div class="idm-icon" :style="{ borderColor: rarityColor(itemDetailItem.rarity) }">
+            <img :src="itemIcon(itemDetailItem)" :data-rarity="itemDetailItem.rarity" alt="" />
+          </div>
+          <div class="idm-title">
+            <h2 :style="{ color: rarityColor(itemDetailItem.rarity) }">{{ itemDisplayName(itemDetailItem) }}</h2>
+            <div class="idm-chips">
+              <span class="idm-chip" :style="{ color: rarityColor(itemDetailItem.rarity), borderColor: rarityColor(itemDetailItem.rarity) }">
+                {{ rarityLabel(itemDetailItem.rarity) }}
+              </span>
+              <span v-if="itemQuality(itemDetailItem)" class="idm-chip">
+                <img :src="itemQuality(itemDetailItem).icon" alt="" />
+                {{ itemQuality(itemDetailItem).label }}
+              </span>
+              <span v-if="itemDetailIsEquipped" class="idm-chip idm-chip-equipped">Équipé</span>
+            </div>
+          </div>
+        </header>
+
+        <section v-if="!itemDetailIsEquipped" class="idm-section idm-compare-section">
+          <h3>Comparaison avec l'équipement actuel</h3>
+          <p class="idm-sub">{{ equippedComparisonLabel(itemDetailItem) }}</p>
+          <div class="idm-compare">
+            <div v-for="row in equipmentCompareRows(itemDetailItem)" :key="`detail-${row.id}`"
+              class="idm-compare-row" :class="statDeltaClass(row.delta)">
+              <span class="idm-compare-label">{{ row.label }}</span>
+              <span class="idm-compare-values">{{ row.equipped }} <span class="idm-arrow">→</span> <b>{{ row.candidate }}</b></span>
+              <strong class="idm-delta">{{ statDeltaLabel(row.delta) }}</strong>
+            </div>
+          </div>
+          <template v-if="bonusCompareRows(itemDetailItem).length">
+            <h4 class="idm-bonus-title">Bonus</h4>
+            <div class="idm-bonus-compare">
+              <div v-for="row in bonusCompareRows(itemDetailItem)" :key="`bonus-${row.id}`"
+                class="idm-bonus-row" :class="statDeltaClass(row.delta)">
+                <span class="idm-bonus-label">{{ row.label }}</span>
+                <span class="idm-bonus-values">{{ row.equipped }} <span class="idm-arrow">→</span> <b>{{ row.candidate }}</b></span>
+                <strong class="idm-bonus-delta">{{ row.deltaText }}</strong>
+              </div>
+            </div>
+          </template>
+        </section>
+
+        <div class="idm-stats">
+          <div class="idm-stat">
+            <span class="idm-stat-label">Attaque</span>
+            <strong>{{ itemDetailItem.attack ?? 0 }}</strong>
+          </div>
+          <div class="idm-stat">
+            <span class="idm-stat-label">Défense</span>
+            <strong>{{ itemDetailItem.defense ?? 0 }}</strong>
+          </div>
+        </div>
+
+        <section class="idm-section">
+          <h3>Bonus</h3>
+          <ul v-if="itemAffixes(itemDetailItem).length" class="idm-list">
+            <li v-for="bonus in itemAffixes(itemDetailItem)" :key="bonus">{{ bonus }}</li>
+          </ul>
+          <p v-else class="idm-empty">Aucun bonus.</p>
+        </section>
+
+        <section v-if="!itemDetailIsEquipped && equippedItemForComparison(itemDetailItem) && itemAffixes(equippedItemForComparison(itemDetailItem)).length" class="idm-section">
+          <h3>Bonus de l'objet équipé</h3>
+          <ul class="idm-list idm-list-muted">
+            <li v-for="bonus in itemAffixes(equippedItemForComparison(itemDetailItem))" :key="`eq-${bonus}`">{{ bonus }}</li>
+          </ul>
+        </section>
+
+        <button v-if="itemDetailIsEquipped" type="button" class="idm-unequip"
+          @click="unequipAction(itemDetailItem.slot); itemDetailModal = null">Déséquiper</button>
       </article>
     </div>
   </main>
@@ -7905,6 +8271,16 @@ button.danger {
 
 .tile-sprite.entity-chest.opening {
   filter: brightness(1.12);
+}
+
+.tile-sprite.entity-shrine {
+  filter: drop-shadow(0 0 6px rgba(199, 217, 245, 0.85));
+  animation: shrine-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes shrine-glow {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
 }
 
 .tile-sprite.entity-trap {
@@ -8729,6 +9105,179 @@ button.danger {
   color: #bde7ff;
 }
 
+.shrine-gains { list-style: none; padding: 0; margin: 8px 0 14px; display: flex; flex-direction: column; gap: 4px; color: #bde7ff; font-weight: 600; }
+.hub-equip-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.hub-detail-btn { font-size: 0.85rem; font-weight: 600; padding: 8px 14px; min-height: 38px; border-radius: 8px; border: 1px solid rgba(255, 217, 156, 0.35); background: rgba(255, 217, 156, 0.08); color: #ffd99c; cursor: pointer; }
+.hub-detail-btn:hover { background: rgba(255, 217, 156, 0.16); }
+.hub-unequip-btn { border-color: rgba(255, 130, 110, 0.45); background: rgba(255, 110, 90, 0.08); color: #ffb4a3; }
+img[data-rarity="legendary"] {
+  filter: drop-shadow(0 0 4px rgba(255, 200, 70, 0.95)) drop-shadow(0 0 9px rgba(255, 176, 30, 0.55));
+  animation: aura-legendary 2.4s ease-in-out infinite;
+}
+img[data-rarity="mythic"] {
+  filter: drop-shadow(0 0 4px rgba(255, 110, 200, 0.95)) drop-shadow(0 0 9px rgba(255, 60, 170, 0.6));
+  animation: aura-mythic 2.4s ease-in-out infinite;
+}
+@keyframes aura-legendary {
+  0%, 100% { filter: drop-shadow(0 0 1px rgba(255, 200, 70, 0.12)) drop-shadow(0 0 3px rgba(255, 176, 30, 0.08)); }
+  50% { filter: drop-shadow(0 0 4px rgba(255, 215, 100, 1)) drop-shadow(0 0 11px rgba(255, 176, 30, 0.95)); }
+}
+@keyframes aura-mythic {
+  0%, 100% { filter: drop-shadow(0 0 1px rgba(255, 110, 200, 0.12)) drop-shadow(0 0 3px rgba(255, 60, 170, 0.08)); }
+  50% { filter: drop-shadow(0 0 4px rgba(255, 150, 220, 1)) drop-shadow(0 0 11px rgba(255, 60, 170, 0.95)); }
+}
+.equip-item-clickable, .hub-card-clickable { cursor: pointer; }
+.tuto-coach { position: fixed; z-index: 9500; width: min(360px, calc(100vw - 16px)); box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; background: linear-gradient(165deg, #241409, #150c06); border: 1px solid rgba(224, 166, 64, 0.7); box-shadow: 0 10px 34px rgba(0, 0, 0, 0.7); color: #f3e6d6; }
+.tuto-coach-arrow { position: absolute; left: var(--arrow-x); width: 16px; height: 16px; background: #241409; border: 1px solid rgba(224, 166, 64, 0.7); transform: translateX(-50%) rotate(45deg); }
+.tuto-coach.placement-below .tuto-coach-arrow { top: -9px; border-right: none; border-bottom: none; }
+.tuto-coach.placement-above .tuto-coach-arrow { bottom: -9px; border-left: none; border-top: none; background: #150c06; }
+.tuto-coach-step { font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: #c9a37c; }
+.tuto-coach-title { font-size: 1rem; color: #ffd99c; }
+.tuto-coach-text { margin: 0; font-size: 0.86rem; line-height: 1.4; }
+.tuto-coach-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.tuto-highlight { outline: 2px solid #ffd45c !important; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(255, 212, 92, 0.25), 0 0 16px rgba(255, 212, 92, 0.6) !important; animation: tuto-highlight-pulse 1.1s ease-in-out infinite; position: relative; z-index: 2; }
+@keyframes tuto-highlight-pulse { 0%, 100% { outline-color: rgba(255, 212, 92, 0.55); } 50% { outline-color: #ffd45c; } }
+.class-picker-field { display: flex; flex-direction: column; gap: 6px; }
+.class-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+.class-pick { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 6px; border-radius: 10px; border: 1px solid rgba(255, 217, 156, 0.2); background: rgba(255, 217, 156, 0.05); color: #e8dcc8; cursor: pointer; transition: border-color 0.15s, background 0.15s, transform 0.1s; }
+.class-pick:hover { border-color: rgba(255, 217, 156, 0.5); transform: translateY(-1px); }
+.class-pick.active { border-color: #e0a640; background: rgba(224, 166, 64, 0.16); box-shadow: 0 0 10px rgba(224, 166, 64, 0.3); }
+.class-pick-icon { width: 34px; height: 34px; object-fit: contain; }
+.class-pick-name { font-size: 0.78rem; font-weight: 600; }
+.class-pick-fantasy { opacity: 0.7; font-size: 0.78rem; }
+.ap-panel { margin-top: 8px; display: flex; box-sizing: border-box; width: 100%; align-items: center; justify-content: center; gap: 8px; padding: 7px 10px; border-radius: 12px; background: rgba(10, 30, 48, 0.75); border: 1px solid rgba(110, 200, 255, 0.45); }
+.ap-panel.enemy { background: rgba(48, 28, 12, 0.75); border-color: rgba(255, 190, 100, 0.5); }
+.ap-pips { display: flex; flex: 1; min-width: 0; flex-wrap: nowrap; justify-content: center; gap: 9px; padding: 3px 0; }
+.ap-pip { width: 15px; height: 15px; border-radius: 50%; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.18); transition: background 0.2s, box-shadow 0.2s; }
+.ap-pip.on { background: radial-gradient(circle at 35% 30%, #d8f4ff, #4fb4ff 55%, #1f74c8); border-color: #bfeaff; box-shadow: 0 0 7px rgba(110, 200, 255, 0.9); }
+.ap-panel.enemy .ap-pip.on { background: radial-gradient(circle at 35% 30%, #fff0cc, #ffb04f 55%, #d1691c); border-color: #ffe2b0; box-shadow: 0 0 7px rgba(255, 170, 80, 0.9); }
+@media (max-width: 640px) {
+  .ap-panel { gap: 7px; padding: 5px 9px; }
+  .ap-pip { width: 12px; height: 12px; }
+  .hub-inv-card { flex-wrap: wrap; }
+  .hub-inv-info { flex: 1 1 calc(100% - 70px); }
+  .hub-inv-actions { flex: 1 1 100%; }
+  .hub-inv-actions .hub-action-btn { flex: 1 1 auto; padding: 9px 12px; }
+}
+.boss-charge-warning { margin: 4px 0 0; padding: 4px 8px; border-radius: 6px; background: rgba(255, 90, 60, 0.16); border: 1px solid rgba(255, 110, 80, 0.5); color: #ffb4a3; font-size: 0.78rem; animation: boss-charge-pulse 1s ease-in-out infinite; }
+@keyframes boss-charge-pulse { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+
+.idm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(14, 8, 4, 0.82);
+  backdrop-filter: blur(3px);
+}
+.idm {
+  position: relative;
+  width: min(420px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding: 20px 18px 18px;
+  border-radius: 14px;
+  background: linear-gradient(165deg, #241409 0%, #150c06 100%);
+  border: 1px solid rgba(214, 140, 60, 0.55);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 200, 140, 0.12);
+  color: #f3e6d6;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.idm-shine { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; z-index: 0; }
+.idm-shine::before { content: ''; position: absolute; top: -20%; bottom: -20%; left: 0; width: 45%; background: linear-gradient(105deg, transparent 0%, rgba(255, 236, 190, 0) 30%, rgba(255, 236, 190, 0.28) 50%, rgba(255, 236, 190, 0) 70%, transparent 100%); transform: translateX(-130%) skewX(-18deg); animation: idm-shine-sweep 3.6s ease-in-out infinite; }
+@keyframes idm-shine-sweep { 0% { transform: translateX(-130%) skewX(-18deg); } 55%, 100% { transform: translateX(330%) skewX(-18deg); } }
+.idm > *:not(.idm-shine) { position: relative; z-index: 1; }
+.idm > .idm-close { position: absolute; }
+.idm-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #cfd6e4;
+  cursor: pointer;
+}
+.idm-head { display: flex; gap: 14px; align-items: center; padding-right: 30px; }
+.idm-icon {
+  flex: none;
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  border: 2px solid;
+  background: rgba(255, 255, 255, 0.04);
+}
+.idm-icon img { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; }
+.idm-title { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.idm-title h2 { margin: 0; font-size: 1.15rem; line-height: 1.2; overflow-wrap: anywhere; }
+.idm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.idm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-size: 0.72rem;
+  color: #cfd6e4;
+}
+.idm-chip img { width: 13px; height: 13px; }
+.idm-chip-equipped { color: #7fe3a1; border-color: rgba(127, 227, 161, 0.5); }
+.idm-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.idm-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(255, 190, 120, 0.07);
+}
+.idm-stat strong { font-size: 1.3rem; }
+.idm-stat-label { font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: #c9a37c; }
+.idm-section { display: flex; flex-direction: column; gap: 6px; }
+.idm-section h3 { margin: 0; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: #c9a37c; }
+.idm-sub { margin: 0; font-size: 0.78rem; color: #aab3c6; }
+.idm-empty { margin: 0; font-size: 0.82rem; color: #7d8799; }
+.idm-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: #bde7ff; }
+.idm-list-muted { color: #8fa6b8; font-size: 0.8rem; }
+.idm-compare-section { padding: 12px; border-radius: 12px; background: rgba(255, 170, 80, 0.1); border: 1px solid rgba(255, 170, 80, 0.4); gap: 8px; }
+.idm-compare-section h3 { color: #ffcf9a; font-size: 0.78rem; }
+.idm-compare { display: flex; flex-direction: column; gap: 8px; }
+.idm-compare-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; background: rgba(0, 0, 0, 0.3); border-left: 5px solid #8a7a6a; }
+.idm-compare-row.delta-up { border-left-color: #4fdc86; background: rgba(60, 200, 110, 0.14); }
+.idm-compare-row.delta-down { border-left-color: #ff6a5a; background: rgba(255, 90, 70, 0.14); }
+.idm-compare-label { font-size: 0.95rem; font-weight: 800; letter-spacing: 0.08em; color: #ffd9b0; }
+.idm-compare-values { text-align: center; font-size: 1.15rem; color: #d8c4ac; }
+.idm-compare-values b { color: #fff; font-size: 1.3rem; }
+.idm-arrow { color: #a08466; margin: 0 4px; }
+.idm-delta { font-size: 1.6rem; line-height: 1; }
+.idm-compare-row.delta-up .idm-delta { color: #6dffa0; }
+.idm-compare-row.delta-down .idm-delta { color: #ff8a7a; }
+.idm-compare-row.delta-flat .idm-delta { color: #c9b49a; }
+.idm-bonus-title { margin: 6px 0 0; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: #ffcf9a; }
+.idm-bonus-compare { display: flex; flex-direction: column; gap: 4px; }
+.idm-bonus-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.22); border-left: 3px solid #8a7a6a; font-size: 0.82rem; }
+.idm-bonus-row.delta-up { border-left-color: #4fdc86; }
+.idm-bonus-row.delta-down { border-left-color: #ff6a5a; }
+.idm-bonus-label { color: #e6d2ba; }
+.idm-bonus-values { color: #bda88f; white-space: nowrap; }
+.idm-bonus-values b { color: #fff; }
+.idm-bonus-delta { min-width: 42px; text-align: right; }
+.idm-bonus-row.delta-up .idm-bonus-delta { color: #6dffa0; }
+.idm-bonus-row.delta-down .idm-bonus-delta { color: #ff8a7a; }
+.idm-bonus-row.delta-flat .idm-bonus-delta { color: #c9b49a; }
+.idm-unequip { padding: 10px; border-radius: 10px; border: 1px solid rgba(255, 130, 110, 0.45); background: rgba(255, 110, 90, 0.1); color: #ffb4a3; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
 .item-quality-row {
   display: flex;
   align-items: center;
@@ -9463,7 +10012,7 @@ button.danger {
   border-radius: 12px;
   overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   justify-items: center;
   align-items: end;
   gap: 18px;
@@ -9541,6 +10090,9 @@ button.danger {
 }
 
 .battle-unit-hud {
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
   width: min(100%, 246px);
   border: 1px solid rgba(241, 199, 123, 0.32);
   border-radius: 10px;
@@ -9591,47 +10143,13 @@ button.danger {
   background: linear-gradient(90deg, #1f6f86, #4eb7e0);
 }
 
-.battle-ap-spotlight {
-  margin-top: 7px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid rgba(108, 194, 244, 0.75);
-  border-radius: 999px;
-  padding: 6px 14px;
-  background: linear-gradient(130deg, rgba(17, 75, 110, 0.92), rgba(24, 46, 69, 0.9));
-  box-shadow: 0 0 10px rgba(100, 190, 255, 0.2), inset 0 1px 0 rgba(255,255,255,0.07);
-}
-
-.battle-ap-spotlight img {
-  width: 17px;
-  height: 17px;
-  filter: brightness(1.5);
-}
-
-.battle-ap-spotlight.enemy {
-  border-color: rgba(244, 191, 112, 0.75);
-  background: linear-gradient(130deg, rgba(114, 65, 22, 0.92), rgba(62, 38, 19, 0.9));
-  box-shadow: 0 0 10px rgba(255, 190, 80, 0.18), inset 0 1px 0 rgba(255,255,255,0.07);
-}
-
-.battle-ap-label {
-  margin: 0;
-  font-size: 1.05rem;
-  color: #a8e0ff;
-  font-weight: 800;
-  letter-spacing: 0.03em;
-}
-
-.battle-ap-spotlight.enemy .battle-ap-label {
-  color: #ffe4a8;
-}
-
 .battle-effect-pills {
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
   margin-top: 5px;
+  min-height: 28px;
+  align-content: flex-start;
 }
 
 .battle-effect-pill {
@@ -11746,21 +12264,6 @@ button.danger {
     height: 6px;
   }
 
-  .battle-ap-spotlight {
-    margin-top: 4px;
-    gap: 5px;
-    padding: 4px 10px;
-  }
-
-  .battle-ap-spotlight img {
-    width: 13px;
-    height: 13px;
-  }
-
-  .battle-ap-label {
-    font-size: 0.78rem;
-  }
-
   .battle-actor {
     width: clamp(58px, 23vw, 104px);
     min-height: 76px;
@@ -11844,7 +12347,8 @@ button.danger {
     border: none;
     border-radius: 0;
     background: linear-gradient(145deg, rgba(7, 15, 20, 0.98), rgba(18, 10, 8, 0.98));
-    padding-bottom: 10px;
+    padding-bottom: 0;
+    margin-bottom: 10px;
     overflow: hidden;
     width: 100%;
     max-width: 100%;
@@ -12069,8 +12573,9 @@ button.danger {
 
   .mobile-hud-stats {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 35px;
+    gap: 6px 14px;
     flex-shrink: 1;
     min-width: 0;
   }
@@ -12780,7 +13285,7 @@ button.danger {
   gap: 8px;
   font-size: 0.8rem;
 }
-.hub-vital-label { width: 34px; color: rgba(255,217,156,0.55); flex-shrink: 0; }
+.hub-vital-label { display: flex; align-items: center; width: 34px; color: rgba(255,217,156,0.55); flex-shrink: 0; }
 .hub-vital-bar-wrap {
   flex: 1;
   height: 8px;
@@ -13106,7 +13611,20 @@ button.danger {
   cursor: pointer;
   font-weight: 600;
   transition: filter 0.12s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
 }
+.use-btn-icon { width: 16px; height: 16px; object-fit: contain; flex-shrink: 0; vertical-align: middle; margin-right: 4px; }
+.hub-price { color: #ffd45c; font-size: 0.82rem; font-weight: 500; }
+.hub-btn-sell .hub-gold-icon { width: 14px; height: 14px; }
+.hub-vital-icon { width: 24px; height: 24px; object-fit: contain; }
+.hub-pill { font-size: 1rem !important; padding: 5px 14px !important; gap: 7px !important; }
+.hub-pill-icon { width: 22px; height: 22px; object-fit: contain; }
+.battle-meta-stat { display: inline-flex; align-items: center; gap: 3px; }
+.battle-meta-stat img { width: 14px; height: 14px; object-fit: contain; }
 .hub-action-btn:hover { filter: brightness(1.18); }
 .hub-btn-equip { background: #1a4a80; color: #a0d0ff; border-color: rgba(100,180,255,0.3); }
 .hub-btn-forge { background: #5a2a08; color: #ffcc80; border-color: rgba(255,160,60,0.3); }
@@ -13334,4 +13852,53 @@ button.danger {
   .hub-depart-btn { width: 100%; justify-content: center; }
   .hub-header { flex-direction: column; align-items: flex-start; }
 }
+
+/* ── Boutons de déplacement / interaction (design) ───────────────────────── */
+.move-btn {
+  position: relative;
+  font-size: 0 !important;
+  border-radius: 18px !important;
+  border: 1px solid rgba(240, 200, 130, 0.5) !important;
+  background: linear-gradient(160deg, #2b3d49 0%, #142029 100%) !important;
+  box-shadow: 0 4px 0 #0a1117, 0 8px 16px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.16) !important;
+  transition: transform 0.08s, box-shadow 0.08s, border-color 0.15s !important;
+}
+.move-btn::before {
+  content: '';
+  width: 30px;
+  height: 30px;
+  background: center / contain no-repeat;
+  filter: drop-shadow(0 0 4px rgba(245, 220, 174, 0.45));
+}
+.move-btn.move-up::before { background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5dcae' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='5,15 12,8 19,15'/></svg>"); }
+.move-btn.move-down::before { background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5dcae' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='5,9 12,16 19,9'/></svg>"); }
+.move-btn.move-left::before { background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5dcae' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='15,5 8,12 15,19'/></svg>"); }
+.move-btn.move-right::before { background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5dcae' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9,5 16,12 9,19'/></svg>"); }
+.mobile-control-panel { padding-top: 0 !important; margin-top: -24px !important; position: relative; z-index: 4; }
+.move-btn:hover { border-color: rgba(255, 224, 160, 0.85) !important; transform: none !important; }
+.move-btn:active {
+  transform: translateY(3px) !important;
+  box-shadow: 0 1px 0 #0a1117, 0 3px 8px rgba(0, 0, 0, 0.5), inset 0 2px 6px rgba(0, 0, 0, 0.4) !important;
+}
+.mobile-interact-btn {
+  border: 2px solid #ffe2a0 !important;
+  background: radial-gradient(circle at 35% 28%, #ffe3a3 0%, #e0a640 55%, #a86a16 100%) !important;
+  color: #2a1706 !important;
+  font-weight: 800 !important;
+  font-size: 1.5rem !important;
+  text-shadow: 0 1px 0 rgba(255, 240, 200, 0.6);
+  box-shadow: 0 4px 0 #6d430c, 0 8px 18px rgba(0, 0, 0, 0.55), inset 0 2px 0 rgba(255, 255, 255, 0.35) !important;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.mobile-interact-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #6d430c, 0 3px 8px rgba(0, 0, 0, 0.5), inset 0 2px 6px rgba(0, 0, 0, 0.3) !important;
+}
+.torch-quick-btn {
+  border: 1px solid rgba(240, 200, 130, 0.55) !important;
+  background: linear-gradient(160deg, #2b3d49 0%, #142029 100%) !important;
+  box-shadow: 0 3px 0 #0a1117, 0 6px 14px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.torch-quick-btn:active:enabled { transform: translateY(2px); box-shadow: 0 1px 0 #0a1117, inset 0 2px 5px rgba(0, 0, 0, 0.4); }
 </style>
