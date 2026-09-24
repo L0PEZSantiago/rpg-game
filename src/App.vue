@@ -5703,8 +5703,8 @@ onBeforeUnmount(() => {
                 </p>
                 <div v-else class="hub-stone-tray-list">
                   <div v-for="stone in forgeSocketInfo.availableStones" :key="stone.id" class="hub-stone-card"
-                    :class="{ armed: armedStoneId === stone.id }"
-                    draggable="true"
+                    :class="{ armed: armedStoneId === stone.id, 'stone-locked': !stone.identified }"
+                    :draggable="stone.identified ? 'true' : 'false'"
                     @dragstart="handleStoneDragStart(stone.id, $event)"
                     @dragend="armedStoneId = null"
                     @click="handleStoneTap(stone.id)">
@@ -5712,7 +5712,8 @@ onBeforeUnmount(() => {
                     <div class="hub-stone-card-info">
                       <span class="hub-stone-card-name" :style="{ color: RARITIES[stone.rarity]?.color }">{{ stone.name }}</span>
                       <span class="hub-stone-card-affixes" :class="{ 'stone-unidentified': !stone.identified }">{{ stoneDisplayAffixes(stone) }}</span>
-                      <span class="hub-stone-card-rate"
+                      <span v-if="!stone.identified" class="hub-stone-card-rate rate-locked">Non sertissable : à faire identifier d'abord</span>
+                      <span v-else class="hub-stone-card-rate"
                         :class="stone.successRate >= 0.8 ? 'rate-good' : stone.successRate >= 0.5 ? 'rate-mid' : 'rate-risky'">
                         {{ Math.round(stone.successRate * 100) }}% de réussite au sertissage
                       </span>
@@ -6944,8 +6945,8 @@ onBeforeUnmount(() => {
             </p>
             <div v-else class="hub-stone-tray-list">
               <div v-for="stone in forgeSocketInfo.availableStones" :key="stone.id" class="hub-stone-card"
-                :class="{ armed: armedStoneId === stone.id }"
-                draggable="true"
+                :class="{ armed: armedStoneId === stone.id, 'stone-locked': !stone.identified }"
+                :draggable="stone.identified ? 'true' : 'false'"
                 @dragstart="handleStoneDragStart(stone.id, $event)"
                 @dragend="armedStoneId = null"
                 @click="handleStoneTap(stone.id)">
@@ -6953,7 +6954,8 @@ onBeforeUnmount(() => {
                 <div class="hub-stone-card-info">
                   <span class="hub-stone-card-name" :style="{ color: RARITIES[stone.rarity]?.color }">{{ stone.name }}</span>
                   <span class="hub-stone-card-affixes" :class="{ 'stone-unidentified': !stone.identified }">{{ stoneDisplayAffixes(stone) }}</span>
-                  <span class="hub-stone-card-rate"
+                  <span v-if="!stone.identified" class="hub-stone-card-rate rate-locked">Non sertissable : à faire identifier d'abord</span>
+                  <span v-else class="hub-stone-card-rate"
                     :class="stone.successRate >= 0.8 ? 'rate-good' : stone.successRate >= 0.5 ? 'rate-mid' : 'rate-risky'">
                     {{ Math.round(stone.successRate * 100) }}% de réussite au sertissage
                   </span>
@@ -13789,6 +13791,8 @@ img[data-rarity="mythic"] {
   flex-wrap: wrap;
   gap: 8px;
 }
+.hub-stone-card.stone-locked { opacity: 0.6; cursor: not-allowed; }
+.rate-locked { color: #ff9a8a; font-weight: 600; }
 .hub-stone-card {
   display: flex;
   align-items: center;
