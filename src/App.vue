@@ -5528,9 +5528,10 @@ onBeforeUnmount(() => {
                 <span class="hub-inv-rarity" :style="{ color: RARITIES[item.rarity]?.color }">
                   {{ RARITIES[item.rarity]?.label }}
                 </span>
+                <span v-if="!item.identified" class="rate-locked">Non sertissable : à faire identifier d'abord</span>
               </div>
               <div class="hub-inv-actions">
-                <button class="hub-action-btn hub-btn-forge" @click="hubTab = 'forge'">Sertir en forge</button>
+                <button class="hub-action-btn hub-btn-forge" :disabled="!item.identified" @click="hubTab = 'forge'">Sertir en forge</button>
                 <button class="hub-action-btn hub-btn-sell"
                   @click="sellAction(item.id)">
                   Vendre <img src="/assets/Icons/gold_coin.png" alt="" class="hub-gold-icon" /> <strong class="hub-price">{{ sellValueForItem(item) }}</strong>
@@ -13632,6 +13633,7 @@ img[data-rarity="mythic"] {
 .battle-meta-stat { display: inline-flex; align-items: center; gap: 3px; }
 .battle-meta-stat img { width: 14px; height: 14px; object-fit: contain; }
 .hub-action-btn:hover { filter: brightness(1.18); }
+.hub-action-btn:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.6); }
 .hub-btn-equip { background: #1a4a80; color: #a0d0ff; border-color: rgba(100,180,255,0.3); }
 .hub-btn-forge { background: #5a2a08; color: #ffcc80; border-color: rgba(255,160,60,0.3); }
 .hub-btn-sell  { background: rgba(255,217,156,0.07); color: rgba(255,217,156,0.6); border-color: rgba(255,217,156,0.2); display: flex; align-items: center; gap: 4px; }
