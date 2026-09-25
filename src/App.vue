@@ -6473,15 +6473,20 @@ onBeforeUnmount(() => {
                     <button v-for="(skill, index) in unlockedPlayerSkills" :key="skill.id"
                       :disabled="!skillReady(skill)" :title="skill.description" @click="useSkillAction(skill.id)">
                       <span class="skill-btn-name">{{ index + 1 }}. {{ skill.name }}</span>
-                      <span class="skill-btn-cost">PA {{ skill.apCost }} / Mana {{ effectiveSkillManaCost(skill)
-                        }}</span>
+                      <span class="skill-btn-cost">
+                        <span class="skill-cost-pill" title="Points d'action"><span class="skill-cost-ap"></span>{{ skill.apCost }}</span>
+                        <span class="skill-cost-pill" title="Mana"><img src="/assets/Icons/mana_drop.svg" alt="" />{{ effectiveSkillManaCost(skill) }}</span>
+                      </span>
                       <span v-if="(run.combat.playerCooldowns[skill.id] ?? 0) > 0" class="skill-btn-cd">
                         Cd {{ run.combat.playerCooldowns[skill.id] }}t
                       </span>
                       <span v-else-if="skill.cooldown > 0" class="skill-btn-cd skill-btn-cd-ready">Prêt</span>
                       <small>
                         {{ skill.description }}
-                        | PA {{ skill.apCost }} mana {{ effectiveSkillManaCost(skill) }}
+                        <span class="skill-cost-inline">
+                          <span class="skill-cost-pill" title="Points d'action"><span class="skill-cost-ap"></span>{{ skill.apCost }}</span>
+                        <span class="skill-cost-pill" title="Mana"><img src="/assets/Icons/mana_drop.svg" alt="" />{{ effectiveSkillManaCost(skill) }}</span>
+                        </span>
                         | Recharge {{ skill.cooldown }} tour(s)
                         <span v-if="(run.combat.playerCooldowns[skill.id] ?? 0) > 0">
                           (disponible dans {{ run.combat.playerCooldowns[skill.id] }})
@@ -10061,6 +10066,10 @@ img[data-rarity="mythic"] {
   display: none;
 }
 
+.skill-cost-inline { display: inline-flex; gap: 6px; vertical-align: middle; margin: 0 2px; }
+.skill-cost-pill { display: inline-flex; align-items: center; gap: 3px; font-weight: 700; color: #e6eefa; }
+.skill-cost-pill img { width: 12px; height: 12px; object-fit: contain; }
+.skill-cost-ap { width: 10px; height: 10px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #d8f4ff, #4fb4ff 55%, #1f74c8); box-shadow: 0 0 4px rgba(110, 200, 255, 0.8); }
 .skill-btn-cd {
   display: inline-block;
   margin-top: 0;
@@ -12225,7 +12234,8 @@ img[data-rarity="mythic"] {
     display: block;
   }
   .combat-actions-panel[data-mobile-panel="skills"] .skill-btn-cost {
-    display: inline;
+    display: inline-flex;
+    gap: 8px;
     margin-top: 3px;
     margin-right: 6px;
     font-size: 0.65rem;
