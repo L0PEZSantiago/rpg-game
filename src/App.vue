@@ -1001,7 +1001,7 @@ function forgeGameStrike() {
     if (forgeGame.value !== game) return
     game.round += 1
     forgeGameStartRound()
-  }, 700)
+  }, 450)
 }
 
 function closeForgeGame() {
@@ -7649,7 +7649,7 @@ onBeforeUnmount(() => {
             <template v-else>&nbsp;</template>
           </p>
           <button type="button" class="forge-game-strike" :disabled="forgeGame.status !== 'playing'"
-            @click="forgeGameStrike">Frapper</button>
+            @pointerdown.prevent="forgeGameStrike">Frapper</button>
           <small class="forge-game-hint">Clic, tap sur la jauge, Espace ou Entrée</small>
         </template>
 
@@ -9355,7 +9355,7 @@ img[data-rarity="mythic"] {
 .forge-game-round.current { border-color: #ffd99c; box-shadow: 0 0 8px rgba(255, 217, 156, 0.6); }
 .forge-game-round.done { background: radial-gradient(circle at 35% 30%, #fff0cc, #ffb04f 55%, #d1691c); border-color: #ffe2b0; }
 .forge-game-bar { position: relative; height: 34px; border-radius: 10px; background: linear-gradient(180deg, #3a2414, #1c1009); border: 1px solid rgba(214, 140, 60, 0.6); overflow: hidden; cursor: pointer; touch-action: manipulation; }
-.forge-game-zone { position: absolute; top: 0; bottom: 0; background: linear-gradient(180deg, #ffe08a, #e0a640); box-shadow: 0 0 12px rgba(255, 200, 90, 0.7); transition: left 0.3s, width 0.3s; }
+.forge-game-zone { position: absolute; top: 0; bottom: 0; background: linear-gradient(180deg, #ffe08a, #e0a640); box-shadow: 0 0 12px rgba(255, 200, 90, 0.7); }
 .forge-game-cursor { position: absolute; top: 0; bottom: 0; width: 4px; margin-left: -2px; background: #fff; border-radius: 2px; box-shadow: 0 0 8px #fff; }
 .forge-game-bar.hit { border-color: #6dffa0; box-shadow: 0 0 14px rgba(109, 255, 160, 0.6); }
 .forge-game-bar.miss { border-color: #ff6a5a; box-shadow: 0 0 14px rgba(255, 106, 90, 0.6); }
