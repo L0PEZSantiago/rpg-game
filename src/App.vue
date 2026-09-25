@@ -923,8 +923,102 @@ function handleQuickUseTorch() {
   handleHubUseConsumable(quickTorchItem.value.id)
 }
 
+// Mini-jeu de forge (équipements uniquement) : 3 frappes réussies d'affilée dans
+// une zone qui rétrécit = qualité « Forgé par les dieux ».
+const FORGE_GAME_ZONES = [24, 15, 8]
+const FORGE_GAME_SPEEDS = [70, 85, 100]
+const forgeGame = ref(null)
+let forgeGameFrame = null
+let forgeGameLast = 0
+
+function forgeGameTick(now) {
+  const game = forgeGame.value
+  if (!game || game.status !== 'playing') {
+    forgeGameFrame = null
+    return
+  }
+  const dt = Math.min(0.05, (now - forgeGameLast) / 1000)
+  forgeGameLast = now
+  let pos = game.pos + game.dir * FORGE_GAME_SPEEDS[game.round] * dt
+  if (pos >= 100) { pos = 100; game.dir = -1 }
+  if (pos <= 0) { pos = 0; game.dir = 1 }
+  game.pos = pos
+  forgeGameFrame = requestAnimationFrame(forgeGameTick)
+}
+
+function forgeGameStartRound() {
+  const game = forgeGame.value
+  const width = FORGE_GAME_ZONES[game.round]
+  Object.assign(game, { zoneStart: 5 + Math.random() * (90 - width), zoneWidth: width, status: 'playing', pos: 0, dir: 1 })
+  forgeGameLast = performance.now()
+  cancelAnimationFrame(forgeGameFrame)
+  forgeGameFrame = requestAnimationFrame(forgeGameTick)
+}
+
+function startForgeGame(recipeId) {
+  forgeGame.value = { recipeId, round: 0, hits: 0, status: 'playing', pos: 0, dir: 1, zoneStart: 0, zoneWidth: 0, item: null, success: false }
+  forgeGameStartRound()
+}
+
+function forgeGameFinish(success) {
+  const game = forgeGame.value
+  if (!game) return
+  cancelAnimationFrame(forgeGameFrame)
+  forgeGameFrame = null
+  const result = craftItem(run.value, game.recipeId, { quality: success ? 'perfect' : 'good' })
+  if (!result.ok) {
+    setInfo(result.reason)
+    forgeGame.value = null
+    return
+  }
+  game.status = 'done'
+  game.success = success
+  game.item = result.item
+  playUiSound(success ? UI_SOUND_BANK.levelUp : UI_SOUND_BANK.craft, 0.3)
+  persistRun()
+}
+
+function forgeGameStrike() {
+  const game = forgeGame.value
+  if (!game || game.status !== 'playing') return
+  const hit = game.pos >= game.zoneStart && game.pos <= game.zoneStart + game.zoneWidth
+  cancelAnimationFrame(forgeGameFrame)
+  forgeGameFrame = null
+  if (!hit) {
+    game.status = 'miss'
+    playUiSound(UI_SOUND_BANK.forgeFail, 0.3)
+    setTimeout(() => forgeGameFinish(false), 700)
+    return
+  }
+  game.hits += 1
+  game.status = 'hit'
+  playUiSound(UI_SOUND_BANK.craft, 0.25)
+  if (game.hits >= FORGE_GAME_ZONES.length) {
+    setTimeout(() => forgeGameFinish(true), 700)
+    return
+  }
+  setTimeout(() => {
+    if (forgeGame.value !== game) return
+    game.round += 1
+    forgeGameStartRound()
+  }, 700)
+}
+
+function closeForgeGame() {
+  if (forgeGame.value?.status !== 'done') return
+  forgeGame.value = null
+}
+
+function isEquipmentRecipe(recipeId) {
+  return RECIPES.find((r) => r.id === recipeId)?.result?.kind === 'equipment'
+}
+
 function handleHubCraft(recipeId) {
   if (!run.value) return
+  if (isEquipmentRecipe(recipeId) && canCraft(run.value, recipeId)) {
+    startForgeGame(recipeId)
+    return
+  }
   const result = craftItem(run.value, recipeId)
   if (!result.ok) {
     setInfo(result.reason)
@@ -4519,6 +4613,11 @@ function npcAction(action, payload = null) {
     }
   }
 
+  if (action === 'craft' && isEquipmentRecipe(payload) && canCraft(run.value, payload)) {
+    startForgeGame(payload)
+    return
+  }
+
   if (action === 'craft') {
     const result = craftItem(run.value, payload)
     if (!result.ok) {
@@ -4926,6 +5025,14 @@ function keyHandler(event) {
   }
 
   const key = event.key.toLowerCase()
+  if (forgeGame.value) {
+    if (key === ' ' || key === 'enter') {
+      event.preventDefault()
+      if (forgeGame.value.status === 'done') closeForgeGame()
+      else forgeGameStrike()
+    }
+    return
+  }
   if (portalConfirmModal.value) {
     if (key === 'enter') {
       confirmPortalMove()
@@ -7519,6 +7626,50 @@ onBeforeUnmount(() => {
       </article>
     </div>
 
+    <div v-if="forgeGame" class="idm-overlay">
+      <article class="idm forge-game">
+        <header class="forge-game-head">
+          <h2>Forge — {{ RECIPES.find((r) => r.id === forgeGame.recipeId)?.name }}</h2>
+          <p>Arrête le curseur dans la zone dorée, 3 fois d'affilée, pour obtenir la qualité « Forgé par les dieux ».</p>
+        </header>
+
+        <div class="forge-game-rounds">
+          <span v-for="n in 3" :key="n" class="forge-game-round"
+            :class="{ done: n <= forgeGame.hits, current: n === forgeGame.round + 1 && forgeGame.status !== 'done' }"></span>
+        </div>
+
+        <template v-if="forgeGame.status !== 'done'">
+          <div class="forge-game-bar" :class="forgeGame.status" @pointerdown.prevent="forgeGameStrike">
+            <div class="forge-game-zone" :style="{ left: `${forgeGame.zoneStart}%`, width: `${forgeGame.zoneWidth}%` }"></div>
+            <div class="forge-game-cursor" :style="{ left: `${forgeGame.pos}%` }"></div>
+          </div>
+          <p class="forge-game-feedback" :class="forgeGame.status">
+            <template v-if="forgeGame.status === 'hit'">Frappe parfaite !</template>
+            <template v-else-if="forgeGame.status === 'miss'">Raté… la pièce sera de bonne facture.</template>
+            <template v-else>&nbsp;</template>
+          </p>
+          <button type="button" class="forge-game-strike" :disabled="forgeGame.status !== 'playing'"
+            @click="forgeGameStrike">Frapper</button>
+          <small class="forge-game-hint">Clic, tap sur la jauge, Espace ou Entrée</small>
+        </template>
+
+        <template v-else>
+          <p class="forge-game-result" :class="{ perfect: forgeGame.success }">
+            {{ forgeGame.success ? "Chef-d'œuvre ! Forgé par les dieux." : 'Forge terminée : de bonne facture.' }}
+          </p>
+          <div v-if="forgeGame.item" class="forge-game-item" :class="{ 'item-perfect': forgeGame.item.quality === 'perfect' }">
+            <img :src="itemIcon(forgeGame.item)" :data-rarity="forgeGame.item.rarity" alt="" />
+            <div>
+              <strong :style="{ color: rarityColor(forgeGame.item.rarity) }">{{ itemDisplayName(forgeGame.item) }}</strong>
+              <ItemMeta :item="forgeGame.item" />
+              <small>{{ itemDescription(forgeGame.item) }}</small>
+            </div>
+          </div>
+          <button type="button" class="forge-game-strike" @click="closeForgeGame">Continuer</button>
+        </template>
+      </article>
+    </div>
+
     <div v-if="shrineBlessingModal" class="overlay-meta" @click.self="shrineBlessingModal = null">
       <article class="meta-modal portal-confirm-modal shrine-modal" @click.stop>
         <header>
@@ -9196,6 +9347,29 @@ img[data-rarity="mythic"] {
 }
 .item-perfect { position: relative; overflow: hidden; }
 .item-perfect::after { content: ''; position: absolute; top: -20%; bottom: -20%; left: 0; width: 40%; pointer-events: none; background: linear-gradient(105deg, transparent 0%, rgba(255, 236, 190, 0) 30%, rgba(255, 236, 190, 0.22) 50%, rgba(255, 236, 190, 0) 70%, transparent 100%); transform: translateX(-130%) skewX(-18deg); animation: idm-shine-sweep 3.6s ease-in-out infinite; z-index: 3; }
+.forge-game { text-align: center; }
+.forge-game-head h2 { margin: 0 0 4px; font-size: 1.1rem; color: #ffd99c; }
+.forge-game-head p { margin: 0; font-size: 0.82rem; color: #d9c3a6; }
+.forge-game-rounds { display: flex; justify-content: center; gap: 10px; }
+.forge-game-round { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(255, 217, 156, 0.4); background: rgba(0, 0, 0, 0.3); }
+.forge-game-round.current { border-color: #ffd99c; box-shadow: 0 0 8px rgba(255, 217, 156, 0.6); }
+.forge-game-round.done { background: radial-gradient(circle at 35% 30%, #fff0cc, #ffb04f 55%, #d1691c); border-color: #ffe2b0; }
+.forge-game-bar { position: relative; height: 34px; border-radius: 10px; background: linear-gradient(180deg, #3a2414, #1c1009); border: 1px solid rgba(214, 140, 60, 0.6); overflow: hidden; cursor: pointer; touch-action: manipulation; }
+.forge-game-zone { position: absolute; top: 0; bottom: 0; background: linear-gradient(180deg, #ffe08a, #e0a640); box-shadow: 0 0 12px rgba(255, 200, 90, 0.7); transition: left 0.3s, width 0.3s; }
+.forge-game-cursor { position: absolute; top: 0; bottom: 0; width: 4px; margin-left: -2px; background: #fff; border-radius: 2px; box-shadow: 0 0 8px #fff; }
+.forge-game-bar.hit { border-color: #6dffa0; box-shadow: 0 0 14px rgba(109, 255, 160, 0.6); }
+.forge-game-bar.miss { border-color: #ff6a5a; box-shadow: 0 0 14px rgba(255, 106, 90, 0.6); }
+.forge-game-feedback { margin: 0; min-height: 1.2em; font-weight: 700; }
+.forge-game-feedback.hit { color: #6dffa0; }
+.forge-game-feedback.miss { color: #ff8a7a; }
+.forge-game-strike { padding: 12px; font-size: 1rem; font-weight: 800; border-radius: 10px; border: 2px solid #ffe2a0; background: radial-gradient(circle at 35% 28%, #ffe3a3 0%, #e0a640 55%, #a86a16 100%); color: #2a1706; }
+.forge-game-strike:disabled { opacity: 0.55; }
+.forge-game-hint { opacity: 0.6; font-size: 0.72rem; }
+.forge-game-result { margin: 0; font-size: 1.05rem; font-weight: 800; color: #d9c3a6; }
+.forge-game-result.perfect { color: #ffd45c; text-shadow: 0 0 10px rgba(255, 212, 92, 0.6); }
+.forge-game-item { display: flex; gap: 12px; align-items: center; text-align: left; padding: 10px; border-radius: 10px; background: rgba(255, 190, 120, 0.07); }
+.forge-game-item img { width: 44px; height: 44px; object-fit: contain; image-rendering: pixelated; }
+.forge-game-item > div { display: flex; flex-direction: column; gap: 3px; }
 .idm-shine { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; pointer-events: none; z-index: 0; }
 .idm-shine::before { content: ''; position: absolute; top: -20%; bottom: -20%; left: 0; width: 45%; background: linear-gradient(105deg, transparent 0%, rgba(255, 236, 190, 0) 30%, rgba(255, 236, 190, 0.28) 50%, rgba(255, 236, 190, 0) 70%, transparent 100%); transform: translateX(-130%) skewX(-18deg); animation: idm-shine-sweep 3.6s ease-in-out infinite; }
 @keyframes idm-shine-sweep { 0% { transform: translateX(-130%) skewX(-18deg); } 55%, 100% { transform: translateX(330%) skewX(-18deg); } }

@@ -4499,7 +4499,7 @@ export function canCraft(run, recipeId) {
   return Object.entries(materials).every(([material, qty]) => (run.player.materials[material] ?? 0) >= qty)
 }
 
-export function craftItem(run, recipeId) {
+export function craftItem(run, recipeId, options = {}) {
   const recipe = recipeById(recipeId)
   if (!recipe) {
     return { ok: false, reason: 'Recette inconnue.' }
@@ -4512,6 +4512,7 @@ export function craftItem(run, recipeId) {
   for (const [material, qty] of Object.entries(effectiveMaterials)) {
     run.player.materials[material] -= qty
   }
+  let craftedItem = null
 
   if (recipe.result.kind === 'material') {
     addMaterial(run, recipe.result.material, recipe.result.quantity ?? 1)
@@ -4530,7 +4531,7 @@ export function craftItem(run, recipeId) {
     const rarityData = RARITIES[recipe.result.rarity]
     // Le craft est délibéré : il exclut la "piètre qualité" pour rester strictement
     // meilleur qu'un objet trouvé au hasard, à rareté égale.
-    const quality = rollEquipmentQuality([
+    const quality = options.quality ?? rollEquipmentQuality([
       { value: 'good', weight: 70 },
       { value: 'perfect', weight: 30 },
     ])
@@ -4554,11 +4555,12 @@ export function craftItem(run, recipeId) {
 
     item.sockets = new Array(SOCKET_CAP_BY_RARITY[recipe.result.rarity] ?? 0).fill(null)
 
-    addInventoryItem(run, applyRandomBonusesToItem(run, item))
+    craftedItem = applyRandomBonusesToItem(run, item)
+    addInventoryItem(run, craftedItem)
   }
 
   appendLog(run, `Artisanat: ${recipe.name} forge.`)
-  return { ok: true, recipe }
+  return { ok: true, recipe, item: craftedItem }
 }
 
 export function healAtNpc(run) {
