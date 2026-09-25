@@ -7740,6 +7740,7 @@ button {
   color: #f4edd8;
   cursor: pointer;
   transition: transform 120ms ease, background 120ms ease;
+  touch-action: manipulation;
 }
 
 button:hover:enabled {
