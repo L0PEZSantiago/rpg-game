@@ -66,9 +66,9 @@ const WANDERING_MERCHANT_NAMES = ['Caravane Spectrale', 'Marchand Sans Visage', 
 const SPIRIT_SOCKETER_NAMES = ['Sertisseur Errant', 'Artisan des Châsses', 'Ancienne des Pierres']
 const SPIRIT_IDENTIFIER_NAMES = ['Voyante des Reliques', 'Sage des Murmures', 'Oracle des Pierres']
 const SPIRIT_SOCKETER_MIN_GAP = 2
-const SPIRIT_SOCKETER_SPAWN_CHANCE = 0.55
-const SPIRIT_IDENTIFIER_MIN_GAP = 4
-const SPIRIT_IDENTIFIER_SPAWN_CHANCE = 0.4
+const SPIRIT_SOCKETER_SPAWN_CHANCE = 0.8
+const SPIRIT_IDENTIFIER_MIN_GAP = 2
+const SPIRIT_IDENTIFIER_SPAWN_CHANCE = 0.7
 const PROCEDURAL_SPIDER_SPAWN_CHANCE = 0.58
 const PROCEDURAL_SPIDER_MAX_COUNT = 2
 const UPGRADE_COSTS_BY_RARITY = {
@@ -999,7 +999,7 @@ export function createRun({ name, classId, difficulty }) {
       materials: createMaterialBag(),
       deaths: 0,
       passiveResetsUsed: 0,
-      quests: { active: [], completed: [], killCounts: {} },
+      quests: { active: [], completed: [], killCounts: {}, perfectForges: 0, baselines: {} },
       discoveredSecretRooms: [],
       shrineBlessing: {},
       lunarBlessingReceived: false,
@@ -1073,6 +1073,8 @@ function ensurePlayerState(run) {
   run.player.quests.active ??= []
   run.player.quests.completed ??= []
   run.player.quests.killCounts ??= {}
+  run.player.quests.perfectForges ??= 0
+  run.player.quests.baselines ??= {}
   run.player.discoveredSecretRooms ??= []
   run.player.shrineBlessing ??= {}
   run.player.lunarBlessingReceived ??= false
@@ -1755,6 +1757,8 @@ export function acceptQuest(run, questId) {
     return { ok: false, reason: 'Quete deja acceptee.' }
   }
   run.player.quests.active.push(questId)
+  run.player.quests.baselines ??= {}
+  run.player.quests.baselines[questId] = run.player.quests.perfectForges ?? 0
   appendLog(run, `Nouvelle quete acceptee : ${quest.name}.`)
   return { ok: true }
 }
@@ -1766,6 +1770,11 @@ export function questProgress(run, questId) {
   }
   const objective = quest.objective
   switch (objective.type) {
+    case 'forge_perfect_item': {
+      const baseline = run.player.quests.baselines?.[questId] ?? 0
+      const done = Math.max(0, (run.player.quests.perfectForges ?? 0) - baseline)
+      return { current: Math.min(done, objective.amount), target: objective.amount }
+    }
     case 'collect_material': {
       const current = Math.min(run.player.materials[objective.material] ?? 0, objective.amount)
       return { current, target: objective.amount }
@@ -2451,6 +2460,15 @@ function grantXp(run, xp) {
 // les combats (voir plan de rééquilibrage) : on ajoute un facteur d'échelle
 // supplémentaire sur HP/attaque des ennemis de haut niveau pour compenser,
 // sans toucher au début de partie.
+// Les monstres se renforcent légèrement à chaque map après la première du parcours,
+// et un peu plus encore dans les zones secrètes.
+const MAP_PROGRESSION_ENEMY_SCALE = 0.03
+const SECRET_ZONE_ENEMY_SCALE = 1.12
+
+function mapProgressionEnemyScale(run) {
+  return 1 + Math.max(0, progressionMapIndex(run)) * MAP_PROGRESSION_ENEMY_SCALE
+}
+
 function endgameEnemyScale(level) {
   return 1 + Math.max(0, level - 15) * 0.02
 }
@@ -2749,7 +2767,7 @@ function takeDamage(targetHp, targetEffects, incomingDamage, targetStats = {}, o
     guardEffect.value = 0
     guardEffect.turns = 0
     const beforeGuard = damage
-    damage = Math.max(1, Math.floor(damage * 0.25))
+    damage = Math.max(1, Math.floor(damage * (1 - (guardEffect.block ?? 0.75))))
     const guardBlocked = beforeGuard - damage
     let shieldAbsorbed = 0
     for (const shield of targetEffects.filter((effect) => effect.type === 'shield' && effect.value > 0)) {
@@ -3514,8 +3532,9 @@ function applySkill(run, side, skill) {
     }
   } else if (skill.effect === 'guard') {
     const effects = side === 'player' ? battle.playerEffects : battle.enemyEffects
-    effects.push({ id: uid('guard'), type: 'guard', value: 1, turns: 1 })
-    text += ' Posture de garde : prochain coup réduit à 25%.'
+    const guardBlock = skill.guardBlock ?? 0.75
+    effects.push({ id: uid('guard'), type: 'guard', value: 1, turns: 1, block: guardBlock })
+    text += ` Posture de défense : le prochain coup subi est réduit de ${Math.round(guardBlock * 100)}%.`
     if (skill.buffType && skill.buffValue && skill.buffTurns) {
       effects.push({
         id: uid('buff'),
@@ -3852,7 +3871,8 @@ export function startCombat(run, enemy) {
   }
 
   const difficulty = difficultyFor(run)
-  const mapLevelScale = currentMap(run)?.levelScale ?? 1
+  const map = currentMap(run)
+  const mapLevelScale = (map?.levelScale ?? 1) * mapProgressionEnemyScale(run) * (map?.isSecret || map?.isSecretRoom ? SECRET_ZONE_ENEMY_SCALE : 1)
   const scaled = applyDifficultyToEnemy(template, difficulty, mapLevelScale)
   const hpRatio = clamp(enemy.currentHp / Math.max(1, template.maxHp), 0.05, 1)
   const manaRatio = clamp(enemy.currentMana / Math.max(1, template.maxMana || 1), 0, 1)
@@ -4557,6 +4577,9 @@ export function craftItem(run, recipeId, options = {}) {
 
     craftedItem = applyRandomBonusesToItem(run, item)
     addInventoryItem(run, craftedItem)
+    if (quality === 'perfect') {
+      run.player.quests.perfectForges = (run.player.quests.perfectForges ?? 0) + 1
+    }
   }
 
   appendLog(run, `Artisanat: ${recipe.name} forge.`)
@@ -5206,13 +5229,17 @@ export function activateLunarShrine(run) {
   }
 }
 
-function socketSuccessRateFor(run, stoneRarity) {
+// Un sertisseur itinérant (PNJ) est plus habile que le joueur au camp.
+export const SOCKETER_NPC_SUCCESS_BONUS = 0.15
+
+function socketSuccessRateFor(run, stoneRarity, atNpc = false) {
   const difficultyId = run.metadata?.difficulty ?? 'normal'
   const table = SPIRIT_STONE_SOCKET_SUCCESS_RATE[stoneRarity] ?? SPIRIT_STONE_SOCKET_SUCCESS_RATE.common
-  return table[difficultyId] ?? table.normal
+  const base = table[difficultyId] ?? table.normal
+  return Math.min(1, base + (atNpc ? SOCKETER_NPC_SUCCESS_BONUS : 0))
 }
 
-export function socketInfoForItem(run, itemId) {
+export function socketInfoForItem(run, itemId, options = {}) {
   const item = findItemAnywhere(run, itemId)
   if (!item || item.kind !== 'equipment') return null
   const cap = SOCKET_CAP_BY_RARITY[item.rarity] ?? 0
@@ -5224,11 +5251,11 @@ export function socketInfoForItem(run, itemId) {
     chiselStock: run.player.materials.spirit_chisel ?? 0,
     availableStones: run.player.inventory
       .filter((i) => i.kind === 'spirit_stone')
-      .map((stone) => ({ ...stone, successRate: socketSuccessRateFor(run, stone.rarity) })),
+      .map((stone) => ({ ...stone, successRate: socketSuccessRateFor(run, stone.rarity, options.atNpc) })),
   }
 }
 
-export function insertSpiritStone(run, itemId, socketIndex, stoneItemId) {
+export function insertSpiritStone(run, itemId, socketIndex, stoneItemId, options = {}) {
   const item = findItemAnywhere(run, itemId)
   if (!item || item.kind !== 'equipment') return { ok: false, reason: 'Objet introuvable.' }
   const sockets = item.sockets ?? []
@@ -5246,7 +5273,7 @@ export function insertSpiritStone(run, itemId, socketIndex, stoneItemId) {
   if (!stone.identified) {
     return { ok: false, reason: 'Cette pierre doit d\'abord être identifiée pour être sertie.' }
   }
-  const successRate = socketSuccessRateFor(run, stone.rarity)
+  const successRate = socketSuccessRateFor(run, stone.rarity, options.atNpc)
   run.player.inventory.splice(stoneIndex, 1)
 
   if (!chance(successRate)) {

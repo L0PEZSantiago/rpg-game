@@ -288,6 +288,16 @@ export const MAPS = {
     backPortal: null,
     npcs: [
       {
+        id: 'npc_master_smith',
+        name: 'Maître Dorvan',
+        role: 'quest',
+        spawnChance: 1.0,
+        x: 2,
+        y: 2,
+        portrait: KNIGHT_ASSET,
+        dialogue: "Une lame parfaite ne sort pas du hasard, mais d'une main sûre et d'un rythme juste.",
+      },
+      {
         id: 'npc_broker',
         name: 'Nell le Courtier',
         role: 'merchant',

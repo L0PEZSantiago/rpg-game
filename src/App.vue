@@ -544,7 +544,7 @@ const forgeStabilityShardCost = computed(() => {
   return item.rarity === 'legendary' && level === 4 ? 2 : 1
 })
 const forgeSocketInfo = computed(() =>
-  run.value && forgeSelectedItemId.value ? socketInfoForItem(run.value, forgeSelectedItemId.value) : null,
+  run.value && forgeSelectedItemId.value ? socketInfoForItem(run.value, forgeSelectedItemId.value, { atNpc: Boolean(spiritSocketerModal.value) }) : null,
 )
 const hubEquipmentItems = computed(() => {
   if (!run.value) return []
@@ -903,6 +903,7 @@ function handleHubUseCampfire() {
   if (!item) return
   const result = useConsumable(run.value, item.id)
   if (!result.ok) setInfo(result.reason)
+  else playUiSound(UI_SOUND_BANK.drinkPotion, 0.28)
   persistRun()
 }
 
@@ -910,6 +911,7 @@ function handleHubUseConsumable(itemId) {
   if (!run.value) return
   const result = useConsumable(run.value, itemId)
   if (!result.ok) setInfo(result.reason)
+  else playUiSound(UI_SOUND_BANK.drinkPotion, 0.28)
   persistRun()
 }
 
@@ -1022,6 +1024,8 @@ function handleHubCraft(recipeId) {
   const result = craftItem(run.value, recipeId)
   if (!result.ok) {
     setInfo(result.reason)
+  } else {
+    playUiSound(UI_SOUND_BANK.craft, 0.3)
   }
   persistRun()
 }
@@ -3958,7 +3962,7 @@ function handleForgeRarityUpgrade() {
 
 function handleInsertSpiritStone(socketIndex, stoneItemId) {
   if (!run.value || !forgeSelectedItemId.value || !stoneItemId) return
-  const result = insertSpiritStone(run.value, forgeSelectedItemId.value, socketIndex, stoneItemId)
+  const result = insertSpiritStone(run.value, forgeSelectedItemId.value, socketIndex, stoneItemId, { atNpc: Boolean(spiritSocketerModal.value) })
   armedStoneId.value = null
   if (!result.ok) {
     setInfo(result.reason)
@@ -4567,6 +4571,25 @@ function answerRiddle(optionId) {
   persistRun()
 }
 
+function turnInQuestAction(questId) {
+  if (!run.value) return
+  const result = turnInQuest(run.value, questId)
+  if (!result.ok) {
+    setInfo(result.reason)
+  } else {
+    lootModal.value = {
+      enemyName: `Quête accomplie : ${result.questName}`,
+      xp: 0,
+      gold: result.rewards.gold,
+      materials: result.rewards.materials,
+      items: result.rewards.items,
+    }
+    setInfo('Quête terminée ! Récompense reçue.')
+    playUiSound(UI_SOUND_BANK.levelUp, 0.3)
+  }
+  persistRun()
+}
+
 function npcAction(action, payload = null) {
   if (!run.value || !currentNpc.value) {
     return
@@ -4668,20 +4691,7 @@ function npcAction(action, payload = null) {
   }
 
   if (action === 'quest_turn_in') {
-    const result = turnInQuest(run.value, payload)
-    if (!result.ok) {
-      setInfo(result.reason)
-    } else {
-      lootModal.value = {
-        enemyName: `Quête accomplie : ${result.questName}`,
-        xp: 0,
-        gold: result.rewards.gold,
-        materials: result.rewards.materials,
-        items: result.rewards.items,
-      }
-      setInfo('Quête terminée ! Récompense reçue.')
-      playUiSound(UI_SOUND_BANK.levelUp, 0.3)
-    }
+    turnInQuestAction(payload)
   }
 
   persistRun()
@@ -5483,7 +5493,7 @@ onBeforeUnmount(() => {
               class="hub-equip-card card"
               :class="{ 'hub-equip-selected': run.player.equipment[slot]?.id === forgeSelectedItemId, 'item-perfect': run.player.equipment[slot]?.quality === 'perfect' }"
               @click="openItemDetail(run.player.equipment[slot])">
-              <img v-if="run.player.equipment[slot]" :src="itemIcon(run.player.equipment[slot])"
+              <img :data-rarity="(run.player.equipment[slot])?.rarity" v-if="run.player.equipment[slot]" :src="itemIcon(run.player.equipment[slot])"
                 class="hub-equip-icon" alt="" />
               <div class="hub-equip-info">
                 <span v-if="run.player.equipment[slot]" class="hub-equip-name"
@@ -5579,7 +5589,7 @@ onBeforeUnmount(() => {
               </div>
               <div class="hub-inv-actions" @click.stop>
                 <button class="hub-action-btn hub-btn-equip"
-                  @click="equipItem(run, item.id); persistRun()">Équiper</button>
+                  @click="equipAction(item.id)">Équiper</button>
                 <button class="hub-action-btn hub-btn-forge"
                   @click="forgeSelectedItemId = item.id; hubTab = 'forge'">Forger</button>
                 <button class="hub-action-btn hub-btn-sell" @click="recycleAction(item.id)">
@@ -5787,7 +5797,7 @@ onBeforeUnmount(() => {
                   @click="!socket && handleSocketTap(idx)">
                   <template v-if="socket">
                     <span class="hub-socket-icon-wrap" :style="{ borderColor: RARITIES[socket.rarity]?.color }">
-                      <img src="/assets/Icons/spirit_stone.svg" class="hub-socket-icon" alt="" />
+                      <img src="/assets/Icons/spirit_stone.svg" :data-rarity="socket.rarity" class="hub-socket-icon" alt="" />
                     </span>
                     <span class="hub-socket-label" :style="{ color: RARITIES[socket.rarity]?.color }">{{ socket.name }}</span>
                     <span class="hub-socket-desc">{{ (socket.affixes ?? []).join(', ') }}</span>
@@ -5816,7 +5826,7 @@ onBeforeUnmount(() => {
                     @dragstart="handleStoneDragStart(stone.id, $event)"
                     @dragend="armedStoneId = null"
                     @click="handleStoneTap(stone.id)">
-                    <img src="/assets/Icons/spirit_stone.svg" class="hub-stone-card-icon" alt="" />
+                    <img src="/assets/Icons/spirit_stone.svg" :data-rarity="stone.rarity" class="hub-stone-card-icon" alt="" />
                     <div class="hub-stone-card-info">
                       <span class="hub-stone-card-name" :style="{ color: RARITIES[stone.rarity]?.color }">{{ stone.name }}</span>
                       <span class="hub-stone-card-affixes" :class="{ 'stone-unidentified': !stone.identified }">{{ stoneDisplayAffixes(stone) }}</span>
@@ -5957,8 +5967,11 @@ onBeforeUnmount(() => {
             <p>{{ quest.description }}</p>
             <p class="quest-panel-progress">
               {{ quest.progress.current }} / {{ quest.progress.target }}
-              <span v-if="quest.isComplete"> — Pret a rendre !</span>
+              <span v-if="quest.isComplete"> — Prête à rendre !</span>
             </p>
+            <button v-if="quest.isComplete" type="button" class="quest-panel-claim" @click="turnInQuestAction(quest.id)">
+              Terminer la quête et récupérer la récompense
+            </button>
           </div>
         </div>
         <div class="quest-panel-section">
@@ -6456,7 +6469,7 @@ onBeforeUnmount(() => {
                     <span>Fin du tour</span>
                   </button>
                   <button class="mobile-menu-btn mobile-menu-flee" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">
-                    <span>Fuir - 2 PA ({{ fleeRate }}%)</span>
+                    <span>Fuir <span class="ic-ap" title="Points d'action"></span>2 ({{ fleeRate }}%)</span>
                   </button>
                 </div>
 
@@ -6474,22 +6487,20 @@ onBeforeUnmount(() => {
                       :disabled="!skillReady(skill)" :title="skill.description" @click="useSkillAction(skill.id)">
                       <span class="skill-btn-name">{{ index + 1 }}. {{ skill.name }}</span>
                       <span class="skill-btn-cost">
-                        <span class="skill-cost-pill" title="Points d'action"><span class="skill-cost-ap"></span>{{ skill.apCost }}</span>
-                        <span class="skill-cost-pill" title="Mana"><img src="/assets/Icons/mana_drop.svg" alt="" />{{ effectiveSkillManaCost(skill) }}</span>
+                        <span class="skill-cost-pill"><span class="ic-ap" title="Points d'action"></span>{{ skill.apCost }}</span>
+                        <span class="skill-cost-pill"><img class="ic-img" src="/assets/Icons/mana_drop.svg" title="Mana" alt="Mana" />{{ effectiveSkillManaCost(skill) }}</span>
+                        <span v-if="skill.cooldown > 0" class="skill-cost-pill"><img class="ic-img" src="/assets/Icons/cooldown.svg" title="Temps de recharge" alt="Recharge" />{{ skill.cooldown }}</span>
                       </span>
                       <span v-if="(run.combat.playerCooldowns[skill.id] ?? 0) > 0" class="skill-btn-cd">
-                        Cd {{ run.combat.playerCooldowns[skill.id] }}t
+                        <img class="ic-img" src="/assets/Icons/cooldown.svg" title="Temps de recharge" alt="Recharge" />{{ run.combat.playerCooldowns[skill.id] }}
                       </span>
                       <span v-else-if="skill.cooldown > 0" class="skill-btn-cd skill-btn-cd-ready">Prêt</span>
                       <small>
                         {{ skill.description }}
                         <span class="skill-cost-inline">
-                          <span class="skill-cost-pill" title="Points d'action"><span class="skill-cost-ap"></span>{{ skill.apCost }}</span>
-                        <span class="skill-cost-pill" title="Mana"><img src="/assets/Icons/mana_drop.svg" alt="" />{{ effectiveSkillManaCost(skill) }}</span>
-                        </span>
-                        | Recharge {{ skill.cooldown }} tour(s)
-                        <span v-if="(run.combat.playerCooldowns[skill.id] ?? 0) > 0">
-                          (disponible dans {{ run.combat.playerCooldowns[skill.id] }})
+                          <span class="skill-cost-pill"><span class="ic-ap" title="Points d'action"></span>{{ skill.apCost }}</span>
+                          <span class="skill-cost-pill"><img class="ic-img" src="/assets/Icons/mana_drop.svg" title="Mana" alt="Mana" />{{ effectiveSkillManaCost(skill) }}</span>
+                          <span class="skill-cost-pill"><img class="ic-img" src="/assets/Icons/cooldown.svg" title="Temps de recharge" alt="Recharge" />{{ skill.cooldown }}</span>
                         </span>
                       </small>
                     </button>
@@ -6509,14 +6520,14 @@ onBeforeUnmount(() => {
                     </h3>
                     <div class="combat-actions-row">
                       <button :disabled="!normalAttackReady()" @click="useNormalAttack">
-                        Attaque (2 PA)<kbd></kbd>
+                        Attaque <span class="ic-ap" title="Points d'action"></span>2<kbd></kbd>
                       </button>
                       <div class="combat-endturn-flee-row">
                         <button data-tuto="endturn" :class="{ 'end-turn-btn': shouldEmphasizeEndTurn, 'tuto-highlight': tutorialHighlight === 'endturn' }"
                           :disabled="run.combat.actor !== 'player'" type="button" @click.prevent="endTurnAction">
                           Fin du tour
                         </button>
-                        <button class="combat-flee-desktop" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir — 2 PA ({{ fleeRate }}%)</button>
+                        <button class="combat-flee-desktop" :disabled="run.combat.actor !== 'player'" @click="attemptFleeAction">Fuir <span class="ic-ap" title="Points d'action"></span>2 ({{ fleeRate }}%)</button>
                       </div>
                     </div>
                   </div>
@@ -6540,13 +6551,13 @@ onBeforeUnmount(() => {
                         class="potions-grid-btn" :disabled="!canUseConsumable(item)"
                         :title="consumableDisableReason(item)" @click="consumeItem(item.id)"
                         @mouseenter="markInventoryItemSeen(item.id)">
-                        <img class="potions-grid-icon" :src="itemIcon(item)" alt="" />
+                        <img :data-rarity="(item)?.rarity" class="potions-grid-icon" :src="itemIcon(item)" alt="" />
                         <span class="potions-grid-body">
                           <span class="potions-grid-name" :style="{ color: rarityColor(item.rarity) }">{{ item.name }} x{{
                             item.quantity }}</span>
                           <span class="consumable-effect">{{ consumableDescription(item.effect, item) }}</span>
                         </span>
-                        <span class="potions-grid-cost">2 PA</span>
+                        <span class="potions-grid-cost"><span class="ic-ap" title="Points d'action"></span>2</span>
                       </button>
                       <p v-if="!(combatActiveConsumableGroup?.items.length ?? 0)">Aucun objet dans cet onglet.</p>
                     </div>
@@ -6564,7 +6575,7 @@ onBeforeUnmount(() => {
             <button v-if="run.combat" class="combat-attack-standalone"
               :disabled="!normalAttackReady()" @click="useNormalAttack">
               <img src="/assets/Icons/sword.png" alt="" />
-              <span>Attaque (2 PA)</span>
+              <span>Attaque <span class="ic-ap" title="Points d'action"></span>2</span>
             </button>
 
             <section class="combat-scene-panel">
@@ -6759,7 +6770,7 @@ onBeforeUnmount(() => {
                   @focusin="showInventoryItemTooltip(item, $event)" @mouseleave="hideInventoryItemTooltip"
                   @focusout="hideInventoryItemTooltip"
                   @touchstart="handleInventoryItemTouch(item, $event)">
-                  <img class="item-icon" :src="itemIcon(item)" alt="item" />
+                  <img :data-rarity="(item)?.rarity" class="item-icon" :src="itemIcon(item)" alt="item" />
                   <div class="item-main">
                     <div class="item-name-row">
                       <strong :style="{ color: rarityColor(item.rarity) }">{{ itemDisplayName(item) }}</strong>
@@ -6882,7 +6893,7 @@ onBeforeUnmount(() => {
                 @mouseenter="showInventoryItemTooltip(item, $event)" @mouseleave="hideInventoryItemTooltip()"
                 @mousemove="moveInventoryItemTooltip($event)"
                 @touchstart="handleInventoryItemTouch(item, $event)">
-                <img class="item-icon" :src="itemIcon(item)" alt="loot" />
+                <img :data-rarity="(item)?.rarity" class="item-icon" :src="itemIcon(item)" alt="loot" />
                 <div class="item-main">
                   <strong :style="{ color: rarityColor(item.rarity) }">{{ itemDisplayName(item) }}</strong>
                   <p class="loot-item-rarity" :style="{ color: rarityColor(item.rarity) }">{{ rarityLabel(item.rarity)
@@ -7003,7 +7014,7 @@ onBeforeUnmount(() => {
           <header class="challenge-modal-header">
             <div class="challenge-icon">✧</div>
             <h2>{{ spiritSocketerModal.npcName }}</h2>
-            <p class="challenge-subtitle">Sertit tes pierres d'esprit sur le terrain, comme au camp.</p>
+            <p class="challenge-subtitle">Sertit tes pierres d'esprit sur le terrain. Sa main experte donne <strong>+15% de chances de réussite</strong> par rapport au camp.</p>
           </header>
           <div class="hub-forge-selector card">
             <h3 class="hub-section-title">Choisir un équipement</h3>
@@ -7037,7 +7048,7 @@ onBeforeUnmount(() => {
                 @click="!socket && handleSocketTap(idx)">
                 <template v-if="socket">
                   <span class="hub-socket-icon-wrap" :style="{ borderColor: RARITIES[socket.rarity]?.color }">
-                    <img src="/assets/Icons/spirit_stone.svg" class="hub-socket-icon" alt="" />
+                    <img src="/assets/Icons/spirit_stone.svg" :data-rarity="socket.rarity" class="hub-socket-icon" alt="" />
                   </span>
                   <span class="hub-socket-label" :style="{ color: RARITIES[socket.rarity]?.color }">{{ socket.name }}</span>
                   <span class="hub-socket-desc">{{ (socket.affixes ?? []).join(', ') }}</span>
@@ -7063,7 +7074,7 @@ onBeforeUnmount(() => {
                 @dragstart="handleStoneDragStart(stone.id, $event)"
                 @dragend="armedStoneId = null"
                 @click="handleStoneTap(stone.id)">
-                <img src="/assets/Icons/spirit_stone.svg" class="hub-stone-card-icon" alt="" />
+                <img src="/assets/Icons/spirit_stone.svg" :data-rarity="stone.rarity" class="hub-stone-card-icon" alt="" />
                 <div class="hub-stone-card-info">
                   <span class="hub-stone-card-name" :style="{ color: RARITIES[stone.rarity]?.color }">{{ stone.name }}</span>
                   <span class="hub-stone-card-affixes" :class="{ 'stone-unidentified': !stone.identified }">{{ stoneDisplayAffixes(stone) }}</span>
@@ -7092,7 +7103,7 @@ onBeforeUnmount(() => {
           </p>
           <div v-else class="hub-stone-tray-list">
             <div v-for="stone in unidentifiedStones" :key="stone.id" class="hub-stone-card">
-              <img src="/assets/Icons/spirit_stone.svg" class="hub-stone-card-icon" alt="" />
+              <img src="/assets/Icons/spirit_stone.svg" :data-rarity="stone.rarity" class="hub-stone-card-icon" alt="" />
               <div class="hub-stone-card-info">
                 <span class="hub-stone-card-name" :style="{ color: RARITIES[stone.rarity]?.color }">{{ stone.name }}</span>
                 <span class="hub-stone-card-affixes stone-unidentified">Non identifiée</span>
@@ -7390,9 +7401,9 @@ onBeforeUnmount(() => {
               </div>
               <p class="skill-card-desc">{{ skill.description }}</p>
               <div class="skill-card-stats">
-                <span class="skill-stat">PA {{ skill.apCost }}</span>
-                <span class="skill-stat">Mana {{ effectiveSkillManaCost(skill) }}</span>
-                <span class="skill-stat">Recharge {{ skill.cooldown }} tour(s)</span>
+                <span class="skill-stat"><span class="ic-ap" title="Points d'action"></span>{{ skill.apCost }}</span>
+                <span class="skill-stat"><img class="ic-img" src="/assets/Icons/mana_drop.svg" title="Mana" alt="Mana" />{{ effectiveSkillManaCost(skill) }}</span>
+                <span class="skill-stat"><img class="ic-img" src="/assets/Icons/cooldown.svg" title="Temps de recharge" alt="Recharge" />{{ skill.cooldown }} tour{{ skill.cooldown > 1 ? 's' : '' }}</span>
                 <span class="skill-stat">Déblocage niv. {{ skill.unlockLevel }}</span>
               </div>
             </article>
@@ -7534,7 +7545,7 @@ onBeforeUnmount(() => {
           Vendre tous les objets de la catégorie <strong>{{ sellConfirmModal.label }}</strong> ?
         </p>
         <div v-else class="sell-confirm-item">
-          <img :src="sellConfirmModal.icon" alt="" class="sell-confirm-icon" />
+          <img :src="sellConfirmModal.icon" :data-rarity="sellConfirmModal.rarity" alt="" class="sell-confirm-icon" />
           <p>
             {{ sellConfirmModal.type?.startsWith('recycle') ? 'Recycler' : 'Vendre' }}
             <strong :style="{ color: rarityColor(sellConfirmModal.rarity) }">{{ sellConfirmModal.label }}</strong> ?
@@ -8280,6 +8291,7 @@ button.danger {
   opacity: 0.6;
 }
 
+.quest-panel-claim { margin-top: 6px; width: 100%; padding: 8px; font-weight: 700; border-radius: 8px; border: 1px solid #ffe2a0; background: radial-gradient(circle at 35% 28%, #ffe3a3 0%, #e0a640 55%, #a86a16 100%); color: #2a1706; }
 .quest-panel-entry {
   border: 1px solid rgba(255, 217, 156, 0.18);
   border-radius: 10px;
@@ -10066,10 +10078,12 @@ img[data-rarity="mythic"] {
   display: none;
 }
 
+.ic-ap { display: inline-block; flex-shrink: 0; width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #d8f4ff, #4fb4ff 55%, #1f74c8); box-shadow: 0 0 4px rgba(110, 200, 255, 0.8); }
+.ic-img { display: inline-block; flex-shrink: 0; width: 13px; height: 13px; margin-right: 3px; vertical-align: -2px; object-fit: contain; }
+.skill-stat, .potions-grid-cost, .skill-btn-cd { display: inline-flex; align-items: center; }
 .skill-cost-inline { display: inline-flex; gap: 6px; vertical-align: middle; margin: 0 2px; }
 .skill-cost-pill { display: inline-flex; align-items: center; gap: 3px; font-weight: 700; color: #e6eefa; }
-.skill-cost-pill img { width: 12px; height: 12px; object-fit: contain; }
-.skill-cost-ap { width: 10px; height: 10px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #d8f4ff, #4fb4ff 55%, #1f74c8); box-shadow: 0 0 4px rgba(110, 200, 255, 0.8); }
+
 .skill-btn-cd {
   display: inline-block;
   margin-top: 0;
@@ -13617,6 +13631,11 @@ img[data-rarity="mythic"] {
 
 .icon-wide {
   transform: scale(1.35);
+}
+
+/* L'image des bijoux contient beaucoup de marge transparente : on l'agrandit partout. */
+img[src$="anneau.png"] {
+  transform: scale(1.7);
 }
 
 /* ── TAB TRANSCENDANCE ── */

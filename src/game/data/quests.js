@@ -26,6 +26,24 @@ export const QUESTS = [
     },
   },
   {
+    id: 'quest_divine_forge',
+    npcId: 'npc_master_smith',
+    mapId: 'whispering_catacombs',
+    name: 'La Main des Dieux',
+    description: 'Maître Dorvan veut juger ton talent de forgeron : forge un équipement de qualité « Forgé par les dieux » (réussis les 3 frappes du mini-jeu de forge).',
+    objective: {
+      type: 'forge_perfect_item',
+      amount: 1,
+      targetLabel: 'Équipement forgé par les dieux',
+    },
+    rewards: {
+      gold: 120,
+      materials: { spirit_chisel: 1, ore: 4 },
+      consumables: [],
+      loot: null,
+    },
+  },
+  {
     id: 'quest_forge_ascension',
     npcId: 'npc_forge_ascetic',
     mapId: 'obsidian_citadel',
@@ -128,6 +146,7 @@ export const QUESTS = [
 ]
 
 export const QUEST_ORDER = [
+  'quest_divine_forge',
   'quest_bone_collector',
   'quest_forge_ascension',
   'quest_lunar_pilgrim',

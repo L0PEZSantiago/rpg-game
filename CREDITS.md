@@ -26,3 +26,4 @@ libre, attribution requise). Elles ont été recolorées pour ce projet.
 | `assets/Icons/class_archer.svg` | Arrow Flights | Lorc |
 | `assets/Icons/class_necromancer.svg` | Skull Crack | Lorc |
 | `assets/Icons/class_bard.svg` | Lyre | Lorc |
+| `assets/Icons/cooldown.svg` | Stopwatch | Lorc |
